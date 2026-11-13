@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react";
-import { apiGet, type Health, type User } from "./api";
+import { apiGet, describeError, type User } from "./api";
+import RequestsView from "./views/RequestsView";
+import SearchView from "./views/SearchView";
+import StatusLine from "./views/StatusLine";
 
-// The only lines that differ between backend-ui and consumer-ui.
-const APP: User["app"] = "consumer";
 const TITLE = "Amaze Marketplace";
 const STORAGE_KEY = "amaze.consumer-ui.devUser";
+
+// Views, chosen by the URL hash (#/search). No router library (phase 2 plan, decision 16).
+const VIEWS = { search: "Search", requests: "My requests" } as const;
+type View = keyof typeof VIEWS;
+
+function viewFromHash(): View {
+  const name = window.location.hash.replace(/^#\/?/, "");
+  return name in VIEWS ? (name as View) : "search";
+}
 
 function remembered(): string | null {
   try {
@@ -23,28 +33,29 @@ function remember(userId: string): void {
 }
 
 export default function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
+  const [view, setView] = useState<View>(viewFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<Health>("/api/health", undefined, [503])
-      .then((h) => {
-        setHealth(h);
-        setApiReachable(true);
-      })
-      .catch(() => setApiReachable(false));
+    const onHash = () => setView(viewFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
-    apiGet<User[]>(`/api/dev/users?app=${APP}`)
+  useEffect(() => {
+    apiGet<User[]>("/api/dev/users?app=consumer")
       .then((list) => {
         setUsers(list);
         const saved = remembered();
         setSelected(list.some((u) => u.id === saved) ? (saved as string) : (list[0]?.id ?? ""));
       })
-      .catch(() => setUsers([]));
+      .catch((err: unknown) => {
+        setUsers([]);
+        setMeError(describeError(err)); // nobody can sign in: say why
+      });
   }, []);
 
   useEffect(() => {
@@ -57,36 +68,25 @@ export default function App() {
       })
       .catch((err: unknown) => {
         setMe(null);
-        setMeError(err instanceof Error ? err.message : "Sign-in failed");
+        setMeError(describeError(err));
       });
   }, [selected]);
 
-  const status = (good: boolean | null, text: string) =>
-    good === null ? <span>checking...</span> : <span className={good ? "ok" : "bad"}>{text}</span>;
+  const devUser = me ? selected : "";
 
   return (
-    <main>
-      <h1>{TITLE}</h1>
-      <p>Marketplace features arrive in phase 2. Synthetic data only.</p>
-      <dl>
-        <dt>API</dt>
-        <dd data-testid="api-status">{status(apiReachable, apiReachable ? "ok" : "unreachable")}</dd>
-        <dt>Database</dt>
-        <dd data-testid="db-status">
-          {health ? status(health.database === "ok", health.database) : status(apiReachable === false ? false : null, "unknown")}
-        </dd>
-        <dt>Adapters</dt>
-        <dd data-testid="adapters">
-          {health ? Object.entries(health.adapters).map(([k, v]) => `${k}: ${v}`).join(", ") : "-"}
-        </dd>
-        <dt>Unavailable</dt>
-        <dd data-testid="unavailable">
-          {health ? status(health.unavailable.length === 0, health.unavailable.join(", ") || "none") : "-"}
-        </dd>
-        <dt>
+    <>
+      <header>
+        <h1>{TITLE}</h1>
+        <nav aria-label="Views">
+          {(Object.keys(VIEWS) as View[]).map((name) => (
+            <a key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
+              {VIEWS[name]}
+            </a>
+          ))}
+        </nav>
+        <div className="who">
           <label htmlFor="dev-user">Dev user</label>
-        </dt>
-        <dd>
           <select id="dev-user" data-testid="dev-user" value={selected} onChange={(e) => setSelected(e.target.value)}>
             {users.map((u) => (
               <option key={u.id} value={u.id}>
@@ -94,12 +94,17 @@ export default function App() {
               </option>
             ))}
           </select>
-        </dd>
-        <dt>Signed in as</dt>
-        <dd data-testid="signed-in-as">
-          {me ? `${me.display_name} (${me.roles.join(", ")})` : meError ? <span className="bad">{meError}</span> : "-"}
-        </dd>
-      </dl>
-    </main>
+          <span data-testid="signed-in-as">
+            {me ? `Signed in as ${me.display_name}` : meError ? <span className="bad">{meError}</span> : ""}
+          </span>
+        </div>
+        <StatusLine />
+      </header>
+      <main>
+        {view === "search" && <SearchView devUser={devUser} />}
+        {view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
+      </main>
+      <footer>Synthetic data only.</footer>
+    </>
   );
 }

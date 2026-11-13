@@ -7,13 +7,31 @@
     <link rel="icon" href="data:," />
     <style>
       :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-      body { margin: 0; padding: 24px 16px; max-width: 720px; margin-inline: auto; }
-      dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
-      dt { font-weight: 600; }
-      dd { margin: 0; }
+      body { margin: 0; padding: 24px 16px; max-width: 960px; margin-inline: auto; }
+      header { border-bottom: 1px solid #8884; padding-bottom: 8px; }
+      h1 { margin: 0 0 8px; }
+      nav { display: flex; gap: 16px; margin-bottom: 8px; }
+      nav a[aria-current="page"] { font-weight: 700; text-decoration: none; }
+      .who { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .status-line { font-size: 0.85em; margin: 8px 0 0; }
       .ok { color: #1a7f37; }
       .bad { color: #cf222e; }
-      select { font: inherit; padding: 4px; }
+      .muted { opacity: 0.75; font-size: 0.9em; }
+      select, input, textarea, button { font: inherit; padding: 4px 8px; }
+      .row { display: flex; gap: 8px; }
+      .row input { flex: 1; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .hits { list-style: none; padding: 0; }
+      .hits li { border: 1px solid #8884; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+      .badge { font-size: 0.8em; border: 1px solid currentColor; border-radius: 10px; padding: 0 8px; }
+      .route { margin-top: 4px; font-style: italic; }
+      .request { border-top: 1px solid #8884; margin-top: 16px; padding-top: 8px; display: grid; gap: 8px; }
+      fieldset { border: 1px solid #8884; border-radius: 6px; }
+      .choice { display: block; }
+      .result { border-left: 4px solid #1a7f37; padding: 4px 12px; margin-top: 16px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border-bottom: 1px solid #8884; padding: 4px 8px; text-align: left; vertical-align: top; }
+      footer { margin-top: 24px; font-size: 0.85em; opacity: 0.75; }
     </style>
   </head>
   <body>
