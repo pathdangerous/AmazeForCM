@@ -584,3 +584,18 @@ The 12 new triggers are present: 5 append-only, 5 no-truncate, 2 glossary key (`
 7. **Correction to my own check.** My first SQL check for doubled names used a regular expression with a back-reference. It returned 0 even at `0006`, so it was wrong. The counts in points 5 and 6 come from the same Python check as the test.
 8. **Tests:** 508 pass.
 9. **Section 13 now expects `0007 (head)`, not `0006`.**
+
+### Tasks 4 to 7 (checkpoint 2)
+
+Tests: 592 pass, none skipped, no warnings. Each of the eight outcome tests in section 5.3 passes by name, and every test named in section 5.4 for these tasks exists.
+
+**Deviations from the plan:**
+
+1. **`NothingToRequest` and `TermInGlossary` are in `core/steps/errors.py`, not `core/repositories/errors.py`.** They are refusals of a step's input, not repository errors. Their base class is `StepInputError`; the API maps it to 422 in task 9.
+2. **`route()` is pure.** It takes the catalogue (each product with its elements and the requester's access) and the requested elements that are in the domains, and reads nothing. `route_request()` builds those from the database. Most routing tests use `route()`; two use `route_request()`.
+3. **`discover()` and the routing checks take `user_id` and `roles`, not a `User`.** That is all the entitlement decision needs.
+4. **`ProductGrantRepository.events_by_product()`** reads every product's events in one query, for search and routing.
+5. **Notes are written for `compose`, `create_product` and `raise_requirement`**, one per product named, with the route for a restricted one. For `reuse` the message already names the product and its route.
+6. **One test was wrong, not the code.** The first "most covered" case in `test_cover_rule_tie_breaks` had two products holding the same element, so rule 5 (codes) decided it. The case now has only the products that rule 1 must choose.
+
+**Proof that the boundary test covers `core.steps`:** the planted `from ports.llm.base import LLMProvider` in `core/steps/s17_discover.py` is reported as `core.steps.s17_discover -> ports.llm`. With `core.steps` taken out of `BOUNDARY_PACKAGES`, the same tree gives no violation.

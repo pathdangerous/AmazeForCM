@@ -84,6 +84,29 @@ def test_routing_results_round_trip():
         round_trips(RoutingResult, value)
 
 
+# ---- step 01 (task 7)
+
+
+def test_step_01_outcomes_are_claude_mds():
+    from core.steps.s01_define_requirement import DefineRequirementResult
+
+    assert union_outcomes(DefineRequirementResult) == claude_md_outcomes("01 Define requirement")
+
+
+def test_step_01_results_round_trip():
+    import uuid
+    from datetime import UTC, datetime
+
+    from core.domain.requirement import Requirement
+    from core.steps.s01_define_requirement import DefineRequirementResult, Defined, ElementNotInGlossary
+
+    requirement = Requirement(id=uuid.uuid4(), created_at=datetime.now(UTC), requester_id="dev-requester",
+                              title="T", description="", status="defined", elements=["volume"], terms=["esg score"])
+    round_trips(DefineRequirementResult, Defined(requirement=requirement, notified=["dev-backend-team"]))
+    round_trips(DefineRequirementResult,
+                ElementNotInGlossary(requirement=requirement, terms=["esg score"], notified=[]))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str
