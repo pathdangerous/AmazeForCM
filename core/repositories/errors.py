@@ -34,3 +34,10 @@ class ProposalNotApproved(RepositoryError):
 
 class WrongProposalKind(RepositoryError):
     """The proposal is approved, but of a different kind than the configuration being created."""
+
+
+# ---- glossary
+
+
+class UnknownGlossaryElement(RepositoryError, LookupError):
+    """No glossary element has this key."""

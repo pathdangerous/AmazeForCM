@@ -26,6 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.domain.glossary import DATA_TYPES
 from core.domain.proposal import PROPOSAL_KINDS
 from ports.db import Base
 from ports.identity.base import ROLES
@@ -110,3 +111,31 @@ class ApprovalRow(Base):
     decided_by: Mapped[str] = mapped_column(Text)
     decision: Mapped[str] = mapped_column(Text)
     note: Mapped[str | None] = mapped_column(Text)
+
+
+class GlossaryElementRow(Base):
+    """One version of one glossary element. Append-only; the current version is the highest."""
+
+    __tablename__ = "glossary_elements"
+    __table_args__ = (
+        UniqueConstraint("key", "version"),
+        CheckConstraint("key ~ '^[a-z][a-z0-9_]*$'", name="key_format"),
+        CheckConstraint("domain ~ '^[a-z][a-z0-9_]*$'", name="domain_format"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint(_in("data_type", DATA_TYPES), name="data_type"),
+        CheckConstraint("length(btrim(name)) > 0 AND length(btrim(definition)) > 0", name="text_present"),
+        # Rule 1: only the seed may create an element without an approved proposal.
+        CheckConstraint("(proposal_id IS NULL) = (created_by = 'seed')", name="proposal_unless_seed"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at()
+    key: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(Text)
+    domain: Mapped[str] = mapped_column(Text)
+    data_type: Mapped[str] = mapped_column(Text)
+    definition: Mapped[str] = mapped_column(Text)
+    aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
+    created_by: Mapped[str] = mapped_column(Text)
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))

@@ -22,9 +22,19 @@ def _approvals_row(db_session, request):
     return "approvals", approval.id
 
 
+def _glossary_row(db_session, request):
+    from core.repositories.glossary import GlossaryRepository
+
+    repo = GlossaryRepository(db_session)
+    repo.add_seed_element(key="append_only_probe", name="Probe", domain="pricing", data_type="string",
+                          definition="Synthetic element for the append-only test.", aliases=[])
+    return "glossary_elements", repo.get_current("append_only_probe").id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
     "approvals": _approvals_row,
+    "glossary_elements": _glossary_row,
 }
 
 
