@@ -1,6 +1,6 @@
 # Phase 0 plan — Skeleton and placeholders
 
-**Status:** waiting for approval. No code is written until you approve this plan.
+**Status:** approved on 2026-11-13 with changes (Python 3.14, ASCII scripts, two extra risks, three stop points). Those changes are already applied below.
 **Date:** 2026-11-13. **Branch:** `phase-0`. **Scope:** phase 0 of `BUILD_PLAN.md` only.
 
 ## 1. Goal and "done when"
@@ -16,7 +16,7 @@ Phase 0 is done when all four are true:
 
 | Item | Found | Status |
 |---|---|---|
-| Python | 3.12.10 at `%LOCALAPPDATA%\Programs\Python\Python312`, reached with `py -3.12` | Installed today. Default `python` is still 3.14.2 |
+| Python | 3.14.5 at `C:\Python314`, reached with `py -3.14` | OK. `py` with no version now selects 3.15, so every command names `-3.14` |
 | Node / npm | v24.13.0 / 11.6.2 | OK |
 | Git | 2.56.1 | Repository initialised today; baseline commit on `main` |
 | PostgreSQL | 18.4, service `postgresql-x64-18` running, `localhost:5432` accepting connections | OK |
@@ -27,14 +27,17 @@ Phase 0 is done when all four are true:
 
 ## 3. Decisions you made
 
-1. **Python:** 3.12, installed by me from the official python.org installer (signature verified).
-2. **`platform/` is renamed to `ports/`.** A package named `platform` collides with Python's built-in `platform` module. Imports become `ports.llm`, `ports.storage`, and so on.
-3. **Git:** one commit per task on the `phase-0` branch. Local only. Nothing is pushed.
-4. **Roles:** seven dev users, one per role (section 9).
+1. **Python 3.14** (3.14.5 here and on the office laptop). `pyproject.toml` sets `requires-python = ">=3.14,<3.15"`, and a test fails on any other interpreter. Python 3.12 is not used.
+2. **PostgreSQL 18.4** here and on the office laptop. No feature newer than PostgreSQL 14 is used until the Azure database version is confirmed.
+3. **`platform/` is renamed to `ports/`.** A package named `platform` collides with Python's built-in `platform` module. Imports become `ports.llm`, `ports.storage`, and so on.
+4. **Git:** one commit per task on the `phase-0` branch. Local only. Nothing is pushed.
+5. **Roles:** seven dev users, one per role (section 9).
+6. **Scripts are plain ASCII** (`setup_db.ps1`, `dev.ps1`), so Windows PowerShell 5.1 reads them correctly.
+7. **Stop points:** after task 1 (you run `setup_db.ps1`), after task 5 (pytest output and `alembic current`), and after task 16 (the full section 14 results).
 
 ## 4. Assumptions — veto any by number
 
-1. **Office laptop versions.** I do not know its PostgreSQL major version. Phase 0 uses only features present since PostgreSQL 14 (plain tables, `jsonb`, `timestamptz`). I assume its Python is 3.12.
+1. **Database features.** Phase 0 uses only features present since PostgreSQL 14 (plain tables, `jsonb`, `timestamptz`, check constraints), because the Azure Database for PostgreSQL version is not confirmed yet.
 2. **`.env`.** I create `.env` from `.env.example` with a randomly generated password for the `amaze` database user. The file is git-ignored. You never type that password.
 3. **Tests use real PostgreSQL**, in a separate `amaze_test` database, not SQLite. Each test runs in a transaction that is rolled back. If the database is unreachable the tests fail; they do not skip.
 4. **Two additions to the CLAUDE.md layout:** `ports/db/` (engine, session, table base class: the "Database" row of the Placeholders table) and `migrations/` with `alembic.ini` at the root.
@@ -63,9 +66,9 @@ Phase 0 is done when all four are true:
 CLAUDE.md                      edit   platform/ -> ports/, platform.llm -> ports.llm, layout additions
 BUILD_PLAN.md                  edit   platform/ -> ports/ in the phase 0 bullets
 README.md                      edit   "Set up and run" section
-requirements.txt               new
-requirements-dev.txt           new    pytest
-pyproject.toml                 new    pytest settings only
+requirements.txt               new    exact pins, all with Python 3.14 Windows wheels
+requirements-dev.txt           new    -r requirements.txt, pytest
+pyproject.toml                 new    requires-python = ">=3.14,<3.15"; pytest settings
 alembic.ini                    new
 migrations/
   env.py  script.py.mako
@@ -100,6 +103,7 @@ fixtures/
   llm/phase0_smoke/v1.json
 tests/
   conftest.py                  test database, migration and rollback fixtures
+  test_python_version.py       fails unless the interpreter is 3.14
   test_import_boundaries.py
   test_settings.py
   test_port_llm.py       test_port_storage.py   test_port_scheduler.py
@@ -304,16 +308,26 @@ Checked by running it twice (the second run reports "already exists") and by the
 
 Checked by running it and by the page checks in section 14.
 
-Neither script has an automated test; both are checked by running them.
+Neither script has an automated test; both are checked by running them. Both are plain ASCII (no curly quotes, dashes or other non-ASCII characters), checked with a byte scan before each commit.
 
 ## 12. Python environment and the two npm projects
 
 **Python**
 
-- `py -3.12 -m venv .venv` at the repository root.
-- `requirements.txt`: fastapi, uvicorn, pydantic, pydantic-settings, sqlalchemy, alembic, psycopg (binary), apscheduler (below version 4), httpx. `requirements-dev.txt`: pytest.
-- Exact versions are written into the files after the first install, so the office laptop installs the same set.
-- `pyproject.toml` holds only pytest settings (repository root on the import path, tests in `tests/`).
+- `py -3.14 -m venv .venv` at the repository root.
+- Pinned, and confirmed on 2026-11-13 to install cleanly into a fresh venv with `pip install --only-binary=:all:` (no source builds) and `pip check`:
+
+  | Package | Version | Package | Version |
+  |---|---|---|---|
+  | fastapi | 0.162.5 | alembic | 1.20.1 |
+  | uvicorn[standard] | 0.54.0 | psycopg[binary] | 3.3.9 |
+  | pydantic | 2.14.3 | apscheduler | 3.11.3 (below 4) |
+  | pydantic-settings | 2.16.2 | httpx | 0.28.1 |
+  | sqlalchemy | 2.1.8 | pytest (dev) | 9.2.0 |
+
+- Only the direct dependencies are pinned; their own dependencies are resolved by pip.
+- `pyproject.toml` holds `requires-python = ">=3.14,<3.15"` and the pytest settings (repository root on the import path, tests in `tests/`).
+- `tests/test_python_version.py` fails unless `sys.version_info[:2] == (3, 14)`.
 
 **API (phase 0 endpoints only)**
 
@@ -333,15 +347,15 @@ Checked by `npm run build` in each project (type check and build) and by loading
 
 ## 13. Tasks, in order
 
-Each task: tests first, then code, then its check, then one commit. I stop only at task 1.
+Each task: tests first, then code, then its check, then one commit. I stop and report after tasks 1, 5 and 16, and continue without stopping between them.
 
 | # | Task | Tests written first | Check |
 |---|---|---|---|
-| 1 | `setup_db.ps1`, `.env`, `TEST_DATABASE_URL` in `.env.example` | none (script) | **You run `.\scripts\setup_db.ps1` once.** I then confirm both databases accept the `amaze` user |
-| 2 | Rename to `ports/`, package files, `.gitattributes`, requirements, `pyproject.toml`, venv, CLAUDE.md and BUILD_PLAN.md edits | none | `python -c "import platform, ports, core; print(platform.system())"` prints `Windows`; `pytest` collects without error |
+| 1 | `setup_db.ps1`, `.env`, `TEST_DATABASE_URL` in `.env.example` | none (script) | **STOP.** You run `.\scripts\setup_db.ps1` once. I then confirm both databases accept the `amaze` user |
+| 2 | Rename to `ports/`, package files, `.gitattributes`, `pyproject.toml`, CLAUDE.md and BUILD_PLAN.md rename edits | `test_python_version.py` | `python -c "import platform, ports, core; print(platform.system())"` prints `Windows`; pytest passes |
 | 3 | Import-boundary test | `test_import_boundaries.py` | Passes, including its planted-violation self-tests |
 | 4 | `Settings`; Secrets port | `test_settings.py`, `test_port_secrets.py`; first rows of `test_azure_stubs.py` and `test_port_factories.py` | pytest |
-| 5 | `ports/db`, Alembic, first migration, test fixtures | `test_migrations.py` | pytest; `alembic upgrade head`; `alembic current` shows `0001 (head)` |
+| 5 | `ports/db`, Alembic, first migration, test fixtures | `test_migrations.py` | pytest; `alembic upgrade head`; `alembic current` shows `0001 (head)`. **STOP:** I show you both outputs |
 | 6 | LLM port: `MockProvider`, stub, fixture | `test_port_llm.py` | pytest |
 | 7 | `ProposalLog` | `test_proposal_log.py` | pytest |
 | 8 | Storage port | `test_port_storage.py` | pytest |
@@ -352,7 +366,7 @@ Each task: tests first, then code, then its check, then one commit. I stop only 
 | 13 | API: health, dev users, me | `test_api.py` | pytest; `GET /api/health` returns `"status":"ok"` |
 | 14 | backend-ui and consumer-ui | none | `npm run build` in both; both pages load |
 | 15 | `dev.ps1`, README section | none (script) | Section 14 run in full; results shown to you |
-| 16 | Review against CLAUDE.md's seven rules and this plan | none | Findings reported; fixes committed |
+| 16 | Review against CLAUDE.md's seven rules and this plan | none | Findings reported; fixes committed. **STOP:** full section 14 results shown to you |
 
 Tasks 6 to 12 each add their port's rows to `test_azure_stubs.py` and `test_port_factories.py`.
 
@@ -363,8 +377,8 @@ Run from `F:\amaze-cm-poc` in Windows PowerShell.
 **Set-up** (I run these during implementation, except `setup_db.ps1`; listed so you can repeat them on a clean copy):
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt -r requirements-dev.txt
+py -3.14 -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env        # only if .env does not exist; then set the password in both URLs
 .\scripts\setup_db.ps1             # asks for the postgres superuser password
 .\.venv\Scripts\python -m alembic upgrade head
@@ -405,8 +419,11 @@ Agents and prompts, steps and `StepResult`, domain models, glossary seed, per-pl
 
 ## 16. Risks
 
-1. **Python 3.12.10 is the last 3.12 release with a Windows installer.** Later 3.12 security fixes are source-only. It matches CLAUDE.md; revisit at the Azure move.
-2. **The Vite scaffolder may ask questions interactively.** If it does, I write the same seven files by hand.
-3. **APScheduler 4 has a different API.** The version is held below 4.
-4. **Inline comments in `.env.example`** could be read as part of a value. `test_settings.py` covers this.
-5. **PostgreSQL on the office laptop may be older than 18.** Phase 0 uses nothing newer than 14.
+1. **The local scheduler keeps jobs in memory.** A restart of the API loses every registered job. Phase 3 (the daily fetch) needs jobs stored in PostgreSQL, or re-registered from the database at start-up.
+2. **Azure Functions support for Python 3.14 is not confirmed.** Check it at the Azure move (phase 8) before choosing the Functions timer trigger for the scheduler.
+3. **Azure Database for PostgreSQL version is not confirmed.** Local and office laptop run 18.4; phase 0 uses nothing newer than PostgreSQL 14 until the Azure version is known.
+4. **`py` with no version now selects Python 3.15 on this machine.** Every command names `py -3.14`; inside the venv this does not matter. `test_python_version.py` catches a venv built with the wrong interpreter.
+5. **The Vite scaffolder may ask questions interactively.** If it does, I write the same seven files by hand.
+6. **APScheduler 4 has a different API.** The version is held below 4.
+7. **Inline comments in `.env.example`** could be read as part of a value. `test_settings.py` covers this.
+8. **Only direct dependencies are pinned.** A transitive dependency could change between installs on the two laptops. If that causes a difference, add a full lock file.

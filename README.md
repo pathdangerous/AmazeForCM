@@ -2,7 +2,7 @@
 
 Agentic data onboarding and consumption PoC. Built locally first, with no containers; Azure adapters are switched on after the move to the office laptop.
 
-Before you start: Python 3.12, Node.js (LTS), Git and PostgreSQL installed on Windows (same major version as the office laptop).
+Before you start: Python 3.14 (3.14.5), Node.js (LTS), Git and PostgreSQL 18.4 installed on Windows (the same versions as the office laptop).
 
 Start here:
 

@@ -1,0 +1,11 @@
+# Runtime dependencies. Python 3.14 only. Every pin below has a cp314 / py3 wheel for Windows x64
+# (checked 2026-11-13 with pip install --only-binary=:all:).
+fastapi==0.162.5
+uvicorn[standard]==0.54.0
+pydantic==2.14.3
+pydantic-settings==2.16.2
+sqlalchemy==2.1.8
+alembic==1.20.1
+psycopg[binary]==3.3.9
+apscheduler==3.11.3
+httpx==0.28.1
