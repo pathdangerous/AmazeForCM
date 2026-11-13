@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0006"
+HEAD = "0007"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -137,6 +137,21 @@ def _check_constraints(engine, table: str) -> set[str]:
             text("SELECT conname FROM pg_constraint WHERE contype = 'c' AND conrelid = to_regclass(:t)"), {"t": table}
         )
         return {name for (name,) in rows}
+
+
+def test_no_constraint_name_repeats_its_prefix(migrated_engine):
+    """A full name passed through the naming convention gets its prefix twice (ck_x_ck_x_...).
+    Migration 0007 renamed the ones 0002 to 0004 created; this keeps any from coming back."""
+    with migrated_engine.connect() as connection:
+        rows = connection.execute(text(
+            "SELECT c.conrelid::regclass::text, c.conname FROM pg_constraint c "
+            "JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = 'public'"
+        )).all()
+    def repeats(table: str, name: str) -> bool:
+        prefix = f"{name.split('_')[0]}_{table}_"  # ck_products_, uq_feeds_, ...
+        return name.startswith(prefix + prefix)
+
+    assert sorted(f"{table}.{name}" for table, name in rows if repeats(table, name)) == []
 
 
 def test_0006_check_constraints_have_the_convention_names(migrated_engine):

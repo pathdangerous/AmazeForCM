@@ -471,7 +471,7 @@ npm --prefix apps\consumer-ui run build
 | `core.seed` | `glossary seed: 0 inserted, 33 already present` |
 | `core.seed --demo` | first run: `demo seed: 3 inserted, 0 already present`; later runs: `0 inserted, 3 already present` |
 | `pytest -v` | all pass; 0 failed, 0 skipped, 0 warnings |
-| `alembic current` | `0006 (head)` |
+| `alembic current` | `0007 (head)` |
 | `npm ... run build` (twice) | exit code 0 |
 | `dev.ps1` | three `OK` lines and health `ok` |
 
@@ -564,3 +564,23 @@ python -m core.seed      glossary seed: 0 inserted, 33 already present
 ```
 
 The 12 new triggers are present: 5 append-only, 5 no-truncate, 2 glossary key (`product_elements`, `requirement_elements`). The six tables hold no rows.
+
+### Before task 4: migration `0007`, constraint names (your request after checkpoint 1)
+
+1. **Test first.** `test_migrations.py::test_no_constraint_name_repeats_its_prefix` reads every constraint in `public` from `pg_constraint` and fails on a name that starts with its prefix twice (`ck_x_ck_x_`, `uq_x_uq_x_`, and so on). Before `0007` it failed on 32 names, all of them check constraints: approvals 4, feeds 4, glossary_elements 6, loads 2, mappings 2, products 3, proposals 6, requirements 2, rules 3.
+2. **`0007_constraint_names.py`** renames those 32 with `ALTER TABLE ... RENAME CONSTRAINT` (PostgreSQL 9.2). The names are written out in the migration. Only names change, not definitions. The downgrade renames them back. The new names are the ones the table classes in `tables.py` already produce, so `tables.py` did not change.
+3. **From now on, explicit names use `op.f()`.** `0006` already does.
+4. **Tests that match these constraint names:** `test_repo_feeds.py:106` (`ck_feeds_registered_has_owner`), `test_repo_loads.py:67` (`ck_loads_status`), `test_repo_proposals.py:187` (`ck_proposals_decided_at_matches_status`), `test_repo_requirements.py:58` (`ck_requirements_status`). **None needed a change.** Each matches its name as a substring of the error text, and the short name is inside the doubled one too. The only edit was `HEAD = "0007"` in `test_migrations.py`.
+5. **Test database:** `downgrade base`, then `upgrade head`: both ran, `current` is `0007 (head)`. A separate check gave 32 doubled names at `0006` and 0 at `0007`, which proves the downgrade restores the old names.
+6. **Application database:**
+
+   ```
+   alembic upgrade head     Running upgrade 0006 -> 0007     exit 0
+   alembic current          0007 (head)
+   python -m core.seed      glossary seed: 0 inserted, 33 already present
+   ```
+
+   0 of its 200 constraints repeat a prefix.
+7. **Correction to my own check.** My first SQL check for doubled names used a regular expression with a back-reference. It returned 0 even at `0006`, so it was wrong. The counts in points 5 and 6 come from the same Python check as the test.
+8. **Tests:** 508 pass.
+9. **Section 13 now expects `0007 (head)`, not `0006`.**
