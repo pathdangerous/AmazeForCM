@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
+import FeedRegistryView from "./views/FeedRegistryView";
 import GlossaryView from "./views/GlossaryView";
 import StatusView from "./views/StatusView";
 
@@ -10,6 +11,7 @@ const STORAGE_KEY = "amaze.backend-ui.devUser";
 const VIEWS = {
   status: "Status",
   glossary: "Glossary",
+  feeds: "Feed registry",
 } as const;
 type View = keyof typeof VIEWS;
 
@@ -99,6 +101,7 @@ export default function App() {
       <main>
         {view === "status" && <StatusView />}
         {view === "glossary" && <GlossaryView devUser={me ? selected : ""} />}
+        {view === "feeds" && <FeedRegistryView devUser={me ? selected : ""} />}
       </main>
       <footer>Synthetic data only.</footer>
     </>
