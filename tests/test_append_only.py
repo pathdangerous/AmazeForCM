@@ -91,6 +91,44 @@ def _product_grants_row(db_session, request):
     return "product_grants", event.id
 
 
+def _requirement(db_session, request):
+    from core.repositories.requirements import RequirementRepository
+
+    _glossary_row(db_session, request)
+    return RequirementRepository(db_session).create(
+        requester_id="dev-requester", title="Append-only requirement", element_keys=["append_only_probe"],
+        terms=["synthetic term"],
+    )
+
+
+def _requirement_elements_row(db_session, request):
+    requirement = _requirement(db_session, request)
+    row_id = db_session.execute(
+        text("SELECT id FROM requirement_elements WHERE requirement_id = :r"), {"r": requirement.id}
+    ).scalar_one()
+    return "requirement_elements", row_id
+
+
+def _requirement_terms_row(db_session, request):
+    requirement = _requirement(db_session, request)
+    row_id = db_session.execute(
+        text("SELECT id FROM requirement_terms WHERE requirement_id = :r"), {"r": requirement.id}
+    ).scalar_one()
+    return "requirement_terms", row_id
+
+
+def _consumer_requests_row(db_session, request):
+    from core.repositories.consumer_requests import ConsumerRequestRepository
+
+    requirement = _requirement(db_session, request)
+    recorded = ConsumerRequestRepository(db_session).record(
+        requester_id="dev-requester", query="synthetic term", element_keys=["append_only_probe"],
+        terms=["synthetic term"], outcome="raise_requirement", requirement_id=requirement.id,
+        result={"outcome": "raise_requirement"},
+    )
+    return "consumer_requests", recorded.id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
     "approvals": _approvals_row,
@@ -99,6 +137,9 @@ ROWS = {
     "rules": _rules_row,
     "product_elements": _product_elements_row,
     "product_grants": _product_grants_row,
+    "requirement_elements": _requirement_elements_row,
+    "requirement_terms": _requirement_terms_row,
+    "consumer_requests": _consumer_requests_row,
 }
 
 

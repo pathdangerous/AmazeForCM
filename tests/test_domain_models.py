@@ -162,3 +162,51 @@ def test_grant_draft_accepts_a_user_or_a_role():
 def test_grant_draft_rejects(bad):
     with pytest.raises(ValidationError):
         GrantDraft(**{**GRANT, **bad})
+
+
+# ---- Requirement elements and terms, and the request log (phase 2, task 3)
+
+from core.domain.consumer_request import ROUTING_OUTCOMES, ConsumerRequestDraft  # noqa: E402
+
+REQUEST = {"requester_id": "dev-requester", "query": "close price", "element_keys": ["close_price"],
+           "outcome": "reuse", "result": {"outcome": "reuse"}}
+
+
+def test_routing_outcomes_are_the_names_in_claude_md():
+    assert ROUTING_OUTCOMES == ("reuse", "compose", "create_product", "raise_requirement")
+
+
+def test_requirement_draft_takes_elements_and_terms():
+    draft = RequirementDraft(requester_id="dev-requester", title="T", element_keys=["volume"], terms=["esg score"])
+    assert (draft.element_keys, draft.terms) == (["volume"], ["esg score"])
+    assert RequirementDraft(requester_id="dev-requester", title="T").element_keys == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"element_keys": ["volume", "volume"]}, {"element_keys": ["Volume"]}, {"terms": [""]}, {"terms": ["a", "a"]}],
+)
+def test_requirement_draft_rejects(bad):
+    with pytest.raises(ValidationError):
+        RequirementDraft(**{"requester_id": "dev-requester", "title": "T", **bad})
+
+
+def test_consumer_request_draft_accepts_valid_input():
+    assert ConsumerRequestDraft(**REQUEST).purpose == ""
+    with_terms = ConsumerRequestDraft(**{**REQUEST, "element_keys": [], "terms": ["esg score"]})
+    assert with_terms.terms == ["esg score"]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"outcome": "found"},
+        {"element_keys": []},  # with no terms either: nothing was requested
+        {"query": " "},
+        {"requirement_id": "5f0c3a2e-0000-4000-8000-000000000000"},  # only raise_requirement links a requirement
+        {"outcome": "raise_requirement"},  # and it always does
+    ],
+)
+def test_consumer_request_draft_rejects(bad):
+    with pytest.raises(ValidationError):
+        ConsumerRequestDraft(**{**REQUEST, **bad})

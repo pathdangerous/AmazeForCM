@@ -28,6 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.domain.consumer_request import ROUTING_OUTCOMES
 from core.domain.feed import FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.load import LOAD_STATUSES
@@ -162,6 +163,36 @@ class RequirementRow(Base):
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
     status: Mapped[str] = mapped_column(Text, default="defined", server_default="defined")
+
+
+class RequirementElementRow(Base):
+    """One glossary element a requirement asks for. Append-only.
+
+    A database trigger (migration 0006) refuses an element_key that has no row in glossary_elements.
+    """
+
+    __tablename__ = "requirement_elements"
+    __table_args__ = (UniqueConstraint("requirement_id", "element_key"),)
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    requirement_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("requirements.id"))
+    element_key: Mapped[str] = mapped_column(Text)
+
+
+class RequirementTermRow(Base):
+    """One term the requester ticked that is not in the glossary (element_not_in_glossary). Append-only."""
+
+    __tablename__ = "requirement_terms"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", "term"),
+        CheckConstraint("length(btrim(term)) > 0", name="term_present"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    requirement_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("requirements.id"))
+    term: Mapped[str] = mapped_column(Text)
 
 
 class FeedRow(Base):
@@ -306,3 +337,30 @@ class ProductGrantRow(Base):
     subject: Mapped[str] = mapped_column(Text)
     action: Mapped[str] = mapped_column(Text)
     decided_by: Mapped[str] = mapped_column(Text)
+
+
+class ConsumerRequestRow(Base):
+    """One "Request this data" and its routing outcome. Append-only."""
+
+    __tablename__ = "consumer_requests"
+    __table_args__ = (
+        CheckConstraint(_in("outcome", ROUTING_OUTCOMES), name="outcome"),
+        CheckConstraint(
+            "(requirement_id IS NOT NULL) = (outcome = 'raise_requirement')", name="requirement_matches_outcome"
+        ),
+        CheckConstraint("cardinality(element_keys) + cardinality(terms) >= 1", name="something_requested"),
+        CheckConstraint("length(btrim(requester_id)) > 0 AND length(btrim(query)) > 0", name="text_present"),
+        Index("ix_consumer_requests_requester_id", "requester_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    requester_id: Mapped[str] = mapped_column(Text)
+    query: Mapped[str] = mapped_column(Text)
+    purpose: Mapped[str] = mapped_column(Text, default="", server_default="")
+    element_keys: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    terms: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    outcome: Mapped[str] = mapped_column(Text)
+    product_codes: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
+    result: Mapped[dict[str, Any]] = mapped_column(JSONB)

@@ -13,13 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.domain.product import Product, ProductDraft, ProductWithElements
-from core.repositories.errors import (
-    DuplicateProductCode,
-    ProductNotFound,
-    RequirementNotFound,
-    UnknownGlossaryElement,
-)
-from core.repositories.tables import GlossaryElementRow, ProductElementRow, RequirementRow
+from core.repositories.errors import DuplicateProductCode, ProductNotFound, RequirementNotFound
+from core.repositories.glossary import GlossaryRepository
+from core.repositories.tables import ProductElementRow, RequirementRow
 from core.repositories.tables import ProductRow as Row
 
 
@@ -33,12 +29,7 @@ class ProductRepository:
             raise DuplicateProductCode(f"A product with code {draft.code!r} already exists")
         if draft.requirement_id is not None and self._session.get(RequirementRow, draft.requirement_id) is None:
             raise RequirementNotFound(f"No requirement with id {draft.requirement_id}")
-        known = set(
-            self._session.scalars(select(GlossaryElementRow.key).where(GlossaryElementRow.key.in_(draft.element_keys)))
-        )
-        unknown = [key for key in draft.element_keys if key not in known]
-        if unknown:
-            raise UnknownGlossaryElement(f"No glossary element with key {', '.join(map(repr, unknown))}")
+        GlossaryRepository(self._session).require_keys(draft.element_keys)  # raises UnknownGlossaryElement
         row = Row(**draft.model_dump(exclude={"element_keys"}))
         self._session.add(row)
         self._session.flush()

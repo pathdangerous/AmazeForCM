@@ -1,4 +1,4 @@
-"""consumption: product owner, visibility, elements and grants
+"""consumption: product owner, visibility, elements and grants; requirement elements and terms; request log
 
 Revision ID: 0006
 Revises: 0005
@@ -14,6 +14,10 @@ product_elements lists the glossary elements a product holds. It is append-only,
 Task 2: product_grants holds grant and revoke events per user or role. It is append-only, and its
 seq identity column (GENERATED ALWAYS) gives the events a total order.
 
+Task 3: requirement_elements and requirement_terms hold what a requirement asks for (glossary
+elements, and ticked terms that are not in the glossary). consumer_requests is the log of every
+"Request this data" with its routing outcome. All three are append-only.
+
 Check constraints are named with op.f(): the name is final. A plain name is passed through the
 naming convention a second time, which is why 0002 to 0004 created ck_<table>_ck_<table>_<name>.
 
@@ -23,6 +27,7 @@ PostgreSQL 14 features only.
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "0006"
 down_revision = "0005"
@@ -30,8 +35,9 @@ branch_labels = None
 depends_on = None
 
 ROLES = ("requester", "backend_team", "data_owner", "data_steward", "checker", "glossary_owner", "operations")
-APPEND_ONLY = ("product_elements", "product_grants")
-GLOSSARY_KEYED = ("product_elements",)
+ROUTING_OUTCOMES = ("reuse", "compose", "create_product", "raise_requirement")
+APPEND_ONLY = ("product_elements", "product_grants", "requirement_elements", "requirement_terms", "consumer_requests")
+GLOSSARY_KEYED = ("product_elements", "requirement_elements")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -103,6 +109,67 @@ def upgrade() -> None:
     )
     op.create_index("ix_product_grants_product_id", "product_grants", ["product_id"])
 
+    # ---- task 3: what a requirement asks for, and the log of every request
+    op.create_table(
+        "requirement_elements",
+        _id(),
+        _created_at(),
+        sa.Column("requirement_id", sa.Uuid(), nullable=False),
+        sa.Column("element_key", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_requirement_elements"),
+        sa.ForeignKeyConstraint(
+            ["requirement_id"], ["requirements.id"], name="fk_requirement_elements_requirement_id_requirements"
+        ),
+        sa.UniqueConstraint(
+            "requirement_id", "element_key", name="uq_requirement_elements_requirement_id_element_key"
+        ),
+    )
+    op.create_table(
+        "requirement_terms",
+        _id(),
+        _created_at(),
+        sa.Column("requirement_id", sa.Uuid(), nullable=False),
+        sa.Column("term", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_requirement_terms"),
+        sa.ForeignKeyConstraint(
+            ["requirement_id"], ["requirements.id"], name="fk_requirement_terms_requirement_id_requirements"
+        ),
+        sa.UniqueConstraint("requirement_id", "term", name="uq_requirement_terms_requirement_id_term"),
+        sa.CheckConstraint("length(btrim(term)) > 0", name=op.f("ck_requirement_terms_term_present")),
+    )
+    op.create_table(
+        "consumer_requests",
+        _id(),
+        _created_at(),
+        sa.Column("requester_id", sa.Text(), nullable=False),
+        sa.Column("query", sa.Text(), nullable=False),
+        sa.Column("purpose", sa.Text(), nullable=False, server_default=""),
+        sa.Column("element_keys", postgresql.ARRAY(sa.Text()), nullable=False),
+        sa.Column("terms", postgresql.ARRAY(sa.Text()), nullable=False),
+        sa.Column("outcome", sa.Text(), nullable=False),
+        sa.Column("product_codes", postgresql.ARRAY(sa.Text()), nullable=False),
+        sa.Column("requirement_id", sa.Uuid(), nullable=True),
+        sa.Column("result", postgresql.JSONB(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_consumer_requests"),
+        sa.ForeignKeyConstraint(
+            ["requirement_id"], ["requirements.id"], name="fk_consumer_requests_requirement_id_requirements"
+        ),
+        sa.CheckConstraint(_in("outcome", ROUTING_OUTCOMES), name=op.f("ck_consumer_requests_outcome")),
+        sa.CheckConstraint(
+            "(requirement_id IS NOT NULL) = (outcome = 'raise_requirement')",
+            name=op.f("ck_consumer_requests_requirement_matches_outcome"),
+        ),
+        sa.CheckConstraint(
+            "cardinality(element_keys) + cardinality(terms) >= 1",
+            name=op.f("ck_consumer_requests_something_requested"),
+        ),
+        sa.CheckConstraint(
+            "length(btrim(requester_id)) > 0 AND length(btrim(query)) > 0",
+            name=op.f("ck_consumer_requests_text_present"),
+        ),
+    )
+    op.create_index("ix_consumer_requests_requester_id", "consumer_requests", ["requester_id"])
+
     # ---- every phase 2 table that is append-only: UPDATE, DELETE and TRUNCATE refused (function from 0002)
     for table in APPEND_ONLY:
         op.execute(
@@ -123,6 +190,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Dropping a table drops its triggers and indexes; dropping a column drops the check constraints on it.
+    op.drop_table("consumer_requests")
+    op.drop_table("requirement_terms")
+    op.drop_table("requirement_elements")
     op.drop_table("product_grants")
     op.drop_table("product_elements")
     op.drop_column("products", "visibility")

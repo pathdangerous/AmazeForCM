@@ -87,3 +87,10 @@ class ProductNotFound(RepositoryError, LookupError):
 
 class DuplicateProductCode(RepositoryError):
     """Another product already has this code."""
+
+
+# ---- consumer requests
+
+
+class ConsumerRequestNotFound(RepositoryError, LookupError):
+    """The requester has no request with this id (it may not exist, or it may be someone else's)."""

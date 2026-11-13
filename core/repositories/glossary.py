@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
@@ -53,6 +54,16 @@ class GlossaryRepository:
 
     def exists(self, key: str) -> bool:
         return self._session.scalar(select(func.count()).select_from(Row).where(Row.key == key)) > 0
+
+    def require_keys(self, keys: Iterable[str]) -> None:
+        """Raise UnknownGlossaryElement, naming every key that has no element. One query."""
+        keys = list(keys)
+        if not keys:
+            return
+        known = set(self._session.scalars(select(Row.key).where(Row.key.in_(keys))))
+        unknown = [key for key in keys if key not in known]
+        if unknown:
+            raise UnknownGlossaryElement(f"No glossary element with key {', '.join(map(repr, unknown))}")
 
     def history(self, key: str) -> list[GlossaryElement]:
         rows = self._session.scalars(select(Row).where(Row.key == key).order_by(Row.version)).all()

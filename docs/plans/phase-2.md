@@ -527,3 +527,40 @@ Notes only; nothing here is built in phase 2.
 ## 17. Results and deviations (recorded during implementation)
 
 1. **Deviation from `CLAUDE.md`'s agent table (decision 1):** step 17 has no DiscoveryAssistant in phase 2. Search is deterministic matching (assumptions 7 to 17). The agent is added in phase 3, once `agents/base.Agent.run()` exists. The search is read-only and makes no model call, so rules 1 and 4 are not affected.
+
+### Tasks 1 to 3 (checkpoint 1)
+
+Tests: 374 at the start, 507 at checkpoint 1. All pass, none skipped, no warnings; the full suite was run twice.
+
+**Finding from phase 1, not fixed here: check constraints are named twice over in the database.**
+
+- Migrations `0002` to `0004` passed full names such as `ck_products_code_format`. `migrations/env.py` gives Alembic the naming convention, so each name was treated as the short name and prefixed again: the database holds `ck_products_ck_products_code_format`. Every check constraint from `0002` to `0004` is affected.
+- Nothing is broken. The tests match constraint names as part of the error text, so they pass, and `test_orm_models_match_migrations` does not compare check constraints.
+- `0006` names its check constraints with `op.f()`, so they are right (`ck_products_visibility`). `test_0006_check_constraints_have_the_convention_names` guards it.
+- Not fixed, because an applied migration is never edited. Renaming the old constraints needs its own migration. Your decision.
+
+**Deviations from the plan:**
+
+1. `test_migrations.py` changed in task 1, not task 3. `test_single_head` fails as soon as `0006` exists.
+2. `migrations/models.py` did not change. Every new table class is in `core/repositories/tables.py`, which it already imports.
+3. `NothingToRequest` and `TermInGlossary` are added in task 7, where they are first raised. `ConsumerRequestNotFound` was added in task 3.
+
+**More than the plan listed:**
+
+1. `GlossaryRepository.require_keys()`: one query that names every unknown key. Products, requirements and the request log all use it.
+2. `ConsumerRequestRepository.record()` also checks the element keys, because no trigger can guard an array column.
+3. `ProductWithElements` is what `list_with_elements()` returns. Elements and terms are returned in alphabetical order.
+4. The entitlement decision treats any visibility other than `open` as restricted (fail closed), and never reads a user id as a role.
+5. `seq` is `GENERATED ALWAYS`: the database refuses a hand-written value, so nobody can insert an event that sorts before an existing one.
+
+**Trigger proof.** With `APPEND_ONLY` and `GLOSSARY_KEYED` emptied in `0006`, 18 tests failed: 15 in `test_append_only.py` (UPDATE, DELETE and TRUNCATE on the five tables), the two glossary-key tests and the grants ordering test. The file was restored with the Edit tool.
+
+**Application database:**
+
+```
+alembic upgrade head     Running upgrade 0005 -> 0006     exit 0
+alembic current          0006 (head)
+python -m core.seed      glossary seed: 0 inserted, 33 already present
+```
+
+The 12 new triggers are present: 5 append-only, 5 no-truncate, 2 glossary key (`product_elements`, `requirement_elements`). The six tables hold no rows.
