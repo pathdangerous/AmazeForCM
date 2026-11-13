@@ -67,7 +67,7 @@ export default function App() {
   return (
     <main>
       <h1>{TITLE}</h1>
-      <p>Phase 0 skeleton. Synthetic data only.</p>
+      <p>Marketplace features arrive in phase 2. Synthetic data only.</p>
       <dl>
         <dt>API</dt>
         <dd data-testid="api-status">{status(apiReachable, apiReachable ? "ok" : "unreachable")}</dd>
@@ -78,6 +78,10 @@ export default function App() {
         <dt>Adapters</dt>
         <dd data-testid="adapters">
           {health ? Object.entries(health.adapters).map(([k, v]) => `${k}: ${v}`).join(", ") : "-"}
+        </dd>
+        <dt>Unavailable</dt>
+        <dd data-testid="unavailable">
+          {health ? status(health.unavailable.length === 0, health.unavailable.join(", ") || "none") : "-"}
         </dd>
         <dt>
           <label htmlFor="dev-user">Dev user</label>

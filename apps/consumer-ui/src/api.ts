@@ -4,6 +4,7 @@ export type Health = {
   status: "ok" | "error";
   database: "ok" | "unreachable" | "not_configured";
   adapters: Record<string, string>;
+  unavailable: string[]; // selected adapters that are still Azure stubs
 };
 
 export type User = {
