@@ -1,6 +1,6 @@
 # Phase 2 plan — Consumption request and routing (17, routing checks, 01)
 
-**Status:** awaiting approval. Second draft: it replaces the first draft (`c5b5a77`) and applies your 16 decisions (section 3).
+**Status:** approved on 2026-11-14 with three changes: an entitlement tie-break in the cover rule (assumption 25), one-word alias matches arrive unticked (assumption 13), and a phase 8 note on notifications (section 16). Those changes are applied below. It replaces the first draft (`c5b5a77`) and applies your 16 decisions (section 3).
 **Date:** 2026-11-14. **Branch:** `phase-2`, created from `main` at `69f2d4d`. **Scope:** phase 2 of `BUILD_PLAN.md` only. Local only; nothing is pushed.
 
 ## 1. Goal and "done when"
@@ -74,7 +74,7 @@ Phase 2 is done when all five are true:
 10. **(changed) Longest match, left to right, inside one segment.** At each word, try the longest phrase first (element and domain phrases together), down to one word. If nothing matches, a stop-word is skipped and any other word joins the current unmatched term. A match, a stop-word or the end of a segment closes the term. So `esg score and carbon footprint` gives two terms; the first draft gave one.
 11. **(new) No stemming, plurals or spelling help.** `prices` does not match `price`. This is risk 1.
 12. **A phrase owned by two elements** lists both as candidates, neither ticked (decision 13). **(new)** If a domain phrase ever equals an element phrase, the element wins. A seed test proves today's glossary has neither case.
-13. **What matching returns** (`Match`, a plain model): matched element keys, ambiguous phrases with their candidates, matched domains, and unmatched terms. Each list is in order of first appearance, with no duplicates. A domain is never in the elements or the terms (decision 12). In the UI, matched elements start ticked; candidates and terms start unticked.
+13. **What matching returns** (`Match`, a plain model): matched element keys, ambiguous phrases with their candidates, matched domains, and unmatched terms. Each list is in order of first appearance, with no duplicates. A domain is never in the elements or the terms (decision 12). **Ticks:** each matched element says whether it starts ticked. An element matched through its key, its name or an alias of two or more words starts ticked. An element matched only through a one-word alias (`open`, `high`, `ask`, `offer`) starts unticked. Candidates and terms start unticked.
 
 **Search (step 17, `core/steps/s17_discover.py`)**
 
@@ -114,11 +114,12 @@ Phase 2 is done when all five are true:
 25. **The fixed rule for choosing a cover.** Pick, in this order:
     1. the most elements of E covered;
     2. the fewest products;
-    3. the fewest elements held beyond E;
-    4. product codes in alphabetical order (the sorted list of codes compared as text).
+    3. the most products the requester is entitled to;
+    4. the fewest elements held beyond E;
+    5. product codes in alphabetical order (the sorted list of codes compared as text).
 
     It is brute force over all combinations of up to 3 products (risk 2).
-26. **Entitlement does not change routing.** A restricted product still counts for reuse or compose. The result carries each product's access state and route.
+26. **Entitlement never changes the outcome.** A restricted product still counts for reuse or compose. Entitlement only breaks a tie between covers (assumption 25, line 3): when an open and a restricted product cover the same elements, the open one is chosen. The result carries each product's access state and route.
 27. **"In the domains"** means: some feed is `registered`, has at least one load with status `released`, and its current mapping (the highest version of a source field) points at the element. Every mapping row is approved, because the database refuses any other (`0005`). Nothing in Amaze meets this until phase 7, so `create_product` is reached only in tests.
 28. **compose and create_product build nothing.** compose is the stub `CLAUDE.md` names. For `create_product`, `request_data` notifies the backend team. Step 20 is phase 7.
 29. **(changed) Requester messages, exact text:**
@@ -263,10 +264,10 @@ The names are `CLAUDE.md`'s, letter for letter.
 | Decision | Named test |
 |---|---|
 | 1 search is deterministic | `test_import_boundaries.py` with `core.steps` in the boundary; `test_checker_catches_planted_violation[core.steps]` |
-| 2 matching | `test_matching.py`: `test_case_is_ignored`, `test_longest_phrase_first`, `test_stop_words_are_skipped`, `test_stop_word_list_is_pinned`, `test_a_phrase_starting_with_a_stop_word_still_matches`, `test_a_stop_word_closes_an_unmatched_term`; `test_api_consumer.py::test_only_ticked_terms_are_kept` |
+| 2 matching | `test_matching.py`: `test_case_is_ignored`, `test_longest_phrase_first`, `test_stop_words_are_skipped`, `test_stop_word_list_is_pinned`, `test_a_phrase_starting_with_a_stop_word_still_matches`, `test_a_stop_word_closes_an_unmatched_term`, `test_key_and_name_matches_arrive_ticked`, `test_a_one_word_alias_match_arrives_unticked`; `test_api_consumer.py::test_only_ticked_terms_are_kept` |
 | 3 terms | `test_routing.py::test_only_terms_raises_a_requirement`, `test_ticked_terms_raise_a_requirement_even_when_products_cover_the_elements` |
 | 4 entitlement | `test_entitlement.py`: `test_open_product_ignores_grant_events`, `test_owner_always_has_access`, `test_latest_user_event_wins`, `test_user_event_beats_role_event`, `test_latest_role_event_wins`, `test_any_granted_role_is_enough`, `test_no_event_is_not_entitled`, `test_route_text`; `test_repo_grants.py::test_events_are_append_only_and_ordered_by_seq` |
-| 5 routing | the four outcome tests, plus `test_checks_run_in_order`, `test_cover_rule_tie_breaks` (one case per tie-break), `test_at_most_three_products`, `test_partial_cover_with_in_domain_rest_is_create_product`, `test_restricted_product_still_counts`; `test_coverage.py` (in the domains: registered feed, released load, current mapping; and the three ways to miss) |
+| 5 routing | the four outcome tests, plus `test_checks_run_in_order`, `test_cover_rule_tie_breaks` (one case per tie-break), `test_an_open_product_beats_a_restricted_one_covering_the_same_elements`, `test_at_most_three_products`, `test_partial_cover_with_in_domain_rest_is_create_product`, `test_restricted_product_still_counts`; `test_coverage.py` (in the domains: registered feed, released load, current mapping; and the three ways to miss) |
 | 6 demo seed | `test_demo_seed.py`: `test_every_demo_code_starts_with_demo`, `test_loader_refuses_a_code_without_the_prefix`, `test_glossary_seed_creates_no_product` |
 | 7 request log | `test_append_only.py[consumer_requests]`; `test_api_consumer.py::test_my_requests_lists_every_outcome` |
 | 10 requester only | `test_api_consumer.py`: `test_backend_user_gets_403`, `test_no_user_gets_401`, `test_another_requesters_request_is_404` |
@@ -353,7 +354,7 @@ Checked by `test_demo_seed.py`:
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/consumer/search?q=` | `match` (elements, ambiguous candidates, domains, terms) and `hits` (each `found` or `not_entitled_visible`, with the product's elements and, where restricted, the route) |
+| `GET /api/consumer/search?q=` | `match` (elements, each with whether it starts ticked; ambiguous candidates; domains; terms) and `hits` (each `found` or `not_entitled_visible`, with the product's elements and, where restricted, the route) |
 | `POST /api/consumer/requests` | body `{query, purpose, element_keys, terms}`. Calls `request_data` and commits. 201 with the request id, the routing result, the step 01 result if any, `message` and `notes` |
 | `GET /api/consumer/requests` | the caller's requests, newest first: when, query, outcome, products, message, and the requirement's current status where there is one |
 | `GET /api/consumer/requests/{id}` | one of the caller's requests with its stored result; 404 otherwise |
@@ -378,7 +379,7 @@ Checked by `test_api_consumer.py`. The tests load the glossary and the demo fixt
    - a box and a Search button;
    - the hits, each with its name, description, elements, and an "Available" or "Access restricted" badge with the route;
    - "No products hold this data." when there are none;
-   - below the hits, "Request this data": matched elements ticked, candidate elements unticked, unmatched terms unticked under the question "Is this a data item you need?", and an optional purpose box;
+   - below the hits, "Request this data": matched elements ticked or unticked as the match says (assumption 13), candidate elements unticked, unmatched terms unticked under the question "Is this a data item you need?", and an optional purpose box;
    - Submit is disabled while nothing is ticked;
    - after Submit: the message, the notes and a link to My requests.
 3. **My requests:** a table of when, what was asked, outcome, products, requirement status and message, newest first. "No requests yet." when it is empty.
@@ -498,7 +499,7 @@ Then in the browser at `http://localhost:5174`, signed in as Riley Requester, ru
 
 ## 15. Risks
 
-1. **Matching is text only.** No plurals, stemming or synonyms beyond the glossary aliases: `prices` is offered as an unmatched term, and "rate of return" is offered as `rate` and `return`. One-word aliases such as `open`, `high`, `ask` and `offer` match everyday words and arrive ticked. The requester's ticks are the safety net until the DiscoveryAssistant.
+1. **Matching is text only.** No plurals, stemming or synonyms beyond the glossary aliases: `prices` is offered as an unmatched term, and "rate of return" is offered as `rate` and `return`. One-word aliases such as `open`, `high`, `ask` and `offer` match everyday words, so an element matched only that way arrives unticked (assumption 13) and is requested only if the requester ticks it. One-word keys and names (`volume`, `currency`, `ticker`) still arrive ticked. The requester's ticks are the safety net until the DiscoveryAssistant.
 2. **The cover search is brute force over combinations of up to 3 products.** It is instant for tens of products and slow for thousands. A production catalogue needs an index or a greedy rule; the tie-break rule would then need re-checking.
 3. **`create_product` cannot be shown in the demo** until phase 7 produces released loads. It is covered by tests only.
 4. **Demo products have no feeds or loads behind them.** The `demo_` prefix marks them; phase 7's real products will sit beside them.
@@ -509,13 +510,19 @@ Then in the browser at `http://localhost:5174`, signed in as Riley Requester, ru
 9. **Notifications reach only users who hold the role.** The dev users always include one backend team member and one glossary owner. With Entra ID a role could be empty; the result's `notified` list would show it. Phase 8 must decide what happens then.
 10. **API write tests share the test's rolled-back transaction.** The endpoint commits and rolls back on that session, so test data must be committed to the savepoint before the request. If this proves unstable, each request gets its own session on the same connection (phase 1 plan, risk 4).
 
-## 16. Carried forward to phase 3
+## 16. Carried forward to later phases
 
 Notes only; nothing here is built in phase 2.
+
+**Phase 3**
 
 1. **DiscoveryAssistant** (the `BUILD_PLAN.md` bullet in assumption 44).
 2. **Agent-backed steps and the import boundary.** Phase 2 puts all of `core.steps` inside the boundary. The phase 3 plan must choose: steps receive the agent as an argument and stay inside, or the boundary becomes a list of the deterministic step modules.
 3. **"Known source?"** starts from a requirement with status `defined`.
+
+**Phase 8**
+
+4. **Email and Teams notifications must go out after the commit.** In phase 2 the in-app notifier writes its rows inside the request's transaction, so a rolled-back request leaves no notification. An email or Teams message cannot be rolled back. The phase 8 adapter must therefore use an outbox: the step writes the message to a table inside the transaction, and a sender delivers it only after the commit. In-app notifications stay in the transaction as they are.
 
 ## 17. Results and deviations (recorded during implementation)
 
