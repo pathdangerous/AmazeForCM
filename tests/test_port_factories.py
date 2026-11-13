@@ -14,12 +14,16 @@ CASES = [
     ("ports.llm:get_llm_provider", "llm_provider", "azure_openai", "ports.llm.azure_openai:AzureOpenAIProvider"),
     ("ports.storage:get_blob_store", "storage_provider", "local", "ports.storage.local:LocalBlobStore"),
     ("ports.storage:get_blob_store", "storage_provider", "azure_blob", "ports.storage.azure_blob:AzureBlobStore"),
+    ("ports.scheduler:get_scheduler", "scheduler_provider", "local", "ports.scheduler.local:LocalScheduler"),
+    ("ports.scheduler:get_scheduler", "scheduler_provider", "azure_functions",
+     "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
 ]
 
 DEFAULTS = {
     "ports.secrets:get_secrets": "ports.secrets.env:EnvSecrets",
     "ports.llm:get_llm_provider": "ports.llm.mock:MockProvider",
     "ports.storage:get_blob_store": "ports.storage.local:LocalBlobStore",
+    "ports.scheduler:get_scheduler": "ports.scheduler.local:LocalScheduler",
 }
 
 

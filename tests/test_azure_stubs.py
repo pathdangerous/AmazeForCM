@@ -22,6 +22,7 @@ PAIRS = [
     ("ports.secrets.env:EnvSecrets", "ports.secrets.key_vault:KeyVaultSecrets"),
     ("ports.llm.mock:MockProvider", "ports.llm.azure_openai:AzureOpenAIProvider"),
     ("ports.storage.local:LocalBlobStore", "ports.storage.azure_blob:AzureBlobStore"),
+    ("ports.scheduler.local:LocalScheduler", "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
 ]
 
 
