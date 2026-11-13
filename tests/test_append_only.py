@@ -1,0 +1,42 @@
+"""Append-only tables (CLAUDE.md rule 7, and decisions never overwritten): the database itself refuses
+UPDATE and DELETE, even for hand-written SQL. Each later task adds its table to ROWS."""
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+
+from tests.conftest import dev_user_for
+
+
+def _proposal_log_row(db_session, request):
+    return "proposal_log", request.getfixturevalue("logged_call").id
+
+
+def _approvals_row(db_session, request):
+    from core.repositories.proposals import ProposalRepository
+
+    proposal = request.getfixturevalue("make_proposal")()
+    approval = ProposalRepository(db_session).record_decision(
+        proposal.id, user=dev_user_for("data_steward"), decision="approved"
+    )
+    return "approvals", approval.id
+
+
+ROWS = {
+    "proposal_log": _proposal_log_row,
+    "approvals": _approvals_row,
+}
+
+
+@pytest.mark.parametrize("table", sorted(ROWS))
+def test_update_is_refused(db_session, request, table):
+    name, row_id = ROWS[table](db_session, request)
+    with pytest.raises(DBAPIError, match=f"{name} is append-only"):
+        db_session.execute(text(f"UPDATE {name} SET created_at = created_at WHERE id = :id"), {"id": row_id})
+
+
+@pytest.mark.parametrize("table", sorted(ROWS))
+def test_delete_is_refused(db_session, request, table):
+    name, row_id = ROWS[table](db_session, request)
+    with pytest.raises(DBAPIError, match=f"{name} is append-only"):
+        db_session.execute(text(f"DELETE FROM {name} WHERE id = :id"), {"id": row_id})

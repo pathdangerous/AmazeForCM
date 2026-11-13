@@ -66,3 +66,64 @@ def db_session(migrated_engine) -> Session:
         finally:
             session.close()
             transaction.rollback()
+
+
+# ---------------------------------------------------------------- phase 1: proposals and approvals
+
+
+def dev_user_for(role: str):
+    """The seeded dev user who holds this role (dev-data-steward for data_steward, and so on)."""
+    from ports.identity.dev import DevIdentity
+
+    user = DevIdentity().get_user("dev-" + role.replace("_", "-"))
+    assert user is not None and role in user.roles, role
+    return user
+
+
+@pytest.fixture
+def logged_call(db_session):
+    """One logged model call (a proposal_log row) made with the MockProvider smoke fixture."""
+    from pydantic import BaseModel
+
+    from core.proposal_log import ProposalLog
+    from ports.llm.base import Message
+    from ports.llm.mock import MockProvider
+
+    class SmokeOutput(BaseModel):
+        summary: str
+        confidence: float
+
+    result = MockProvider().complete(
+        prompt_id="phase0_smoke", prompt_version="v1",
+        messages=[Message(role="user", content="hi")], response_schema=SmokeOutput,
+    )
+    return ProposalLog(db_session).record(agent_name="SmokeAgent", input_ref="blob://inputs/1", result=result)
+
+
+@pytest.fixture
+def make_proposal(db_session, logged_call):
+    """Create a pending proposal linked to logged_call."""
+    from core.repositories.proposals import ProposalRepository
+
+    def _make(kind="mapping", roles=("data_steward",), autonomy="A2", payload=None, **links):
+        return ProposalRepository(db_session).create(
+            proposal_log_id=logged_call.id, kind=kind, payload=payload or {"note": "synthetic"},
+            autonomy=autonomy, required_approver_roles=list(roles), **links,
+        )
+
+    return _make
+
+
+@pytest.fixture
+def approved_proposal(db_session, make_proposal):
+    """Create a proposal and have each required role's dev user approve it, in order."""
+    from core.repositories.proposals import ProposalRepository
+
+    def _approve(kind="mapping", roles=("data_steward",), **links):
+        proposal = make_proposal(kind=kind, roles=roles, **links)
+        repo = ProposalRepository(db_session)
+        for role in roles:
+            repo.record_decision(proposal.id, user=dev_user_for(role), decision="approved")
+        return repo.get(proposal.id)
+
+    return _approve

@@ -1,13 +1,13 @@
-"""ProposalLog (CLAUDE.md rule 4): every AI proposal logged with agent, provider, model and version,
-prompt version, input reference and output; then who approved or rejected it, once."""
-
-import uuid
+"""ProposalLog (CLAUDE.md rule 4): every model call is logged with agent, provider, model and version,
+prompt id and version, input reference and output. Who approved or rejected a proposal is recorded in
+the approvals table (tests/test_repo_proposals.py), not here."""
 
 import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from core.proposal_log import ProposalAlreadyDecided, ProposalLog, ProposalLogEntry, ProposalNotFound
+from core.proposal_log import ProposalLog
+from core.repositories.tables import ProposalLogEntry
 from ports.llm.base import Message
 from ports.llm.mock import MockProvider
 
@@ -39,45 +39,12 @@ def test_record_stores_every_rule_4_field(db_session, result):
     assert stored.output == result.output.model_dump(mode="json")
     assert stored.latency_ms == 0
     assert stored.raw_ref is None
-    assert stored.status == "pending"
     assert stored.created_at is not None
-    assert (stored.decided_by, stored.decided_at, stored.decision_note) == (None, None, None)
 
 
-def test_record_decision_stores_who_and_when(db_session, result):
-    log = ProposalLog(db_session)
-    entry = log.record(agent_name="SmokeAgent", input_ref="ref", result=result)
-    decided = log.record_decision(entry.id, decision="approved", decided_by="dev-data-steward", note="looks right")
-    db_session.expire_all()
-    stored = db_session.get(ProposalLogEntry, decided.id)
-    assert stored.status == "approved"
-    assert stored.decided_by == "dev-data-steward"
-    assert stored.decided_at is not None
-    assert stored.decision_note == "looks right"
-
-
-def test_second_decision_is_refused_and_first_kept(db_session, result):
-    log = ProposalLog(db_session)
-    entry = log.record(agent_name="SmokeAgent", input_ref="ref", result=result)
-    log.record_decision(entry.id, decision="rejected", decided_by="dev-data-steward")
-    with pytest.raises(ProposalAlreadyDecided):
-        log.record_decision(entry.id, decision="approved", decided_by="dev-checker")
-    db_session.expire_all()
-    stored = db_session.get(ProposalLogEntry, entry.id)
-    assert (stored.status, stored.decided_by) == ("rejected", "dev-data-steward")
-
-
-def test_decision_on_unknown_entry(db_session):
-    with pytest.raises(ProposalNotFound):
-        ProposalLog(db_session).record_decision(uuid.uuid4(), decision="approved", decided_by="dev-checker")
-
-
-@pytest.mark.parametrize(("decision", "who"), [("maybe", "dev-checker"), ("approved", ""), ("approved", "  ")])
-def test_invalid_decision_or_empty_approver(db_session, result, decision, who):
-    log = ProposalLog(db_session)
-    entry = log.record(agent_name="SmokeAgent", input_ref="ref", result=result)
-    with pytest.raises(ValueError):
-        log.record_decision(entry.id, decision=decision, decided_by=who)
+def test_log_has_no_decision_of_its_own():
+    assert not hasattr(ProposalLog, "record_decision")
+    assert not {"status", "decided_by", "decided_at", "decision_note"} & set(ProposalLogEntry.__table__.columns.keys())
 
 
 @pytest.mark.parametrize("field", ["agent_name", "input_ref"])

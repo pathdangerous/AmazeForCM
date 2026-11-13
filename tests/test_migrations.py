@@ -1,4 +1,4 @@
-"""Alembic migrations on the test database: upgrade, downgrade and upgrade again; constraints hold."""
+"""Alembic migrations on the test database: one head, upgrade/downgrade/upgrade, models match tables."""
 
 from __future__ import annotations
 
@@ -8,11 +8,12 @@ import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-TABLES = {"proposal_log", "notifications"}
+HEAD = "0002"
+TABLES = {"proposal_log", "notifications", "proposals", "approvals"}
 
 
 def _tables(url: str) -> set[str]:
@@ -23,9 +24,9 @@ def _tables(url: str) -> set[str]:
         engine.dispose()
 
 
-def test_single_head_is_0001(test_database_url):
+def test_single_head(test_database_url):
     script = ScriptDirectory.from_config(alembic_config(test_database_url))
-    assert script.get_heads() == ["0001"]
+    assert script.get_heads() == [HEAD]
 
 
 def test_upgrade_downgrade_upgrade(migrated_engine, test_database_url):
@@ -63,8 +64,7 @@ def test_proposal_log_columns(migrated_engine):
     columns = {c["name"] for c in inspect(migrated_engine).get_columns("proposal_log")}
     assert columns == {
         "id", "created_at", "agent_name", "provider", "model", "model_version", "prompt_id",
-        "prompt_version", "input_ref", "output", "raw_ref", "latency_ms", "status",
-        "decided_by", "decided_at", "decision_note",
+        "prompt_version", "input_ref", "output", "raw_ref", "latency_ms",
     }
 
 
@@ -73,36 +73,30 @@ def test_notifications_columns(migrated_engine):
     assert columns == {"id", "created_at", "recipient", "subject", "body", "link", "read_at"}
 
 
-INSERT = text(
-    "INSERT INTO proposal_log (id, agent_name, provider, model, model_version, prompt_id, "
-    "prompt_version, input_ref, output, latency_ms, status, decided_by, decided_at) VALUES "
-    "(:id, 'a', 'mock', 'mock', '1', 'p', 'v1', 'ref', '{}', 0, :status, :by, :at)"
-)
+def test_proposal_audit_view_exists(migrated_engine):
+    assert "proposal_audit" in inspect(migrated_engine).get_view_names()
 
 
-def _insert(session, status, by=None, at=None):
-    session.execute(INSERT, {"id": uuid.uuid4(), "status": status, "by": by, "at": at})
-    session.flush()
-
-
-def test_status_must_be_one_of_three(db_session):
-    # An unknown status breaks both check constraints; PostgreSQL reports whichever it tests first.
-    with pytest.raises(IntegrityError, match="ck_proposal_log_(status|decision_complete)"):
-        _insert(db_session, "maybe", by="dev-data-steward", at="2026-01-01T00:00:00Z")
-
-
-def test_decided_row_needs_who_and_when(db_session):
-    with pytest.raises(IntegrityError, match="ck_proposal_log_decision_complete"):
-        _insert(db_session, "approved")
-
-
-def test_pending_row_cannot_carry_a_decision(db_session):
-    with pytest.raises(IntegrityError, match="ck_proposal_log_decision_complete"):
-        _insert(db_session, "pending", by="dev-data-steward", at="2026-01-01T00:00:00Z")
-
-
-def test_valid_rows_are_accepted(db_session):
-    _insert(db_session, "pending")
-    _insert(db_session, "rejected", by="dev-data-steward", at="2026-01-01T00:00:00Z")
-    count = db_session.execute(text("SELECT count(*) FROM proposal_log")).scalar_one()
-    assert count == 2
+def test_0002_refuses_to_drop_a_recorded_decision(migrated_engine, test_database_url):
+    """Upgrading from 0001 must stop rather than lose a decision stored in proposal_log."""
+    config = alembic_config(test_database_url)
+    row_id = uuid.uuid4()
+    try:
+        command.downgrade(config, "0001")
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO proposal_log (id, agent_name, provider, model, model_version, prompt_id, "
+                    "prompt_version, input_ref, output, latency_ms, status, decided_by, decided_at) VALUES "
+                    "(:id, 'a', 'mock', 'mock', '1', 'p', 'v1', 'ref', '{}', 0, 'approved', 'dev-checker', now())"
+                ),
+                {"id": row_id},
+            )
+        with pytest.raises(DBAPIError, match="would lose"):
+            command.upgrade(config, "0002")
+    finally:
+        with migrated_engine.begin() as connection:
+            version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            if version == "0001":
+                connection.execute(text("DELETE FROM proposal_log WHERE id = :id"), {"id": row_id})
+        command.upgrade(config, "head")

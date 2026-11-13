@@ -15,7 +15,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNED_PACKAGES = ("core", "agents", "ports", "apps")
-BOUNDARY_PACKAGES = ("core.engine", "core.entitlement")
+# core.domain and core.repositories are included because the run engine will import both (phase 1 plan).
+BOUNDARY_PACKAGES = ("core.engine", "core.entitlement", "core.domain", "core.repositories")
 FORBIDDEN = ("agents", "ports.llm")
 
 
