@@ -35,6 +35,9 @@ One end-to-end path, built in phases. Each phase ends with something that runs a
 - Requester picks a source in `consumer-ui`; sees "Your data is getting onboarded; we will notify you once it is ready."
 - Local HTTP or file connector fetches a sample; local scheduler registers a daily job (Azure Functions stub in place).
 - Negative outcomes: `no_fit`, `approval_missing`, `source_down`.
+- The agent base class logs every proposal itself: `agents/base.Agent.run()` is the only public entry point; it calls the `LLMProvider`, then `ProposalLog.record()`, then creates the proposal rows linked to that log row. A subclass cannot replace `run()`. Tests prove a subclass defining `run()` is refused when the class is created, and that every proposal points at its `proposal_log` row (phase 1 plan, section 18).
+- `HttpConnector` closes its connections: it gets `close()` and works in a `with` block; a test asserts the connection is closed after a fetch, including a failed one.
+- Local scheduler jobs are kept in memory today: store them in PostgreSQL or re-register them from the database at start-up (phase 0 plan, risk 1).
 - **Done when:** picking a source produces a fetched file handed to step 02.
 
 ## Phase 4 — Profile, sign-off, register (02–04)

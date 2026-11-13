@@ -24,6 +24,7 @@ py -3.14 -m venv .venv
 Copy-Item .env.example .env        # then replace CHANGE_ME in DATABASE_URL and TEST_DATABASE_URL
 .\scripts\setup_db.ps1             # asks once for the postgres superuser password
 .\.venv\Scripts\python -m alembic upgrade head
+.\.venv\Scripts\python -m core.seed          # synthetic glossary: 33 elements; safe to run again
 npm --prefix apps\backend-ui install
 npm --prefix apps\consumer-ui install
 ```
@@ -43,17 +44,27 @@ each. Close the three windows to stop.
 | What | URL |
 |---|---|
 | API health | http://localhost:8000/api/health |
-| Backend workbench (backend-ui) | http://localhost:5173 |
+| Backend workbench: status | http://localhost:5173/#/status |
+| Backend workbench: glossary | http://localhost:5173/#/glossary |
+| Backend workbench: feed registry | http://localhost:5173/#/feeds |
 | Marketplace (consumer-ui) | http://localhost:5174 |
+
+Pick a dev user in the header; the glossary and feed registry need one of the six backend roles.
+`/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
+Azure stub.
 
 Check:
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0001 (head)
+.\.venv\Scripts\python -m alembic current     # expect: 0004 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```
 
 Adapters are chosen in `.env` (`LLM_PROVIDER`, `STORAGE_PROVIDER`, ...). The local ones are the
 defaults; the Azure ones are stubs until the move and raise `NotImplementedError`.
+
+The database protects its own rules: append-only tables (`proposal_log`, `approvals`,
+`glossary_elements`, `mappings`, `rules`) refuse UPDATE, DELETE and TRUNCATE, and configuration
+rows are accepted only for an approved proposal. Correct a mistake by adding a new version.

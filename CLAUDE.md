@@ -40,6 +40,10 @@ apps/
   consumer-ui/            Marketplace portal for end users
 core/
   domain/                 Pydantic models: Feed, Requirement, Proposal, Mapping, Rule, Load, Product, ...
+  repositories/           Tables (tables.py), named errors (errors.py) and one repository per model.
+                          Repositories flush but never commit; the caller owns the transaction.
+  proposal_log.py         ProposalLog.record(): one row per model call (rule 4)
+  seed.py                 python -m core.seed: loads the synthetic glossary (fixtures/glossary/)
   steps/                  One module per step (s1_scope.py ... s22_monitor.py); each returns a typed StepResult
   engine/                 Deterministic run engine (step 13). No AI imports allowed here.
   entitlement/            Rules-based entitlement decisions. No AI imports allowed here.
@@ -158,6 +162,7 @@ Order of precedence when they disagree:
 ## How to work in this repo
 
 - Follow the Superpowers flow for each phase: brainstorm → plan in `docs/plans/` → tests for the step's negative outcomes first → implement → review.
-- Keep `core/engine/` and `core/entitlement/` free of `agents` and `ports.llm` imports; a test enforces this.
+- Keep `core/engine/`, `core/entitlement/`, `core/domain/` and `core/repositories/` free of `agents` and `ports.llm` imports; a test enforces this.
+- Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. Never work around these triggers; add a new version instead.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.
 - Do not add features beyond the current phase in `BUILD_PLAN.md`.
