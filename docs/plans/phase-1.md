@@ -129,7 +129,7 @@ I expect some breaks to go unnoticed: my reading says 6 (a second guard catches 
 
 ### d. Recorded for phase 3
 
-See section 16. Phase 1 already delivers half of the first point: `proposals.proposal_log_id` is required, so the database refuses a proposal that has no logged model call.
+See section 18. Phase 1 already delivers half of the first point: `proposals.proposal_log_id` is required, so the database refuses a proposal that has no logged model call.
 
 ## 6. Data model
 
@@ -383,7 +383,36 @@ Steps and `StepResult`, agents, any screen that creates or changes data, the app
 6. **Search matches aliases by text.** Fine for 33 elements; a large glossary would need an index.
 7. **PostgreSQL 18.6 to 18.7 in place, before task 4.** A minor upgrade keeps the data files, so the databases, the `amaze` role and its password stay. I re-check the server version and run the full test suite before starting task 4.
 
-## 16. Carried forward to phase 3
+## 17. Results and deviations (recorded during implementation)
+
+### Task 1: storage break results
+
+Before task 1, three of nine breaks went unnoticed: 6, 8 and 9, as predicted. Reading the code for break 8 also showed a **real data-loss bug from phase 0**: `put("report")` wrote its temp file to `report.tmp`, which is a valid key. An existing blob `report.tmp` was overwritten and then renamed away. For the same reason, every key ending in `.tmp` was hidden from `list_keys`.
+
+**Fix (tests written first and shown failing):**
+- temp files are now `.<name>.<random>.tmp`;
+- keys cannot have a segment starting with `.`, a rule `check_key` applies to every adapter, so the Azure adapter will accept the same keys;
+- `list_keys` skips dot-names;
+- a failed `put` removes its temp file.
+
+After the fix, all ten breaks are caught (break 10 restores the phase 0 temp naming):
+
+| # | Break | Caught by |
+|---|---|---|
+| 1 | `put` returns the wrong reference | round trip |
+| 2 | temp file never moved into place | round trip, overwrite, list with prefix, and three new tests |
+| 3 | `get` returns empty bytes for a missing blob | missing blob |
+| 4 | `exists` always true | missing blob; unfinished writes ignored |
+| 5 | `list_keys` ignores the prefix | list with prefix |
+| 6 | key check stops rejecting `..` and dot segments | **new:** `..` rejected inside root; dot segments rejected |
+| 7 | key check stops rejecting `\` | malformed keys |
+| 8 | `list_keys` returns leftover temp files | **new:** unfinished writes ignored |
+| 9 | factory root relative to the current folder | **new:** root does not depend on the current folder |
+| 10 | temp file named `<name>.tmp` (phase 0 design) | **new:** neighbouring `.tmp` key untouched; unfinished writes ignored |
+
+After every break the file was restored from its saved text; `git status` showed only the intended fix.
+
+## 18. Carried forward to phase 3
 
 These two points are also added to phase 3 in `BUILD_PLAN.md` (task 14).
 

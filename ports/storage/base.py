@@ -10,17 +10,21 @@ class BlobNotFound(LookupError):
 
 
 class InvalidBlobKey(ValueError):
-    """The key is empty, absolute, contains '..', '.', '\\' or empty segments, or ends with '/'."""
+    """The key is empty, absolute, contains '\\' or ':', has an empty segment, ends with '/',
+    or has a segment starting with '.' (which covers '.' and '..')."""
 
 
 def check_key(key: str) -> list[str]:
-    """Validate a key and return its segments. Shared by every adapter so all accept the same keys."""
+    """Validate a key and return its segments. Shared by every adapter so all accept the same keys.
+
+    Segments starting with '.' are reserved: the local adapter uses dot-names for unfinished writes.
+    """
     parts = key.split("/")
     if (
         not key
         or "\\" in key
         or ":" in key
-        or any(part in ("", ".", "..") for part in parts)
+        or any(part == "" or part.startswith(".") for part in parts)
     ):
         raise InvalidBlobKey(f"Invalid blob key {key!r}")
     return parts
