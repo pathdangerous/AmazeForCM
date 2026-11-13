@@ -60,6 +60,30 @@ def test_step_17_hits_round_trip():
     round_trips(Hit, NotEntitledVisible(product=product, route="Ask Devon Owner for access to P"))
 
 
+# ---- routing checks (task 6)
+
+
+def test_routing_outcomes_are_claude_mds():
+    from core.domain.consumer_request import ROUTING_OUTCOMES
+    from core.steps.routing import RoutingResult
+
+    assert union_outcomes(RoutingResult) == claude_md_outcomes("Routing checks") == list(ROUTING_OUTCOMES)
+
+
+def test_routing_results_round_trip():
+    from core.steps.routing import Compose, CreateProduct, ProductAccess, RaiseRequirement, Reuse, RoutingResult
+
+    open_one = ProductAccess(code="p", name="P", covers=["close_price"], entitled=True, route=None)
+    closed = ProductAccess(code="q", name="Q", covers=["bid_price"], entitled=False, route="Ask Devon Owner for access to Q")
+    for value in (
+        Reuse(product=open_one),
+        Compose(products=[open_one, closed]),
+        CreateProduct(elements=["volume"], covered_by=[open_one]),
+        RaiseRequirement(elements=["volume"], terms=["esg score"], in_domains=[], covered_by=[closed]),
+    ):
+        round_trips(RoutingResult, value)
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str
