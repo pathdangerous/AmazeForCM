@@ -19,7 +19,7 @@ Phase 0 is done when all four are true:
 | Python | 3.14.5 at `C:\Python314`, reached with `py -3.14` | OK. `py` with no version now selects 3.15, so every command names `-3.14` |
 | Node / npm | v24.13.0 / 11.6.2 | OK |
 | Git | 2.56.1 | Repository initialised today; baseline commit on `main` |
-| PostgreSQL | 18.4, service `postgresql-x64-18` running, `localhost:5432` accepting connections | OK |
+| PostgreSQL | Server 18.6 (service `postgresql-x64-18`, `C:\Program Files\PostgreSQL\18`), running, `localhost:5432` accepting connections. The `psql` on PATH is the 18.4 client in `F:\PostgreSQL\18` | OK: same major version as the 18.4 target |
 | `postgres` superuser | Needs a password; no saved password file | You run `setup_db.ps1` yourself (one prompt) |
 | PowerShell | Windows PowerShell 5.1 only; execution policy RemoteSigned | Scripts are written for 5.1 |
 | Ports 8000, 5173, 5174 | Free | OK |

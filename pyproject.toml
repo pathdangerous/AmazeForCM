@@ -1,0 +1,10 @@
+[project]
+name = "amaze-cm-poc"
+version = "0.0.0"
+description = "Amaze for Capital Markets proof of concept"
+requires-python = ">=3.14,<3.15"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"

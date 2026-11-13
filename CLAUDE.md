@@ -48,7 +48,10 @@ agents/
   registry.py             Agent registry and prompt versions
   <agent_name>.py         One file per agent
   prompts/                Versioned prompt templates (YAML)
-platform/                 Ports (interfaces) and adapters — see Placeholders
+ports/                    Ports (interfaces) and adapters — see Placeholders. Named ports/, not
+                          platform/, because a package named platform hides Python's own platform module.
+                          ports/__init__.py stays empty; each port's factory lives in its own package.
+  db/                     Database engine, session and table base class (selected by DATABASE_URL)
   llm/                    LLMProvider: mock (default), azure_openai (stub)
   storage/                BlobStore: local, azure_blob (stub)
   scheduler/              Scheduler: local (APScheduler), azure_functions (stub)
@@ -56,6 +59,7 @@ platform/                 Ports (interfaces) and adapters — see Placeholders
   secrets/                Secrets: env file, key_vault (stub)
   notify/                 Notifier: in-app, email/Teams (stub)
   connectors/             Source connectors: local file, HTTP (for the custom data product)
+migrations/               Alembic migrations (alembic.ini at the repository root)
 scripts/                  setup_db.ps1, dev.ps1 (PowerShell, Windows)
 infra/                    Bicep templates (placeholders until the Azure move)
 fixtures/                 Synthetic feeds, sample files, glossary seed, gold mappings for evaluation
@@ -154,6 +158,6 @@ Order of precedence when they disagree:
 ## How to work in this repo
 
 - Follow the Superpowers flow for each phase: brainstorm → plan in `docs/plans/` → tests for the step's negative outcomes first → implement → review.
-- Keep `core/engine/` and `core/entitlement/` free of `agents` and `platform.llm` imports; a test enforces this.
+- Keep `core/engine/` and `core/entitlement/` free of `agents` and `ports.llm` imports; a test enforces this.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.
 - Do not add features beyond the current phase in `BUILD_PLAN.md`.

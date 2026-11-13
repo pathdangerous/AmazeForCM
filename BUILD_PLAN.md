@@ -9,10 +9,10 @@ One end-to-end path, built in phases. Each phase ends with something that runs a
 - Repository layout as in `CLAUDE.md`. No Docker.
 - `scripts/setup_db.ps1` creates the `amaze` database and user in the local PostgreSQL; Alembic runs the first migration.
 - Python virtual environment for the API; `npm` projects for both UIs; `scripts/dev.ps1` starts the API and both UIs.
-- All ports in `platform/` with local adapters working and Azure adapters as stubs (signatures, config keys, `NotImplementedError`).
+- All ports in `ports/` (renamed from `platform/`, which hides Python's built-in module) with local adapters working and Azure adapters as stubs (signatures, config keys, `NotImplementedError`).
 - `LLM_PROVIDER=mock` by default; `MockProvider` returns schema-valid outputs from fixtures.
 - `ProposalLog` table and `record()`; seeded dev users for each role.
-- Import-boundary test: `core/engine` and `core/entitlement` cannot import `agents` or `platform.llm`.
+- Import-boundary test: `core/engine` and `core/entitlement` cannot import `agents` or `ports.llm`.
 - **Done when:** `scripts/dev.ps1` starts the API and both UIs, both UIs load in the browser, and tests pass.
 
 ## Phase 1 — Domain, repositories and glossary

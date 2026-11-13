@@ -19,7 +19,7 @@ You are starting the Amaze for CM proof of concept in this repository.
    - the files you will create
    - scripts/setup_db.ps1 (database and user) and scripts/dev.ps1 (API and both UIs)
    - the Python virtual environment and the two npm projects
-   - every port in platform/, each with a working local adapter and an Azure stub
+   - every port in ports/, each with a working local adapter and an Azure stub
      (correct class, method signatures and env keys, raising NotImplementedError)
    - the MockProvider for LLM_PROVIDER=mock
    - the ProposalLog table
