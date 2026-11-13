@@ -8,8 +8,6 @@ requires-python = ">=3.14,<3.15"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers"
-# Starlette's TestClient asks for the httpx2 package instead of httpx. Kept on httpx until httpx2
-# is vetted (open item in docs/plans/phase-0.md). Only this one warning is silenced.
-filterwarnings = [
-    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
-]
+# Every warning fails the run. API tests use httpx.AsyncClient, not Starlette's TestClient, so the
+# httpx2 deprecation warning cannot appear (tests/test_no_starlette_testclient.py keeps it that way).
+filterwarnings = ["error"]

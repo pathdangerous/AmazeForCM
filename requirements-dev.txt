@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest==9.2.0
+# Async API tests run under anyio's pytest plugin; already installed with starlette and httpx.
+anyio==4.16.0
