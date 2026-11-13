@@ -25,7 +25,7 @@ The system is three platforms, in the order data moves:
 ## Tech stack
 
 - Backend: Python 3.14 (3.14.5 on this laptop and the office laptop; `requires-python = ">=3.14,<3.15"`), FastAPI, Pydantic v2, SQLAlchemy 2, Alembic. Create the venv with `py -3.14`.
-- Data: PostgreSQL 18.4 on both laptops (stores and repositories). Use no PostgreSQL feature newer than 14 until the Azure Database for PostgreSQL version is confirmed. DuckDB (profiling and SQL rules on files without staging).
+- Data: PostgreSQL 18 (any 18.x minor) on both laptops (stores and repositories). Use no PostgreSQL feature newer than 14 until the Azure Database for PostgreSQL version is confirmed. DuckDB (profiling and SQL rules on files without staging).
 - Frontend: React + TypeScript (Vite). Two apps: `backend-ui` (Amaze, backend team) and `consumer-ui` (consumption, end users).
 - Local runtime: no containers. PostgreSQL installed directly on Windows. PowerShell scripts are plain ASCII so Windows PowerShell 5.1 reads them correctly. Files go to a local folder (`STORAGE_PROVIDER=local`). The API runs with uvicorn in a Python virtual environment and the two UIs with `npm run dev`. `scripts/dev.ps1` starts all three; `scripts/setup_db.ps1` creates the database and its user.
 - Infrastructure as code: Bicep under `infra/`.

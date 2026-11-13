@@ -19,7 +19,7 @@ Phase 0 is done when all four are true:
 | Python | 3.14.5 at `C:\Python314`, reached with `py -3.14` | OK. `py` with no version now selects 3.15, so every command names `-3.14` |
 | Node / npm | v24.13.0 / 11.6.2 | OK |
 | Git | 2.56.1 | Repository initialised today; baseline commit on `main` |
-| PostgreSQL | Server 18.6 (service `postgresql-x64-18`, `C:\Program Files\PostgreSQL\18`), running, `localhost:5432` accepting connections. The `psql` on PATH is the 18.4 client in `F:\PostgreSQL\18` | OK: same major version as the 18.4 target |
+| PostgreSQL | Running server is **18.6** (service `postgresql-x64-18`, `C:\Program Files\PostgreSQL\18`), `localhost:5432` accepting connections. The `psql` on PATH is the 18.4 client in `F:\PostgreSQL\18` | OK: target is PostgreSQL 18, any 18.x minor |
 | `postgres` superuser | Needs a password; no saved password file | You run `setup_db.ps1` yourself (one prompt) |
 | PowerShell | Windows PowerShell 5.1 only; execution policy RemoteSigned | Scripts are written for 5.1 |
 | Ports 8000, 5173, 5174 | Free | OK |
@@ -28,7 +28,7 @@ Phase 0 is done when all four are true:
 ## 3. Decisions you made
 
 1. **Python 3.14** (3.14.5 here and on the office laptop). `pyproject.toml` sets `requires-python = ">=3.14,<3.15"`, and a test fails on any other interpreter. Python 3.12 is not used.
-2. **PostgreSQL 18.4** here and on the office laptop. No feature newer than PostgreSQL 14 is used until the Azure database version is confirmed.
+2. **PostgreSQL 18 (any 18.x minor)** here and on the office laptop. This laptop's running server is **18.6** (the `psql` client on PATH is 18.4); the office laptop runs 18.4. No feature newer than PostgreSQL 14 is used until the Azure database version is confirmed.
 3. **`platform/` is renamed to `ports/`.** A package named `platform` collides with Python's built-in `platform` module. Imports become `ports.llm`, `ports.storage`, and so on.
 4. **Git:** one commit per task on the `phase-0` branch. Local only. Nothing is pushed.
 5. **Roles:** seven dev users, one per role (section 9).
@@ -421,7 +421,7 @@ Agents and prompts, steps and `StepResult`, domain models, glossary seed, per-pl
 
 1. **The local scheduler keeps jobs in memory.** A restart of the API loses every registered job. Phase 3 (the daily fetch) needs jobs stored in PostgreSQL, or re-registered from the database at start-up.
 2. **Azure Functions support for Python 3.14 is not confirmed.** Check it at the Azure move (phase 8) before choosing the Functions timer trigger for the scheduler.
-3. **Azure Database for PostgreSQL version is not confirmed.** Local and office laptop run 18.4; phase 0 uses nothing newer than PostgreSQL 14 until the Azure version is known.
+3. **Azure Database for PostgreSQL version is not confirmed.** Both laptops run PostgreSQL 18 (this one 18.6, the office laptop 18.4); phase 0 uses nothing newer than PostgreSQL 14 until the Azure version is known.
 4. **`py` with no version now selects Python 3.15 on this machine.** Every command names `py -3.14`; inside the venv this does not matter. `test_python_version.py` catches a venv built with the wrong interpreter.
 5. **The Vite scaffolder may ask questions interactively.** If it does, I write the same seven files by hand.
 6. **APScheduler 4 has a different API.** The version is held below 4.
