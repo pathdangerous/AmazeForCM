@@ -499,7 +499,7 @@ Plan "done when" (section 1): all five met. Results in the checkpoint 3 report.
 
 **Findings left open (none blocks phase 1):**
 
-1. **The approval guard checks for "at least one approved decision"**, as requested. A two-step proposal whose status is forged by hand to `approved` after only the steward's decision would pass it. The repository cannot produce that state. Stricter option for a later phase: require one approved row per required role and no rejection.
+1. **Fixed after the review (migration `0005`).** The approval guard checked for "at least one approved decision", so a two-step proposal forced to `approved` after only the steward's decision passed it. It now needs an `approved` row in `approvals` for every role in `required_approver_roles` and no `rejected` row. Nine raw-SQL tests (three cases on each guarded table) were written first and failed with `DID NOT RAISE`: step 1 only then forced, rejected at step 2 then forced, and fully approved plus a hand-added rejection. The downgrade restores the `0004` function body (checked by a text diff).
 2. **`proposals` itself is not append-only**, because its status changes by design. A hand-written UPDATE can change it; finding 1 limits what that achieves.
 3. **The database cannot tell who inserted an `approvals` row by hand.** Identity is checked by the application until Entra ID (phase 8).
 4. **The three dev windows started during task 12 are still open.** Close them before running `dev.ps1` again.

@@ -1,6 +1,7 @@
 """Rule 1 in the database: a row in mappings, rules or glossary_elements (except the seed) can only be
-inserted for a proposal that is approved, of the matching kind, and has at least one 'approved'
-decision in approvals. Raw SQL bypasses the repositories on purpose."""
+inserted for a proposal that is approved, of the matching kind, has one 'approved' decision in
+approvals for every role in required_approver_roles, and has no 'rejected' decision (migration 0005).
+Raw SQL bypasses the repositories on purpose."""
 
 import pytest
 from sqlalchemy import text
@@ -76,6 +77,54 @@ def test_refuses_a_proposal_marked_approved_without_an_approval(db_session, feed
     db_session.execute(text("UPDATE proposals SET status = 'approved', decided_at = now() WHERE id = :id"),
                        {"id": proposal.id})
     with pytest.raises(IntegrityError, match="has no approved decision"):
+        _insert(db_session, table, feed, proposal.id)
+
+
+def _force_approved(db_session, proposal_id):
+    db_session.execute(text("UPDATE proposals SET status = 'approved', decided_at = now() WHERE id = :id"),
+                       {"id": proposal_id})
+
+
+@pytest.mark.parametrize("table", sorted(TABLES))
+def test_refuses_a_two_step_proposal_forced_approved_after_step_one(db_session, feed, make_proposal, table):
+    """Step 1 approved, step 2 never decided, status forged to 'approved': every required role must
+    have its own 'approved' row."""
+    from core.repositories.proposals import ProposalRepository
+    from tests.conftest import dev_user_for
+
+    kind, roles, _ = TABLES[table]
+    proposal = make_proposal(kind=kind, roles=(roles[0], "operations"))
+    ProposalRepository(db_session).record_decision(proposal.id, user=dev_user_for(roles[0]), decision="approved")
+    _force_approved(db_session, proposal.id)
+    with pytest.raises(IntegrityError, match="has no approved decision from role operations"):
+        _insert(db_session, table, feed, proposal.id)
+
+
+@pytest.mark.parametrize("table", sorted(TABLES))
+def test_refuses_a_proposal_rejected_at_step_two_and_forced_approved(db_session, feed, make_proposal, table):
+    from core.repositories.proposals import ProposalRepository
+    from tests.conftest import dev_user_for
+
+    kind, roles, _ = TABLES[table]
+    proposal = make_proposal(kind=kind, roles=(roles[0], "operations"))
+    repo = ProposalRepository(db_session)
+    repo.record_decision(proposal.id, user=dev_user_for(roles[0]), decision="approved")
+    repo.record_decision(proposal.id, user=dev_user_for("operations"), decision="rejected")
+    _force_approved(db_session, proposal.id)
+    with pytest.raises(IntegrityError, match="has a rejected decision"):
+        _insert(db_session, table, feed, proposal.id)
+
+
+@pytest.mark.parametrize("table", sorted(TABLES))
+def test_refuses_a_fully_approved_proposal_with_an_extra_rejected_row(db_session, feed, approved_proposal, table):
+    """Every required role approved, then a 'rejected' row added by hand: any rejection blocks it."""
+    kind, roles, _ = TABLES[table]
+    proposal = approved_proposal(kind=kind, roles=roles)
+    db_session.execute(text(
+        "INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+        "VALUES (:id, :step, 'operations', 'dev-operations', 'rejected')"
+    ), {"id": proposal.id, "step": len(roles) + 1})
+    with pytest.raises(IntegrityError, match="has a rejected decision"):
         _insert(db_session, table, feed, proposal.id)
 
 
