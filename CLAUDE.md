@@ -43,10 +43,14 @@ core/
   repositories/           Tables (tables.py), named errors (errors.py) and one repository per model.
                           Repositories flush but never commit; the caller owns the transaction.
   proposal_log.py         ProposalLog.record(): one row per model call (rule 4)
-  seed.py                 python -m core.seed: loads the synthetic glossary (fixtures/glossary/)
+  seed.py                 python -m core.seed: loads the synthetic glossary (fixtures/glossary/);
+                          --demo loads the demo products (fixtures/demo/, codes start with demo_)
   steps/                  One module per step (s1_scope.py ... s22_monitor.py); each returns a typed StepResult
+                          (result.py: a Pydantic union discriminated on `outcome`). Also matching.py (request
+                          text to glossary elements), routing.py (routing checks), request_data.py (one
+                          "Request this data", end to end) and errors.py (refused step input)
   engine/                 Deterministic run engine (step 13). No AI imports allowed here.
-  entitlement/            Rules-based entitlement decisions. No AI imports allowed here.
+  entitlement/            Rules-based entitlement decisions (decide.py). No AI imports allowed here.
 agents/
   base.py                 Agent base class: inputs, output schema, autonomy level, proposal creation
   registry.py             Agent registry and prompt versions
@@ -162,7 +166,7 @@ Order of precedence when they disagree:
 ## How to work in this repo
 
 - Follow the Superpowers flow for each phase: brainstorm → plan in `docs/plans/` → tests for the step's negative outcomes first → implement → review.
-- Keep `core/engine/`, `core/entitlement/`, `core/domain/` and `core/repositories/` free of `agents` and `ports.llm` imports; a test enforces this.
+- Keep `core/engine/`, `core/entitlement/`, `core/domain/`, `core/repositories/` and `core/steps/` free of `agents` and `ports.llm` imports; a test enforces this. (Phase 3 decides how an agent-backed step fits; phase 2 plan, section 16.)
 - Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. Never work around these triggers; add a new version instead.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.
 - Do not add features beyond the current phase in `BUILD_PLAN.md`.
