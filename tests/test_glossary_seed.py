@@ -109,6 +109,24 @@ def test_the_detector_flags_identifier_and_field_code_shapes(shaped):
     assert find_real_data(f"example {shaped} here")
 
 
+# ---- phase 2: phrases for term matching (decisions 12 and 13)
+
+
+def _seed_phrases():
+    from core.steps.matching import build_phrases
+
+    return build_phrases(GlossaryElementDraft(**e) for e in load_seed_elements())
+
+
+def test_no_phrase_belongs_to_two_elements():
+    """A key, name or alias shared by two elements would be shown as two unticked candidates."""
+    assert _seed_phrases().clashes() == {}
+
+
+def test_no_domain_phrase_is_an_element_phrase():
+    assert _seed_phrases().domain_clashes() == []
+
+
 # ---- 4. seeding
 
 

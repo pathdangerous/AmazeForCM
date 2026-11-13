@@ -1,6 +1,7 @@
 """Rule 2 of CLAUDE.md: no model call in the run engine or in entitlement decisions.
 
-core/engine and core/entitlement must not import `agents` or `ports.llm`, directly or
+core/engine and core/entitlement (and core/domain, core/repositories and core/steps, which they or the
+API build on) must not import `agents` or `ports.llm`, directly or
 through any other module. The check is static (it parses source; it runs nothing).
 Limit: an import built from a string at run time (importlib.import_module("...")) is not seen.
 """
@@ -16,7 +17,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNED_PACKAGES = ("core", "agents", "ports", "apps")
 # core.domain and core.repositories are included because the run engine will import both (phase 1 plan).
-BOUNDARY_PACKAGES = ("core.engine", "core.entitlement", "core.domain", "core.repositories")
+# core.steps: every phase 2 step is deterministic (phase 2 plan, assumption 6). Phase 3 decides how an
+# agent-backed step fits (phase 2 plan, section 16).
+BOUNDARY_PACKAGES = ("core.engine", "core.entitlement", "core.domain", "core.repositories", "core.steps")
 FORBIDDEN = ("agents", "ports.llm")
 
 
@@ -130,6 +133,7 @@ BASE_TREE = {
     "core/__init__.py": "",
     "core/engine/__init__.py": "",
     "core/entitlement/__init__.py": "",
+    "core/steps/__init__.py": "",
     "core/helpers.py": "",
     "agents/__init__.py": "",
     "agents/mapping.py": "",
@@ -151,6 +155,7 @@ PLANTED = {
     },
     "through a parent package": {"core/__init__.py": "import agents\n"},
     "inside a function": {"core/entitlement/decide.py": "def f():\n    import agents\n"},
+    "core.steps": {"core/steps/s17_discover.py": "from ports.llm.base import LLMProvider\n"},
 }
 
 
