@@ -704,3 +704,12 @@ Octopus is not loaded, so this is my own review against `CLAUDE.md` and this pla
 2. **Notifications have no screen.** The backend team and glossary owner rows exist in `notifications`, but neither UI shows them (section 14).
 3. **`CLAUDE.md`'s agent table still lists the DiscoveryAssistant at step 17.** This is the recorded deviation (section 17, item 1); phase 3 adds the agent.
 4. **The three `dev.ps1` windows are still open.** Close them before running `dev.ps1` again.
+
+### After approval (your three requests)
+
+1. **`CLAUDE.md`, "How to work in this repo"**, has a new line: edit files only with the file tools (Read, Edit, Write); never rewrite or patch files through PowerShell, sed or other shell commands.
+2. **Element names in the tick boxes.**
+   - The requester cannot read the glossary API (backend only), so step 17's result now carries `element_names`: the glossary name of every matched and candidate element. Test first: `test_s17_discover.py::test_element_names_cover_every_element_the_requester_can_tick` failed, then passed; the API test for row 1 checks the field.
+   - Tick boxes now show "Maturity date", "Close price", not keys. Unmatched terms are shown as typed.
+3. **"Access restricted" is a warning, not a success.** The badge on a restricted hit and the result box for a `reuse` the requester is not entitled to are amber; other results stay green.
+4. **`phase2-search-2.png` was taken again.** The browser console had no errors or warnings. Taking it submitted `maturity date` once more, so the application database now holds 9 requests.

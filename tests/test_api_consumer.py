@@ -59,6 +59,7 @@ def ticked(found):
 async def test_row_1_close_price_is_reuse(client):
     found = await search(client, "close price")
     assert hits(found) == [("found", "demo_daily_close_prices")]
+    assert found["element_names"] == {"close_price": "Close price"}
     result = await ask(client, "close price", ticked(found))
     assert (result["routing"]["outcome"], result["message"]) == (
         "reuse", "This data is available in Daily close prices.",

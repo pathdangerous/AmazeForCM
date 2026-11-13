@@ -85,7 +85,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
               {found.hits.map((h) => (
                 <li key={h.product.code} data-testid={`hit-${h.product.code}`}>
                   <strong>{h.product.name}</strong>{" "}
-                  <span className={h.outcome === "found" ? "badge ok" : "badge bad"}>
+                  <span className={h.outcome === "found" ? "badge ok" : "badge warn"}>
                     {h.outcome === "found" ? "Available" : "Access restricted"}
                   </span>
                   <div>{h.product.description}</div>
@@ -104,7 +104,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
                 {elementChoices.map((key) => (
                   <label key={key} className="choice">
                     <input type="checkbox" checked={elements.has(key)} onChange={() => toggle(elements, setElements, key)} />
-                    {key}{candidates.includes(key) ? " (one of several meanings)" : ""}
+                    {found.element_names[key] ?? key}{candidates.includes(key) ? " (one of several meanings)" : ""}
                   </label>
                 ))}
               </fieldset>
@@ -131,7 +131,8 @@ export default function SearchView({ devUser }: { devUser: string }) {
       )}
 
       {result && (
-        <div className="result" role="status" data-testid="result">
+        <div className={result.routing.product?.entitled === false ? "result warn" : "result"} role="status"
+             data-testid="result">
           <p><strong data-testid="result-message">{result.message}</strong></p>
           {result.notes.length > 0 && <ul>{result.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
           <p><a href="#/requests">See My requests</a></p>

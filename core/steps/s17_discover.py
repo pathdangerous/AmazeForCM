@@ -60,13 +60,16 @@ class Discovery(BaseModel):
 
     match: Match
     hits: list[Hit]
+    element_names: dict[str, str]  # glossary name of every matched and candidate element, for the tick boxes
 
 
 def discover(session: Session, *, query: str, user_id: str, roles: Sequence[str],
              display_name: Callable[[str], str]) -> Discovery:
-    found = match(query, build_phrases(GlossaryRepository(session).list_current()))
+    glossary = GlossaryRepository(session).list_current()
+    found = match(query, build_phrases(glossary))
     matched = {e.key for e in found.elements}
     wanted = matched | {key for a in found.ambiguous for key in a.candidates}
+    element_names = {e.key: e.name for e in glossary if e.key in wanted}
     term_words = {w for term in found.terms for w in words(term)}
     domains_only = bool(found.domains) and not (wanted or term_words)
 
@@ -91,4 +94,4 @@ def discover(session: Session, *, query: str, user_id: str, roles: Sequence[str]
         else:
             hits.append(NotEntitledVisible(product=summary,
                                            route=route_to_access(display_name(product.owner_id), product.name)))
-    return Discovery(match=found, hits=hits)
+    return Discovery(match=found, hits=hits, element_names=element_names)

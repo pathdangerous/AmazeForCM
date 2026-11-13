@@ -31,7 +31,8 @@ export type Hit =
   | { outcome: "found"; product: ProductSummary }
   | { outcome: "not_entitled_visible"; product: ProductSummary; route: string };
 
-export type Discovery = { match: Match; hits: Hit[] };
+// element_names: the glossary name of every element the requester can tick (key -> name).
+export type Discovery = { match: Match; hits: Hit[]; element_names: Record<string, string> };
 
 // ---- routing and step 01
 
@@ -39,7 +40,8 @@ export type RoutingOutcome = "reuse" | "compose" | "create_product" | "raise_req
 
 export type RequestResult = {
   request_id: string;
-  routing: { outcome: RoutingOutcome };
+  // product is set for reuse; entitled false means "Access restricted"
+  routing: { outcome: RoutingOutcome; product?: { entitled: boolean } };
   requirement: { outcome: "defined" | "element_not_in_glossary"; requirement: { id: string; status: string } } | null;
   message: string;
   notes: string[];

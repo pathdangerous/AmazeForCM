@@ -105,6 +105,19 @@ def test_a_candidate_element_also_finds_products(search, make_product, db_sessio
     assert hits(result) == [("found", "daily_close")]
 
 
+def test_element_names_cover_every_element_the_requester_can_tick(search, make_product, db_session):
+    """consumer-ui labels each tick box with the glossary name, not the key."""
+    GlossaryRepository(db_session).add_seed_element(
+        key="synthetic_close_flag", name="Synthetic close flag", domain="pricing", data_type="boolean",
+        definition="Synthetic element sharing the alias close.", aliases=["close"],
+    )
+    result = search("close, volume and isin")
+    assert result.element_names == {
+        "close_price": "Close price", "synthetic_close_flag": "Synthetic close flag", "volume": "Volume", "isin": "ISIN",
+    }
+    assert search("esg score").element_names == {}
+
+
 def test_hits_are_ordered_by_matched_elements_then_name_then_code(search, make_product):
     make_product("b_one", name="Same name", element_keys=["close_price"])
     make_product("a_one", name="Same name", element_keys=["close_price"])
