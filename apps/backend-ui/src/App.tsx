@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
+import GlossaryView from "./views/GlossaryView";
 import StatusView from "./views/StatusView";
 
 const TITLE = "Amaze Backend Workbench";
@@ -8,6 +9,7 @@ const STORAGE_KEY = "amaze.backend-ui.devUser";
 // Views, chosen by the URL hash (#/status). No router library (plan, assumption 17).
 const VIEWS = {
   status: "Status",
+  glossary: "Glossary",
 } as const;
 type View = keyof typeof VIEWS;
 
@@ -94,7 +96,10 @@ export default function App() {
           </span>
         </div>
       </header>
-      <main>{view === "status" && <StatusView />}</main>
+      <main>
+        {view === "status" && <StatusView />}
+        {view === "glossary" && <GlossaryView devUser={me ? selected : ""} />}
+      </main>
       <footer>Synthetic data only.</footer>
     </>
   );
