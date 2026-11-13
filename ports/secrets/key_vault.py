@@ -14,6 +14,7 @@ from ports.config import AZURE_NOT_IMPLEMENTED, DEFAULT_ENV_FILE, read_env
 
 class KeyVaultSecrets:
     name = "key_vault"
+    is_stub = True  # /api/health reports this adapter as unavailable
     ENV_KEYS = ("AZURE_KEY_VAULT_URL",)
 
     def __init__(self, env_file: Path | None = DEFAULT_ENV_FILE):

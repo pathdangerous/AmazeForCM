@@ -412,6 +412,30 @@ After the fix, all ten breaks are caught (break 10 restores the phase 0 temp nam
 
 After every break the file was restored from its saved text; `git status` showed only the intended fix.
 
+### Before task 2: database recreated
+
+The PostgreSQL 18.7 upgrade created a new cluster rather than upgrading in place, so the `amaze` role and both databases were gone (server log: `Role "amaze" does not exist`). You re-ran `setup_db.ps1`; `alembic upgrade head` rebuilt `0001`; 193 tests passed on 18.7 before task 2 started.
+
+### Task 2: Starlette test client replaced
+
+As planned in 5b. 13 API tests kept with the same assertions, now async over `httpx.ASGITransport`; one guard test added. `pytest` runs with every warning as an error; `starlette.testclient` is never imported (checked with `python -X importtime`).
+
+### Task 3: health with stub adapters
+
+The same in-process check run before and after the fix:
+
+| Selected stub | Before | After: health | After: `/api/me` |
+|---|---|---|---|
+| none (all local) | 200 | 200, `unavailable: []` | 200 |
+| `SECRETS_PROVIDER=key_vault` | health 500 | 503, `database: not_configured`, `unavailable: ["secrets"]` | 200 |
+| `SCHEDULER_PROVIDER=azure_functions` | API did not start | 503, `unavailable: ["scheduler"]` | 200 |
+| `IDENTITY_PROVIDER=entra_id` | health 200; `/api/me` 500 | 503, `unavailable: ["identity"]` | 503, `Azure adapter: implement after move` |
+| `LLM_PROVIDER=azure_openai` | health 200 | 503, `unavailable: ["llm"]` | 200 |
+| `STORAGE_PROVIDER=azure_blob` | health 200 | 503, `unavailable: ["storage"]` | 200 |
+| `NOTIFY_PROVIDER=email` | health 200 | 503, `unavailable: ["notify"]` | 200 |
+
+Health builds the six selected adapters on each call to find the stubs. Each is cheap to build (the dev identity reads a 7-line file).
+
 ## 18. Carried forward to phase 3
 
 These two points are also added to phase 3 in `BUILD_PLAN.md` (task 14).

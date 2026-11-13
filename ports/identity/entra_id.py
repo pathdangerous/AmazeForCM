@@ -17,6 +17,7 @@ from ports.identity.base import App, User
 
 class EntraIdIdentity:
     name = "entra_id"
+    is_stub = True  # /api/health reports this adapter as unavailable
     ENV_KEYS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID")
 
     def __init__(self, env_file: Path | None = DEFAULT_ENV_FILE):

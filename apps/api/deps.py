@@ -16,10 +16,11 @@ def get_app_settings() -> Settings:
 
 
 def get_db_engine() -> Engine | None:
-    """The database engine, or None if DATABASE_URL is not configured."""
+    """The database engine, or None if DATABASE_URL cannot be read (not set, or the Secrets
+    adapter is still a stub)."""
     try:
         return get_engine()
-    except SecretNotFound:
+    except (SecretNotFound, NotImplementedError):
         return None
 
 

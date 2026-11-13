@@ -17,6 +17,7 @@ from ports.scheduler.base import JobInfo
 
 class AzureFunctionsScheduler:
     name = "azure_functions"
+    is_stub = True  # /api/health reports this adapter as unavailable; the API does not start it
     ENV_KEYS = ("AZURE_FUNCTIONS_APP",)
 
     def __init__(self, env_file: Path | None = DEFAULT_ENV_FILE):

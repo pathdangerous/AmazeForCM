@@ -61,6 +61,13 @@ IDS = [stub.split(":")[1] for _, stub in PAIRS]
 
 
 @pytest.mark.parametrize(("local_ref", "stub_ref"), PAIRS, ids=IDS)
+def test_stub_declares_is_stub_and_local_adapter_does_not(local_ref, stub_ref):
+    """/api/health reports every adapter with is_stub = True as unavailable."""
+    assert _load(stub_ref).is_stub is True
+    assert getattr(_load(local_ref), "is_stub", False) is False
+
+
+@pytest.mark.parametrize(("local_ref", "stub_ref"), PAIRS, ids=IDS)
 def test_stub_has_same_public_methods_and_signatures(local_ref, stub_ref):
     local, stub = _load(local_ref), _load(stub_ref)
     assert _public_methods(stub) == _public_methods(local)

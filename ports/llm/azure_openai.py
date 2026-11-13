@@ -18,6 +18,7 @@ from ports.llm.base import LLMResult, Message
 
 class AzureOpenAIProvider:
     name = "azure_openai"
+    is_stub = True  # /api/health reports this adapter as unavailable
     ENV_KEYS = (
         "AZURE_OPENAI_ENDPOINT",
         "AZURE_OPENAI_DEPLOYMENT",

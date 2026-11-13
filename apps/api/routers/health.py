@@ -1,4 +1,5 @@
-"""GET /api/health: API status, database reachability and the selected adapters."""
+"""GET /api/health: API status, database reachability, the selected adapters, and which of them
+cannot work yet (Azure stubs). 200 only when the database is ok and no adapter is unavailable."""
 
 from __future__ import annotations
 
@@ -11,6 +12,12 @@ from sqlalchemy.engine import Engine
 from apps.api.deps import get_app_settings, get_db_engine
 from ports.config import Settings
 from ports.db import database_is_reachable
+from ports.identity import get_identity
+from ports.llm import get_llm_provider
+from ports.notify import get_notifier
+from ports.scheduler import get_scheduler
+from ports.secrets import get_secrets
+from ports.storage import get_blob_store
 
 router = APIRouter()
 
@@ -19,6 +26,20 @@ class Health(BaseModel):
     status: Literal["ok", "error"]
     database: Literal["ok", "unreachable", "not_configured"]
     adapters: dict[str, str]
+    unavailable: list[str]
+
+
+def unavailable_adapters(settings: Settings) -> list[str]:
+    """Names of the selected adapters that are still stubs, in a fixed order."""
+    selected = {
+        "llm": get_llm_provider(settings),
+        "storage": get_blob_store(settings),
+        "scheduler": get_scheduler(settings),
+        "identity": get_identity(settings),
+        "secrets": get_secrets(settings),
+        "notify": get_notifier(settings),
+    }
+    return [name for name, adapter in selected.items() if getattr(adapter, "is_stub", False)]
 
 
 @router.get("/api/health", response_model=Health)
@@ -31,10 +52,12 @@ def health(
         database = "not_configured"
     else:
         database = "ok" if database_is_reachable(engine) else "unreachable"
-    if database != "ok":
+    unavailable = unavailable_adapters(settings)
+    ok = database == "ok" and not unavailable
+    if not ok:
         response.status_code = 503
     return Health(
-        status="ok" if database == "ok" else "error",
+        status="ok" if ok else "error",
         database=database,
         adapters={
             "llm": settings.llm_provider,
@@ -44,4 +67,5 @@ def health(
             "secrets": settings.secrets_provider,
             "notify": settings.notify_provider,
         },
+        unavailable=unavailable,
     )
