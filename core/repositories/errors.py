@@ -68,3 +68,22 @@ class FeedHasNoOwner(RepositoryError):
 
 class FeedNotACandidate(RepositoryError):
     """Only a candidate feed can be registered."""
+
+
+class FeedNotRegistered(RepositoryError):
+    """Loads arrive only for registered feeds."""
+
+
+# ---- loads and products
+
+
+class LoadNotFound(RepositoryError, LookupError):
+    """No load has this id."""
+
+
+class ProductNotFound(RepositoryError, LookupError):
+    """No product has this id or code."""
+
+
+class DuplicateProductCode(RepositoryError):
+    """Another product already has this code."""

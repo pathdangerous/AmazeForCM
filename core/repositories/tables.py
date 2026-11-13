@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from core.domain.feed import FEED_STAGES
 from core.domain.glossary import DATA_TYPES
+from core.domain.load import LOAD_STATUSES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
 from ports.db import Base
@@ -223,3 +224,37 @@ class RuleRow(Base):
     sql: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text)
     proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+
+
+class LoadRow(Base):
+    __tablename__ = "loads"
+    __table_args__ = (
+        CheckConstraint(_in("status", LOAD_STATUSES), name="status"),
+        CheckConstraint("length(btrim(file_ref)) > 0", name="file_ref"),
+        Index("ix_loads_feed_id", "feed_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    file_ref: Mapped[str] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
+    status: Mapped[str] = mapped_column(Text, default="received", server_default="received")
+
+
+class ProductRow(Base):
+    __tablename__ = "products"
+    __table_args__ = (
+        UniqueConstraint("code"),
+        CheckConstraint("code ~ '^[a-z][a-z0-9_]*$'", name="code_format"),
+        CheckConstraint("domain ~ '^[a-z][a-z0-9_]*$'", name="domain_format"),
+        CheckConstraint("length(btrim(name)) > 0", name="name_present"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    code: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    domain: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))

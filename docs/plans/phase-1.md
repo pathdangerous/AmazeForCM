@@ -436,6 +436,23 @@ The same in-process check run before and after the fix:
 
 Health builds the six selected adapters on each call to find the stubs. Each is cheap to build (the dev identity reads a 7-line file).
 
+### Tasks 4 to 9: deviations and findings
+
+1. **More named errors than section 7 listed:**
+   - `ProposalLogEntryNotFound`, `ProposalForAnotherFeed` (an approved proposal cannot be used for another feed's configuration);
+   - `RequirementNotFound`, `FeedNotACandidate`, `FeedNotRegistered` (loads arrive only for registered feeds);
+   - `LoadNotFound`, `ProductNotFound`.
+2. **More rules enforced by the database than planned:**
+   - one decision per person per proposal (`uq_approvals_proposal_id_decided_by`);
+   - a glossary element without a proposal must be the seed (`ck_glossary_elements_proposal_unless_seed`);
+   - a proposal's `decided_at` must match its status;
+   - mapping and rule rows require `proposal_id`.
+3. **Bug found and fixed (task 7): ordering within a transaction.** `now()` is the transaction's start time, so rows inserted together had equal `created_at` and "newest first" came back in random order. The requirements ordering test failed 8 of 12 runs. Tables listed newest first (requirements, feeds, mappings, rules, loads, products, and by `ALTER` in `0004` proposals and notifications) now use `clock_timestamp()`. 0 failures in 12 runs after the fix; the full suite was run three more times at checkpoint 2.
+4. **The test fixture rebuilds the `amaze_test` schema from scratch** (drop and recreate `public`, then `upgrade head`) instead of downgrading. Reason: `0004` was written across tasks 7 to 9, and the task 7 version's leftovers broke the next run. Downgrades stay covered by `test_upgrade_downgrade_upgrade`. `0004` reached the application database only after task 9 was complete.
+5. **SQLAlchemy 2.1 deprecates `distinct(column)` for DISTINCT ON.** Warnings-as-errors caught it in task 5; the code uses `postgresql.distinct_on`.
+6. **Glossary-key trigger proven:** with the `CREATE TRIGGER` line removed from `0004`, the raw-SQL test inserting an unknown key failed (`DID NOT RAISE`); restored with the Edit tool.
+7. **`core/domain/common.py`** added for the two shared field types (`SnakeName`, `NonBlank`).
+
 ## 18. Carried forward to phase 3
 
 These two points are also added to phase 3 in `BUILD_PLAN.md` (task 14).

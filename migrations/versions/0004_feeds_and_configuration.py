@@ -19,6 +19,7 @@ depends_on = None
 
 REQUIREMENT_STATUSES = ("defined", "onboarding", "ready", "access_restricted", "rejected")
 FEED_STAGES = ("candidate", "registered", "rejected")
+LOAD_STATUSES = ("received", "held", "failed_rolled_back", "released")
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -140,8 +141,46 @@ def upgrade() -> None:
         "FOR EACH ROW EXECUTE FUNCTION amaze_require_glossary_key()"
     )
 
+    # ---- task 9: loads and products; notifications listed newest first
+    op.create_table(
+        "loads",
+        _id(),
+        _created_at(),
+        sa.Column("feed_id", sa.Uuid(), nullable=False),
+        sa.Column("file_ref", sa.Text(), nullable=False),
+        sa.Column("received_at", sa.DateTime(timezone=True), nullable=False,
+                  server_default=sa.text("clock_timestamp()")),
+        sa.Column("status", sa.Text(), nullable=False, server_default="received"),
+        sa.PrimaryKeyConstraint("id", name="pk_loads"),
+        sa.ForeignKeyConstraint(["feed_id"], ["feeds.id"], name="fk_loads_feed_id_feeds"),
+        sa.CheckConstraint(_in("status", LOAD_STATUSES), name="ck_loads_status"),
+        sa.CheckConstraint("length(btrim(file_ref)) > 0", name="ck_loads_file_ref"),
+    )
+    op.create_index("ix_loads_feed_id", "loads", ["feed_id"])
+    op.create_table(
+        "products",
+        _id(),
+        _created_at(),
+        sa.Column("code", sa.Text(), nullable=False),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("domain", sa.Text(), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False, server_default=""),
+        sa.Column("requirement_id", sa.Uuid(), nullable=True),
+        sa.PrimaryKeyConstraint("id", name="pk_products"),
+        sa.ForeignKeyConstraint(["requirement_id"], ["requirements.id"], name="fk_products_requirement_id_requirements"),
+        sa.UniqueConstraint("code", name="uq_products_code"),
+        sa.CheckConstraint("code ~ '^[a-z][a-z0-9_]*$'", name="ck_products_code_format"),
+        sa.CheckConstraint("domain ~ '^[a-z][a-z0-9_]*$'", name="ck_products_domain_format"),
+        sa.CheckConstraint("length(btrim(name)) > 0", name="ck_products_name_present"),
+    )
+    op.alter_column("notifications", "created_at", server_default=sa.text("clock_timestamp()"))
+
 
 def downgrade() -> None:
+    op.alter_column("notifications", "created_at", server_default=sa.text("now()"))
+    op.drop_table("products")
+    op.drop_index("ix_loads_feed_id", table_name="loads")
+    op.drop_table("loads")
     op.execute("DROP TRIGGER trg_mappings_glossary_key ON mappings")
     op.execute("DROP FUNCTION amaze_require_glossary_key()")
     for table in ("rules", "mappings"):

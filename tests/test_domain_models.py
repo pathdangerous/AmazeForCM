@@ -70,3 +70,37 @@ def test_glossary_draft_accepts_valid_input():
 def test_glossary_draft_rejects(bad):
     with pytest.raises(ValidationError):
         GlossaryElementDraft(**{**ELEMENT, **bad})
+
+
+# ---- Requirement, Feed, Mapping, Rule, Load, Product (tasks 7 to 9)
+
+from core.domain.configuration import MappingDraft, RuleDraft  # noqa: E402
+from core.domain.feed import FEED_STAGES, FeedDraft  # noqa: E402
+from core.domain.load import LOAD_STATUSES, LoadDraft  # noqa: E402
+from core.domain.product import ProductDraft  # noqa: E402
+from core.domain.requirement import REQUIREMENT_STATUSES, RequirementDraft  # noqa: E402
+
+
+def test_status_lists_are_the_names_in_claude_md():
+    assert REQUIREMENT_STATUSES == ("defined", "onboarding", "ready", "access_restricted", "rejected")
+    assert FEED_STAGES == ("candidate", "registered", "rejected")
+    assert LOAD_STATUSES == ("received", "held", "failed_rolled_back", "released")
+
+
+@pytest.mark.parametrize(
+    ("model", "valid", "bad"),
+    [
+        (RequirementDraft, {"requester_id": "dev-requester", "title": "T"}, {"title": " "}),
+        (FeedDraft, {"code": "feed_a", "name": "Feed A"}, {"code": "Feed-A"}),
+        (FeedDraft, {"code": "feed_a", "name": "Feed A"}, {"owner_id": " "}),
+        (MappingDraft, {"source_field": "ClosePx", "element_key": "close_price"}, {"element_key": "Close"}),
+        (MappingDraft, {"source_field": "ClosePx", "element_key": "close_price"}, {"source_field": ""}),
+        (RuleDraft, {"rule_key": "r", "sql": "SELECT 1", "description": "D"}, {"sql": " "}),
+        (LoadDraft, {"file_ref": "local://raw/x.csv"}, {"file_ref": ""}),
+        (ProductDraft, {"code": "p", "name": "P", "domain": "pricing"}, {"domain": "Pricing"}),
+    ],
+)
+def test_drafts_validate(model, valid, bad):
+    model(**valid)
+    with pytest.raises(ValidationError):
+        model(**{**valid, **bad})
