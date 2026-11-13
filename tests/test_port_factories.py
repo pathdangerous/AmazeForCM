@@ -19,6 +19,8 @@ CASES = [
      "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
     ("ports.identity:get_identity", "identity_provider", "dev", "ports.identity.dev:DevIdentity"),
     ("ports.identity:get_identity", "identity_provider", "entra_id", "ports.identity.entra_id:EntraIdIdentity"),
+    ("ports.notify:get_notifier", "notify_provider", "inapp", "ports.notify.inapp:InAppNotifier"),
+    ("ports.notify:get_notifier", "notify_provider", "email", "ports.notify.email_teams:EmailNotifier"),
 ]
 
 DEFAULTS = {
@@ -27,6 +29,7 @@ DEFAULTS = {
     "ports.storage:get_blob_store": "ports.storage.local:LocalBlobStore",
     "ports.scheduler:get_scheduler": "ports.scheduler.local:LocalScheduler",
     "ports.identity:get_identity": "ports.identity.dev:DevIdentity",
+    "ports.notify:get_notifier": "ports.notify.inapp:InAppNotifier",
 }
 
 

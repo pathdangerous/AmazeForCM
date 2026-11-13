@@ -24,6 +24,7 @@ PAIRS = [
     ("ports.storage.local:LocalBlobStore", "ports.storage.azure_blob:AzureBlobStore"),
     ("ports.scheduler.local:LocalScheduler", "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
     ("ports.identity.dev:DevIdentity", "ports.identity.entra_id:EntraIdIdentity"),
+    ("ports.notify.inapp:InAppNotifier", "ports.notify.email_teams:EmailNotifier"),
 ]
 
 

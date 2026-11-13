@@ -5,6 +5,7 @@ Add a line here whenever a new module declares a table.
 """
 
 import core.proposal_log  # noqa: F401  proposal_log
+import ports.notify.inapp  # noqa: F401  notifications
 from ports.db import Base
 
 metadata = Base.metadata
