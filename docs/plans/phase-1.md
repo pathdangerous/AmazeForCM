@@ -474,6 +474,36 @@ python -m core.seed      glossary seed: 0 inserted, 33 already present
 
 The 14 triggers are present afterwards: 5 append-only, 5 no-truncate, 3 approval guards, 1 glossary key. The suite is at 346 passed.
 
+### Tasks 10 to 14
+
+1. **API tests run each request on the test's own rolled-back session** (`running_app(session=...)` in `conftest.py`), as risk 4 described. Stable across repeated runs.
+2. **The UI views were checked in a browser** (screenshots `.playwright-mcp/phase1-glossary.png` and `phase1-feeds.png`, git-ignored): counts, domain filter, search `isin` leaving one row, the detail panel with history, "No elements match.", "No feeds yet.", the stage filter, and nav between views. No console errors or warnings.
+3. **Development-only finding:** a page left open while Vite hot-updated `App.tsx` kept the old list of views, so `#/feeds` showed Status until the page was reloaded. A fresh load and in-app nav work.
+4. **`BUILD_PLAN.md` phase 3 also got a third bullet:** scheduler jobs must survive an API restart (phase 0 risk 1).
+
+## 19. End-of-phase review (task 15)
+
+Against `CLAUDE.md`'s rules:
+
+| Rule | Phase 1 state |
+|---|---|
+| 1 AI proposes, people decide | Decisions live only in `approvals`, one row per named person and step; order, role, same-person and first-rejection rules in `ProposalRepository`. The database refuses configuration rows (mapping, rule, non-seed glossary) unless the proposal is approved, of the matching kind, and has an approved decision |
+| 2 No model call in engine or entitlement | Boundary test now covers `core/engine`, `core/entitlement`, `core/domain` and `core/repositories`. `core/proposal_log.py` imports `ports.llm.base` and is outside them; the test would catch the engine importing it |
+| 3 Explicit negative outcomes | 20 named repository errors; the API turns them into 404, 401, 403, 422 or 503, never a 500. Steps and `StepResult` start in phase 2 |
+| 4 Every proposal logged | Every proposal must point at a `proposal_log` row (foreign key, not null). The `proposal_audit` view shows agent, provider, model and version, prompt version, input, output and every decision in one row |
+| 5 Azure behind interfaces | No Azure, OpenAI or MSAL import anywhere. Stub adapters give 503 with `unavailable`, never a 500 |
+| 6 Synthetic data only | Seed test bans identifier-value shapes, vendor names and vendor field-code shapes; dev users use `example.test` |
+| 7 Versioned configuration | `glossary_elements`, `mappings`, `rules` (and `proposal_log`, `approvals`) are append-only: UPDATE, DELETE and TRUNCATE refused by the database |
+
+Plan "done when" (section 1): all five met. Results in the checkpoint 3 report.
+
+**Findings left open (none blocks phase 1):**
+
+1. **The approval guard checks for "at least one approved decision"**, as requested. A two-step proposal whose status is forged by hand to `approved` after only the steward's decision would pass it. The repository cannot produce that state. Stricter option for a later phase: require one approved row per required role and no rejection.
+2. **`proposals` itself is not append-only**, because its status changes by design. A hand-written UPDATE can change it; finding 1 limits what that achieves.
+3. **The database cannot tell who inserted an `approvals` row by hand.** Identity is checked by the application until Entra ID (phase 8).
+4. **The three dev windows started during task 12 are still open.** Close them before running `dev.ps1` again.
+
 ## 18. Carried forward to phase 3
 
 These two points are also added to phase 3 in `BUILD_PLAN.md` (task 14).
