@@ -1,6 +1,6 @@
 # Phase 1 plan — Domain, repositories and glossary
 
-**Status:** waiting for approval. No code is written until you approve this plan.
+**Status:** approved on 2026-11-13 with three changes (identifier names cusip, sedol and figi allowed, so the seed has 33 elements; glossary keys enforced in the database; future statuses noted in section 15). Those changes are applied below. You will upgrade PostgreSQL to 18.7 in place before task 4.
 **Date:** 2026-11-13. **Branch:** `phase-1`, created from `main`. **Scope:** phase 1 of `BUILD_PLAN.md`, plus four items carried over from phase 0. Local only; nothing is pushed.
 
 ## 1. Goal and "done when"
@@ -47,18 +47,18 @@ Phase 1 is done when all five are true:
 8. **Approval rules:** roles decide in the order the proposal lists them; one decision per step; the same person cannot decide two steps of one proposal (the checker must not be the steward); the first rejection ends it; nothing can be decided after that.
 9. **Proposal kinds** are the seven agents that have an approver: scope, source list, profile summary, glossary element, mapping, rule, review summary. The read-only DiscoveryAssistant creates no proposal.
 10. **Status values are the names already in `CLAUDE.md`:** requirement `defined`, `onboarding`, `ready`, `access_restricted`, `rejected`; feed stage `candidate`, `registered`, `rejected`; load `received`, `held`, `failed_rolled_back`, `released`; proposal `pending`, `approved`, `rejected`. Later phases extend the lists by migration.
-11. **Links:** people are stored as text user ids (as in phase 0). A glossary element is referenced by its `key`, not by a foreign key, because one element has several version rows. The repository checks that the key exists.
+11. **Links:** people are stored as text user ids (as in phase 0). A glossary element is referenced by its `key`, not by a foreign key, because one element has several version rows. A trigger on `mappings` refuses an `element_key` that has no row in `glossary_elements` (section 6), and the repository checks it first to give a named error.
 12. **Repositories offer create, get and list, plus only the status changes named in section 7.** No general update or delete.
 
 **Glossary**
 
 13. **Glossary element fields:** key, name, domain, data type, definition, aliases, version. Data type is the one field not named in `CLAUDE.md` or `BUILD_PLAN.md`; a glossary is not usable without it. The six data types are string, integer, decimal, date, datetime and boolean.
-14. **The seed is the 30 elements in section 8.** Identifier elements use ISO standards only (ISIN, LEI, MIC, ISO currency and country codes). No proprietary identifier names (CUSIP, SEDOL, FIGI, RIC) and no vendor field codes. I write every definition myself.
+14. **The seed is the 33 elements in section 8.** The names of identifier types are allowed, including `cusip`, `sedol` and `figi` (rule 6 forbids real data, not the names of identifier types). Banned: real identifier values (no ISIN, CUSIP, SEDOL, FIGI, LEI or ticker belonging to a real instrument or issuer, even in a definition's example), vendor field codes, and vendor or client names. I write every definition myself.
 15. **The seed is loaded by an explicit command, `python -m core.seed`.** It is safe to run again and never changes an existing element. It is not an Alembic data migration.
 
 **API and UI**
 
-16. **API paths are under `/api/amaze/`**, in a new `apps/api/routers/amaze.py`. Read-only. Any signed-in backend user may read; the requester gets 403. No paging (30 rows).
+16. **API paths are under `/api/amaze/`**, in a new `apps/api/routers/amaze.py`. Read-only. Any signed-in backend user may read; the requester gets 403. No paging (33 rows).
 17. **backend-ui navigation uses the URL hash** (`#/glossary`, `#/feeds`). No router or UI library is added; no new npm package.
 18. **The UI is checked by the type-check build and by my scripted browser run with screenshots.** The committed Playwright test stays in phase 7, as `BUILD_PLAN.md` says.
 
@@ -143,7 +143,7 @@ Every table has `id` (uuid) and `created_at`. User ids are text. **Append-only**
 | `glossary_elements` | key, version, name, domain, data_type, definition, aliases (list), created_by, proposal_id (empty for the seed) | **Append-only.** Unique key and version; data type is one of six |
 | `requirements` | requester_id, title, description, status | status is one of five |
 | `feeds` | code (unique), name, stage, requirement_id (optional), owner_id, source_ref, registered_at | stage is one of three; **a registered feed must have an owner** (the `no_owner` outcome, enforced by the database) |
-| `mappings` | feed_id, source_field, element_key, version, proposal_id | **Append-only.** Unique feed, source field and version |
+| `mappings` | feed_id, source_field, element_key, version, proposal_id | **Append-only.** Unique feed, source field and version. **A trigger refuses an `element_key` with no row in `glossary_elements`** |
 | `rules` | feed_id, rule_key, version, sql, description, proposal_id | **Append-only.** Unique feed, rule key and version |
 | `loads` | feed_id, file_ref, received_at, status | status is one of four |
 | `products` | code (unique), name, description, domain, requirement_id (optional) | none yet |
@@ -153,7 +153,9 @@ Every table has `id` (uuid) and `created_at`. User ids are text. **Append-only**
 
 **Migration `0002` and existing data.** It drops the decision columns from `proposal_log`. It refuses to run if any row there already has a decision, because that decision would be lost. The local databases have none.
 
-All of this uses only features present since PostgreSQL 14 (tables, `jsonb`, check constraints, a view, a `plpgsql` trigger).
+**Glossary key check on `mappings`.** A `BEFORE INSERT` trigger looks up `NEW.element_key` in `glossary_elements` and raises an error naming the key if there is no row. Checking on insert is enough: `mappings` rows are never updated, and `glossary_elements` rows are never deleted (both are append-only). Checked by a test that inserts a mapping with an unknown key by raw SQL, bypassing the repository, and expects the database to refuse it; and one with a known key that succeeds.
+
+All of this uses only features present since PostgreSQL 14 (tables, `jsonb`, check constraints, a view, `plpgsql` triggers).
 
 ## 7. Domain models and repositories
 
@@ -181,20 +183,22 @@ How this is checked: one test file per repository. Each tests the normal path an
 
 ## 8. Glossary seed
 
-File `fixtures/glossary/enterprise_glossary.json`: 30 elements, each with key, name, domain, data type, definition and aliases.
+File `fixtures/glossary/enterprise_glossary.json`: 33 elements, each with key, name, domain, data type, definition and aliases.
 
-**Security master (16)**
+**Security master (19)**
 
 | Key | Type | Key | Type |
 |---|---|---|---|
-| `instrument_id` | string | `country_of_risk` | string |
-| `isin` | string | `exchange_mic` | string |
-| `instrument_name` | string | `ticker` | string |
-| `asset_class` | string | `issue_date` | date |
-| `instrument_type` | string | `maturity_date` | date |
-| `issuer_name` | string | `coupon_rate` | decimal |
-| `issuer_lei` | string | `lot_size` | integer |
-| `currency` | string | `instrument_status` | string |
+| `instrument_id` | string | `currency` | string |
+| `isin` | string | `country_of_risk` | string |
+| `cusip` | string | `exchange_mic` | string |
+| `sedol` | string | `ticker` | string |
+| `figi` | string | `issue_date` | date |
+| `instrument_name` | string | `maturity_date` | date |
+| `asset_class` | string | `coupon_rate` | decimal |
+| `instrument_type` | string | `lot_size` | integer |
+| `issuer_name` | string | `instrument_status` | string |
+| `issuer_lei` | string | | |
 
 **Pricing (14)**
 
@@ -216,8 +220,8 @@ Checked by `test_glossary_seed.py`:
 
 1. The file is valid: unique keys, only the two domains, only the six data types.
 2. No key or alias appears twice across the whole glossary, ignoring case.
-3. No proprietary identifier or vendor name appears anywhere in the file.
-4. Seeding twice inserts 30, then 0.
+3. No real data: no string in the file is shaped like a real identifier value (ISIN, CUSIP, SEDOL, FIGI or LEI pattern), and none of a fixed list of vendor names or vendor field-code patterns appears. The identifier type names themselves (`cusip`, `sedol`, `figi` and so on) are allowed as keys, names and aliases.
+4. Seeding twice inserts 33, then 0.
 
 ## 9. API
 
@@ -232,14 +236,14 @@ Checked by `test_glossary_seed.py`:
 - No signed-in user: 401. Requester: 403. Any of the six backend roles: allowed.
 - Each request gets its own database session.
 
-Checked by `test_api_amaze.py`: the seeded list, the domain filter (16 and 14), search, the detail page and its 404, the empty feed list, the stage filter, and 401 and 403.
+Checked by `test_api_amaze.py`: the seeded list, the domain filter (19 and 14), search, the detail page and its 404, the empty feed list, the stage filter, and 401 and 403.
 
 ## 10. backend-ui
 
 1. **Shell:** a header with the app title, three links (Status, Glossary, Feed registry) and the dev-user picker. The view follows the URL hash.
 2. **Status:** the phase 0 content. Unavailable adapters are shown in red.
 3. **Glossary:**
-   - a domain filter showing the counts (All 30, Security master 16, Pricing 14);
+   - a domain filter showing the counts (All 33, Security master 19, Pricing 14);
    - a search box;
    - a table with name, key, domain, type, definition and aliases;
    - a click on a row opens its details (version, created by, history);
@@ -310,7 +314,7 @@ Each task: tests first and shown failing, then code, then its check, then one co
 | 3 | Health and stubs (5a) | six stub tests, all-local test, `is_stub` test | pytest. **CHECKPOINT 1:** the break table, the health result for all six stubs, the pytest summary |
 | 4 | Proposal and Approval: models, migration `0002`, repository, audit view, append-only trigger; `proposal_log` change; boundary test extended | `test_repo_proposals.py`, `test_append_only.py`; `test_proposal_log.py`, `test_migrations.py`, `test_import_boundaries.py` updated | pytest; upgrade, downgrade, upgrade |
 | 5 | GlossaryElement: model, migration `0003`, repository | `test_repo_glossary.py` | pytest |
-| 6 | Glossary seed file and `core.seed` | `test_glossary_seed.py` | pytest; the command inserts 30, then 0 |
+| 6 | Glossary seed file and `core.seed` | `test_glossary_seed.py` | pytest; the command inserts 33, then 0 |
 | 7 | Requirement and Feed: models, migration `0004` (first part), repositories | `test_repo_requirements.py`, `test_repo_feeds.py` | pytest |
 | 8 | Mapping and Rule: models, tables, repositories | `test_repo_configuration.py` | pytest |
 | 9 | Load, Product, Notification: models, tables, repositories | `test_repo_loads.py`, `test_repo_products.py`, `test_repo_notifications.py`, `test_domain_models.py` | pytest; `alembic current` shows `0004 (head)`. **CHECKPOINT 2:** pytest output, `alembic current`, seed output |
@@ -340,7 +344,7 @@ npm --prefix apps\consumer-ui run build
 
 | Command | Expected result |
 |---|---|
-| `core.seed` | first run: 30 inserted; later runs: 0 inserted, 30 already present |
+| `core.seed` | first run: 33 inserted; later runs: 0 inserted, 33 already present |
 | `pytest -v` | all pass; 0 failed, 0 skipped, 0 warnings |
 | `alembic current` | `0004 (head)` |
 | `npm ... run build` (twice) | exit code 0 |
@@ -350,7 +354,7 @@ Then in the browser, signed in as any backend dev user:
 
 | URL | Expected result |
 |---|---|
-| `http://localhost:5173/#/glossary` | 30 elements; Security master shows 16, Pricing 14; searching `isin` leaves one row; a click shows its details |
+| `http://localhost:5173/#/glossary` | 33 elements; Security master shows 19, Pricing 14; searching `isin` leaves one row; a click shows its details |
 | `http://localhost:5173/#/feeds` | "No feeds yet." |
 | `http://localhost:8000/api/health` | the phase 0 result plus `"unavailable":[]` |
 
@@ -371,13 +375,13 @@ Steps and `StepResult`, agents, any screen that creates or changes data, the app
 
 ## 15. Risks
 
-1. **Tables are designed before most of them are used.** Minimal columns limit the rework, but the status lists in assumption 10 are my reading of `CLAUDE.md` and may need to change in the phase that uses them.
+1. **Tables are designed before most of them are used.** Minimal columns limit the rework, but the status lists in assumption 10 are my reading of `CLAUDE.md` and may need to change in the phase that uses them. **Phases 3 and 7 will add statuses by migration**, for example `awaiting_source_choice` on requirements (phase 3) and `quarantined` on loads (phase 7, for `resent_quarantined`). Each status list is a check constraint, so adding a value is a small migration that drops and recreates that one constraint.
 2. **Append-only triggers block hand fixes.** A wrong row in a configuration table can only be corrected by a new version. That is the intent, but it will surprise anyone who tries a quick UPDATE.
 3. **Migration `0002` removes columns from a phase 0 table.** It refuses to run when a decision would be lost (section 6). The downgrade puts the columns back, empty.
-4. **Glossary references by key are not enforced by the database.** A mapping could point at a key that does not exist if code bypasses the repository.
-5. **The API tests become async** and share one rolled-back database connection between the test and the request. They run one after another, never at the same time. If this proves unstable, each request gets its own session on that connection.
-6. **Warnings as errors** may surface a warning from a third-party package that I cannot fix. If so, that one warning is listed by name with a reason, as before.
-7. **Search matches aliases by text.** Fine for 30 elements; a large glossary would need an index.
+4. **The API tests become async** and share one rolled-back database connection between the test and the request. They run one after another, never at the same time. If this proves unstable, each request gets its own session on that connection.
+5. **Warnings as errors** may surface a warning from a third-party package that I cannot fix. If so, that one warning is listed by name with a reason, as before.
+6. **Search matches aliases by text.** Fine for 33 elements; a large glossary would need an index.
+7. **PostgreSQL 18.6 to 18.7 in place, before task 4.** A minor upgrade keeps the data files, so the databases, the `amaze` role and its password stay. I re-check the server version and run the full test suite before starting task 4.
 
 ## 16. Carried forward to phase 3
 
