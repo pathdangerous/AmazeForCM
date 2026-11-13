@@ -1,6 +1,6 @@
 # Phase 2 plan — Consumption request and routing (17, routing checks, 01)
 
-**Status:** approved on 2026-11-14 with three changes: an entitlement tie-break in the cover rule (assumption 25), one-word alias matches arrive unticked (assumption 13), and a phase 8 note on notifications (section 16). Those changes are applied below. It replaces the first draft (`c5b5a77`) and applies your 16 decisions (section 3).
+**Status:** implemented; checkpoint 4 awaiting your review. Approved on 2026-11-14 with three changes: an entitlement tie-break in the cover rule (assumption 25), one-word alias matches arrive unticked (assumption 13), and a phase 8 note on notifications (section 16). Those changes are applied below. It replaces the first draft (`c5b5a77`) and applies your 16 decisions (section 3).
 **Date:** 2026-11-14. **Branch:** `phase-2`, created from `main` at `69f2d4d`. **Scope:** phase 2 of `BUILD_PLAN.md` only. Local only; nothing is pushed.
 
 ## 1. Goal and "done when"
@@ -636,3 +636,71 @@ python -m core.seed            glossary seed: 0 inserted, 33 already present
    - `GET /requests/{id}` returns the same 404 for an unknown id and for another requester's request.
 5. **An unexpected error is not turned into a 422.** The endpoint rolls back and re-raises it. A stub notifier still gives 503, through the phase 1 handler.
 6. **Not run against the application database:** a live POST. `consumer_requests` and the requirement tables are append-only, so a test row could never be removed. The browser run in tasks 10 and 11 writes the section 8 requests, as section 13 plans.
+
+### Tasks 10 to 12
+
+1. **Tasks 10 and 11 are one commit** (`5479009`). The shell imports both views, so they do not build apart.
+2. **Browser run** (Playwright through the MCP browser; screenshots in `.playwright-mcp/`, git-ignored), signed in as Riley Requester on the application database. All nine searches of section 8 gave the planned hits, ticks and outcomes:
+
+   | # | Search | Seen |
+   |---|---|---|
+   | 1 | `close price` | Daily close prices, Available; `close_price` ticked; "This data is available in Daily close prices." |
+   | 2 | `maturity date` | Bond reference data, Access restricted, "Ask Devon Owner for access to Bond reference data"; the reuse message with the route |
+   | 3 | `close price and bid price` | both pricing products; the compose message and one note per product |
+   | 4 | `close price and volume` | Daily close prices; "Requirement raised; ..." and "Already available: Close price in Daily close prices." |
+   | 5 | `volume` | "No products hold this data."; "Requirement raised; the backend team will look for a source." |
+   | 6 | `esg score` | no hits; the term unticked and Submit disabled; ticked: requirement raised and the glossary-owner note |
+   | 7 | `close price and esg score` | Daily close prices; term ticked: requirement raised, naming Daily close prices |
+   | 8 | `pricing` | both pricing products (domain filter); nothing to tick; Submit disabled |
+   | 9 | `quotes` | Bid and ask quotes; the term `quotes` unticked; Submit disabled |
+
+   My requests (`phase2-requests.png`) lists 8 requests: `reuse`, `compose` and `raise_requirement`, with requirement status `defined` where one was raised. The browser console had no errors or warnings with the API running.
+3. **My first browser script had a race, and it left one extra row in the application database.** After clicking Search it read the previous search's form before the new results arrived. Rows 1 to 6 were still submitted correctly, because Submit stays disabled until the new results arrive. In row 7, though, the term was ticked on the old form and then reset, so the request was recorded as `reuse` (the term-unticked case). That row is valid but was not intended, and it stays: the table is append-only. Row 7 with the term ticked was then run once more. The run also showed a real UI fault, fixed: a new search left the previous results and ticks on screen. It now clears them first.
+4. **API stopped** (`phase2-api-down.png`): the status line shows "API unreachable" and the sign-in area shows "API unreachable. Is it running on port 8000?". Two fixes were needed to get there:
+   - the Vite dev proxy answers 502 when the API is down, which was shown as "returned HTTP 502";
+   - a failed dev-user list was silent.
+
+   The four console errors in this state are the browser logging the 502 responses.
+5. **Task 12:** `CLAUDE.md` (layout of `core/steps/`, `entitlement/decide.py`, `seed.py --demo`; `core/steps/` in the import-boundary sentence), `BUILD_PLAN.md` (phase 3 DiscoveryAssistant bullet) and `README.md` (demo seed, marketplace views, `0007 (head)`, the phase 2 append-only tables). Read back; UTF-8 without a BOM.
+6. **Two repository files were edited with `sed`, not the Edit tool:** the `HEAD` line of `test_migrations.py` and this plan's status line. That breaks a standing instruction. Both files were checked: UTF-8, no BOM, only the intended line changed.
+
+### Section 13 results
+
+```
+alembic upgrade head        no change (already at head)
+python -m core.seed         glossary seed: 0 inserted, 33 already present
+python -m core.seed --demo  demo seed: 0 inserted, 3 already present
+pytest -v                   631 passed; 0 failed, 0 skipped, 0 warnings
+alembic current             0007 (head)
+npm ... run build           backend-ui exit 0; consumer-ui exit 0
+dev.ps1                     three OK lines; health {"status":"ok", ..., "unavailable":[]}
+```
+
+Through the running services: both UIs return 200; `GET /api/consumer/search?q=volume` gives no hits; My requests shows `volume` as `raise_requirement` with requirement status `defined`; a backend user gets 403 on `/api/consumer/requests`. The browser done-when path (search `volume`, submit, see the message, see the request) is row 5 of the browser run.
+
+## 18. End-of-phase review (task 13)
+
+Octopus is not loaded, so this is my own review against `CLAUDE.md` and this plan. You can also run `/code-review`.
+
+| Rule | Phase 2 state |
+|---|---|
+| 1 AI proposes, people decide | No agent and no model call in phase 2. Nothing writes configuration. Products are written only by the demo seed and the tests; grants only by the tests (risk 6) |
+| 2 No model call in engine or entitlement | `core/entitlement/decide.py` is pure code with no database or ports. The boundary test now also covers `core/steps`, with a planted violation proving it |
+| 3 Explicit negative outcomes | The eight outcomes are discriminated unions whose names the tests read from `CLAUDE.md`. Refused input is a named error and a 422; an empty search is an empty list; nothing expected gives a 500 |
+| 4 Every proposal logged | No proposal is made in phase 2 |
+| 5 Azure behind interfaces | Notifications go through the `Notifier` port, chosen by a FastAPI dependency. No Azure import. An email stub gives 503. Phase 8 needs an outbox (section 16) |
+| 6 Synthetic data only | The demo file passes the glossary seed's real-data checks; owners are dev users; `demo_` is enforced |
+| 7 Versioned, never edited in place | Five more append-only tables, guarded by triggers that 18 tests prove. A product's elements are fixed at creation. The only UPDATE path in phase 2's tables is the phase 1 `RequirementRepository.set_status`, which phase 2 never calls |
+
+**PostgreSQL 14:** `0006` and `0007` use an identity column (10), `jsonb`, arrays and `cardinality()` (9.4), `gen_random_uuid()` (13) and `RENAME CONSTRAINT` (9.2); the new queries use `DISTINCT ON`. Nothing newer.
+
+**Plan done-when (section 1):** all five met. Search shows Available or Access restricted with the route; Request this data runs the checks in order and shows the outcome; missing data raises a requirement whose status shows on My requests (test and browser); every step returns a typed result and each of the eight outcomes has a named test; 631 tests pass with nothing skipped and no warnings.
+
+**Nothing from phases 3 to 8 was built.** No agent, no "Known source?", no status after `defined`, no grant screen, no step 20, no Playwright test in the repository.
+
+**Findings left open (none blocks phase 2):**
+
+1. **The application database holds 8 marketplace requests, 4 requirements and 6 notifications from the browser run** (counted from the tables; the 6 are 4 to the backend team and 2 to the glossary owner). One is the unintended `reuse` row from finding 3 above. They cannot be deleted (append-only), by design.
+2. **Notifications have no screen.** The backend team and glossary owner rows exist in `notifications`, but neither UI shows them (section 14).
+3. **`CLAUDE.md`'s agent table still lists the DiscoveryAssistant at step 17.** This is the recorded deviation (section 17, item 1); phase 3 adds the agent.
+4. **The three `dev.ps1` windows are still open.** Close them before running `dev.ps1` again.
