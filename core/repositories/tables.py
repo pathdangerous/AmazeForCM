@@ -180,3 +180,46 @@ class FeedRow(Base):
     owner_id: Mapped[str | None] = mapped_column(Text)
     source_ref: Mapped[str | None] = mapped_column(Text)
     registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class MappingRow(Base):
+    """Level 1 mapping: one source field to one glossary element. Append-only.
+
+    A database trigger (migration 0004) refuses an element_key that has no row in glossary_elements.
+    """
+
+    __tablename__ = "mappings"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "source_field", "version"),
+        CheckConstraint("length(btrim(source_field)) > 0", name="source_field"),
+        CheckConstraint("version >= 1", name="version"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    source_field: Mapped[str] = mapped_column(Text)
+    element_key: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+
+
+class RuleRow(Base):
+    """One SQL validation rule of a feed. Append-only."""
+
+    __tablename__ = "rules"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "rule_key", "version"),
+        CheckConstraint("rule_key ~ '^[a-z][a-z0-9_]*$'", name="rule_key_format"),
+        CheckConstraint("length(btrim(sql)) > 0 AND length(btrim(description)) > 0", name="text_present"),
+        CheckConstraint("version >= 1", name="version"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    rule_key: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    sql: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))

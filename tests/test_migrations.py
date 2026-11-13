@@ -13,7 +13,10 @@ from sqlalchemy.exc import DBAPIError
 from tests.conftest import alembic_config
 
 HEAD = "0004"
-TABLES = {"proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds"}
+TABLES = {
+    "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
+    "mappings", "rules",
+}
 
 
 def _tables(url: str) -> set[str]:

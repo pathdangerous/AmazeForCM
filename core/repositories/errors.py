@@ -36,6 +36,10 @@ class WrongProposalKind(RepositoryError):
     """The proposal is approved, but of a different kind than the configuration being created."""
 
 
+class ProposalForAnotherFeed(RepositoryError):
+    """The proposal was approved for a different feed than the configuration being created."""
+
+
 # ---- glossary
 
 

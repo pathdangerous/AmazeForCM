@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
@@ -46,11 +46,17 @@ def test_database_url() -> str:
 
 @pytest.fixture(scope="session")
 def migrated_engine(test_database_url) -> Engine:
-    """Test database rebuilt from scratch: downgrade to base, then upgrade to head."""
-    config = alembic_config(test_database_url)
-    command.downgrade(config, "base")
-    command.upgrade(config, "head")
+    """Test database rebuilt from scratch: empty schema, then upgrade to head.
+
+    The schema is dropped rather than downgraded, so a migration edited during development (before it
+    reaches the application database) cannot break the next run. Downgrades are tested separately in
+    test_migrations.py. test_database_url has already refused the application database.
+    """
     engine = create_engine(test_database_url)
+    with engine.begin() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+    command.upgrade(alembic_config(test_database_url), "head")
     yield engine
     engine.dispose()
 

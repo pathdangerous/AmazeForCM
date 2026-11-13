@@ -80,8 +80,74 @@ def upgrade() -> None:
     # proposals are listed newest first; 0002 used now(), which is the same for a whole transaction.
     op.alter_column("proposals", "created_at", server_default=sa.text("clock_timestamp()"))
 
+    # ---- task 8: mappings and rules (versioned, append-only, only from approved proposals)
+    op.create_table(
+        "mappings",
+        _id(),
+        _created_at(),
+        sa.Column("feed_id", sa.Uuid(), nullable=False),
+        sa.Column("source_field", sa.Text(), nullable=False),
+        sa.Column("element_key", sa.Text(), nullable=False),
+        sa.Column("version", sa.Integer(), nullable=False),
+        sa.Column("proposal_id", sa.Uuid(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_mappings"),
+        sa.ForeignKeyConstraint(["feed_id"], ["feeds.id"], name="fk_mappings_feed_id_feeds"),
+        sa.ForeignKeyConstraint(["proposal_id"], ["proposals.id"], name="fk_mappings_proposal_id_proposals"),
+        sa.UniqueConstraint("feed_id", "source_field", "version", name="uq_mappings_feed_id_source_field_version"),
+        sa.CheckConstraint("length(btrim(source_field)) > 0", name="ck_mappings_source_field"),
+        sa.CheckConstraint("version >= 1", name="ck_mappings_version"),
+    )
+    op.create_table(
+        "rules",
+        _id(),
+        _created_at(),
+        sa.Column("feed_id", sa.Uuid(), nullable=False),
+        sa.Column("rule_key", sa.Text(), nullable=False),
+        sa.Column("version", sa.Integer(), nullable=False),
+        sa.Column("sql", sa.Text(), nullable=False),
+        sa.Column("description", sa.Text(), nullable=False),
+        sa.Column("proposal_id", sa.Uuid(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_rules"),
+        sa.ForeignKeyConstraint(["feed_id"], ["feeds.id"], name="fk_rules_feed_id_feeds"),
+        sa.ForeignKeyConstraint(["proposal_id"], ["proposals.id"], name="fk_rules_proposal_id_proposals"),
+        sa.UniqueConstraint("feed_id", "rule_key", "version", name="uq_rules_feed_id_rule_key_version"),
+        sa.CheckConstraint("rule_key ~ '^[a-z][a-z0-9_]*$'", name="ck_rules_rule_key_format"),
+        sa.CheckConstraint("length(btrim(sql)) > 0 AND length(btrim(description)) > 0", name="ck_rules_text_present"),
+        sa.CheckConstraint("version >= 1", name="ck_rules_version"),
+    )
+    for table in ("mappings", "rules"):
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_append_only BEFORE UPDATE OR DELETE ON {table} "
+            "FOR EACH ROW EXECUTE FUNCTION amaze_refuse_update_delete()"
+        )
+
+    # A glossary element has several version rows, so element_key cannot be a foreign key. This trigger
+    # checks it on insert. That is enough: mappings are never updated and glossary rows never deleted.
+    op.execute(
+        """
+        CREATE FUNCTION amaze_require_glossary_key() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM glossary_elements WHERE key = NEW.element_key) THEN
+                RAISE EXCEPTION 'element_key % is not in the glossary', NEW.element_key
+                    USING ERRCODE = 'foreign_key_violation';
+            END IF;
+            RETURN NEW;
+        END $$;
+        """
+    )
+    op.execute(
+        "CREATE TRIGGER trg_mappings_glossary_key BEFORE INSERT ON mappings "
+        "FOR EACH ROW EXECUTE FUNCTION amaze_require_glossary_key()"
+    )
+
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER trg_mappings_glossary_key ON mappings")
+    op.execute("DROP FUNCTION amaze_require_glossary_key()")
+    for table in ("rules", "mappings"):
+        op.execute(f"DROP TRIGGER trg_{table}_append_only ON {table}")
+    op.drop_table("rules")
+    op.drop_table("mappings")
     op.alter_column("proposals", "created_at", server_default=sa.text("now()"))
     op.drop_constraint("fk_proposals_feed_id_feeds", "proposals", type_="foreignkey")
     op.drop_constraint("fk_proposals_requirement_id_requirements", "proposals", type_="foreignkey")

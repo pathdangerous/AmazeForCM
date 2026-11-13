@@ -31,10 +31,41 @@ def _glossary_row(db_session, request):
     return "glossary_elements", repo.get_current("append_only_probe").id
 
 
+def _feed_with_glossary(db_session, request):
+    from core.repositories.feeds import FeedRepository
+
+    _glossary_row(db_session, request)
+    return FeedRepository(db_session).create_candidate(code="append_only_feed", name="Append-only feed")
+
+
+def _mappings_row(db_session, request):
+    from core.repositories.configuration import MappingRepository
+
+    feed = _feed_with_glossary(db_session, request)
+    proposal = request.getfixturevalue("approved_proposal")(kind="mapping")
+    mapping = MappingRepository(db_session).add_version(
+        feed_id=feed.id, source_field="Probe", element_key="append_only_probe", proposal_id=proposal.id
+    )
+    return "mappings", mapping.id
+
+
+def _rules_row(db_session, request):
+    from core.repositories.configuration import RuleRepository
+
+    feed = _feed_with_glossary(db_session, request)
+    proposal = request.getfixturevalue("approved_proposal")(kind="rule", roles=("data_steward", "checker"))
+    rule = RuleRepository(db_session).add_version(
+        feed_id=feed.id, rule_key="probe", sql="SELECT 1", description="Synthetic.", proposal_id=proposal.id
+    )
+    return "rules", rule.id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
     "approvals": _approvals_row,
     "glossary_elements": _glossary_row,
+    "mappings": _mappings_row,
+    "rules": _rules_row,
 }
 
 
