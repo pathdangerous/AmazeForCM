@@ -4,9 +4,6 @@ The app is called in-process with httpx.AsyncClient over httpx.ASGITransport; st
 run through app.router.lifespan_context. No Starlette TestClient (see test_no_starlette_testclient.py).
 """
 
-from contextlib import asynccontextmanager
-
-import httpx
 import pytest
 from sqlalchemy import create_engine
 
@@ -14,6 +11,7 @@ from apps.api.deps import get_app_settings, get_db_engine
 from apps.api.main import app
 from ports.config import Settings, get_settings
 from ports.db.session import get_engine
+from tests.conftest import running_app
 
 pytestmark = pytest.mark.anyio
 
@@ -31,27 +29,6 @@ STUBS = [
     ("secrets", "SECRETS_PROVIDER", "key_vault"),
     ("notify", "NOTIFY_PROVIDER", "email"),
 ]
-
-
-@pytest.fixture
-def anyio_backend():
-    return "asyncio"
-
-
-@asynccontextmanager
-async def running_app(engine=None, settings=None):
-    """Start the app (lifespan included) with optional overrides, and yield an httpx client."""
-    if engine is not None:
-        app.dependency_overrides[get_db_engine] = lambda: engine
-    if settings is not None:
-        app.dependency_overrides[get_app_settings] = lambda: settings
-    try:
-        async with app.router.lifespan_context(app):
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as test_client:
-                yield test_client
-    finally:
-        app.dependency_overrides.clear()
 
 
 @pytest.fixture

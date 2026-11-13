@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from apps.api.routers import dev_identity, health
+from apps.api.routers import amaze, dev_identity, health
 from ports.config import get_settings
 from ports.identity import get_identity
 from ports.scheduler import get_scheduler
@@ -45,3 +45,4 @@ async def adapter_not_implemented(request: Request, exc: NotImplementedError) ->
 
 app.include_router(health.router)
 app.include_router(dev_identity.router)
+app.include_router(amaze.router)

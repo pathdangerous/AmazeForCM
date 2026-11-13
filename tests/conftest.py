@@ -7,6 +7,7 @@ inside a transaction that is rolled back. If the database is unreachable, tests 
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,41 @@ def db_session(migrated_engine) -> Session:
         finally:
             session.close()
             transaction.rollback()
+
+
+# ---------------------------------------------------------------- API tests (httpx, no Starlette TestClient)
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@asynccontextmanager
+async def running_app(engine=None, settings=None, session=None):
+    """Start the API (lifespan included) with optional overrides and yield an httpx client.
+
+    session: every request uses this session (the test's rolled-back db_session), so a request sees
+    rows the test created without committing them.
+    """
+    import httpx
+
+    from apps.api.deps import get_app_settings, get_db_engine, get_db_session
+    from apps.api.main import app
+
+    if engine is not None:
+        app.dependency_overrides[get_db_engine] = lambda: engine
+    if settings is not None:
+        app.dependency_overrides[get_app_settings] = lambda: settings
+    if session is not None:
+        app.dependency_overrides[get_db_session] = lambda: session
+    try:
+        async with app.router.lifespan_context(app):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                yield client
+    finally:
+        app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------- phase 1: proposals and approvals
