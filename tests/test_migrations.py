@@ -17,7 +17,7 @@ TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
 }
-PHASE_2_TABLES = {"product_elements"}  # migration 0006; each task adds its tables
+PHASE_2_TABLES = {"product_elements", "product_grants"}  # migration 0006; each task adds its tables
 TABLES |= PHASE_2_TABLES
 
 

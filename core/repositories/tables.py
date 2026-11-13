@@ -12,9 +12,11 @@ from typing import Any
 
 from sqlalchemy import (
     ARRAY,
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     Text,
@@ -278,3 +280,29 @@ class ProductElementRow(Base):
     created_at: Mapped[datetime] = _created_at(clock=True)
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"))
     element_key: Mapped[str] = mapped_column(Text)
+
+
+class ProductGrantRow(Base):
+    """One grant or revoke of access to a product, for a user or a role. Append-only.
+
+    seq (an identity column the database always generates) gives the events a total order.
+    """
+
+    __tablename__ = "product_grants"
+    __table_args__ = (
+        UniqueConstraint("seq"),
+        CheckConstraint("subject_type IN ('user', 'role')", name="subject_type"),
+        CheckConstraint("action IN ('grant', 'revoke')", name="action"),
+        CheckConstraint(f"subject_type <> 'role' OR {_in('subject', ROLES)}", name="known_role"),
+        CheckConstraint("length(btrim(subject)) > 0 AND length(btrim(decided_by)) > 0", name="text_present"),
+        Index("ix_product_grants_product_id", "product_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True))
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"))
+    subject_type: Mapped[str] = mapped_column(Text)
+    subject: Mapped[str] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(Text)
+    decided_by: Mapped[str] = mapped_column(Text)

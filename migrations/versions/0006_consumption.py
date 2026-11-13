@@ -1,4 +1,4 @@
-"""consumption: product owner, visibility and elements
+"""consumption: product owner, visibility, elements and grants
 
 Revision ID: 0006
 Revises: 0005
@@ -10,6 +10,9 @@ Task 1: products gains owner_id and visibility, both required and with no defaul
 if products already has rows, because it cannot invent an owner or a visibility for them.
 product_elements lists the glossary elements a product holds. It is append-only, and it reuses the
 0004 trigger function that refuses an element_key with no row in glossary_elements.
+
+Task 2: product_grants holds grant and revoke events per user or role. It is append-only, and its
+seq identity column (GENERATED ALWAYS) gives the events a total order.
 
 Check constraints are named with op.f(): the name is final. A plain name is passed through the
 naming convention a second time, which is why 0002 to 0004 created ck_<table>_ck_<table>_<name>.
@@ -26,8 +29,13 @@ down_revision = "0005"
 branch_labels = None
 depends_on = None
 
-APPEND_ONLY = ("product_elements",)
+ROLES = ("requester", "backend_team", "data_owner", "data_steward", "checker", "glossary_owner", "operations")
+APPEND_ONLY = ("product_elements", "product_grants")
 GLOSSARY_KEYED = ("product_elements",)
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
 
 
 def _id() -> sa.Column:
@@ -69,6 +77,32 @@ def upgrade() -> None:
         sa.UniqueConstraint("product_id", "element_key", name="uq_product_elements_product_id_element_key"),
     )
 
+    # ---- task 2: grant and revoke events. seq orders them; the database always generates it.
+    op.create_table(
+        "product_grants",
+        _id(),
+        _created_at(),
+        sa.Column("seq", sa.BigInteger(), sa.Identity(always=True), nullable=False),
+        sa.Column("product_id", sa.Uuid(), nullable=False),
+        sa.Column("subject_type", sa.Text(), nullable=False),
+        sa.Column("subject", sa.Text(), nullable=False),
+        sa.Column("action", sa.Text(), nullable=False),
+        sa.Column("decided_by", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_product_grants"),
+        sa.ForeignKeyConstraint(["product_id"], ["products.id"], name="fk_product_grants_product_id_products"),
+        sa.UniqueConstraint("seq", name="uq_product_grants_seq"),
+        sa.CheckConstraint("subject_type IN ('user', 'role')", name=op.f("ck_product_grants_subject_type")),
+        sa.CheckConstraint("action IN ('grant', 'revoke')", name=op.f("ck_product_grants_action")),
+        sa.CheckConstraint(
+            f"subject_type <> 'role' OR {_in('subject', ROLES)}", name=op.f("ck_product_grants_known_role")
+        ),
+        sa.CheckConstraint(
+            "length(btrim(subject)) > 0 AND length(btrim(decided_by)) > 0",
+            name=op.f("ck_product_grants_text_present"),
+        ),
+    )
+    op.create_index("ix_product_grants_product_id", "product_grants", ["product_id"])
+
     # ---- every phase 2 table that is append-only: UPDATE, DELETE and TRUNCATE refused (function from 0002)
     for table in APPEND_ONLY:
         op.execute(
@@ -88,7 +122,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Dropping a table drops its triggers; dropping a column drops the check constraints on it.
+    # Dropping a table drops its triggers and indexes; dropping a column drops the check constraints on it.
+    op.drop_table("product_grants")
     op.drop_table("product_elements")
     op.drop_column("products", "visibility")
     op.drop_column("products", "owner_id")

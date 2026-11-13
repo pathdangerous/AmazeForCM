@@ -81,6 +81,16 @@ def _product_elements_row(db_session, request):
     return "product_elements", row_id
 
 
+def _product_grants_row(db_session, request):
+    from core.repositories.grants import ProductGrantRepository
+
+    product = _product(db_session, request)
+    event = ProductGrantRepository(db_session).record(
+        product_id=product.id, subject_type="role", subject="requester", action="grant", decided_by="dev-data-owner"
+    )
+    return "product_grants", event.id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
     "approvals": _approvals_row,
@@ -88,6 +98,7 @@ ROWS = {
     "mappings": _mappings_row,
     "rules": _rules_row,
     "product_elements": _product_elements_row,
+    "product_grants": _product_grants_row,
 }
 
 

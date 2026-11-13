@@ -135,3 +135,30 @@ def test_product_draft_accepts_valid_input():
 def test_product_draft_rejects(bad):
     with pytest.raises(ValidationError):
         ProductDraft(**{**PRODUCT, **bad})
+
+
+# ---- Grant events and the access decision (phase 2, task 2)
+
+from core.domain.entitlement import ACCESS_REASONS, Access, GrantDraft  # noqa: E402
+
+GRANT = {"subject_type": "role", "subject": "requester", "action": "grant", "decided_by": "dev-data-owner"}
+
+
+def test_access_reasons_are_the_lines_of_the_rule():
+    assert ACCESS_REASONS == ("open", "owner", "user_grant", "user_revoke", "role_grant", "no_grant")
+    with pytest.raises(ValidationError):
+        Access(entitled=True, reason="because")
+
+
+def test_grant_draft_accepts_a_user_or_a_role():
+    assert GrantDraft(**GRANT).subject == "requester"
+    assert GrantDraft(**{**GRANT, "subject_type": "user", "subject": "dev-requester"}).subject == "dev-requester"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [{"subject_type": "group"}, {"action": "deny"}, {"subject": "superuser"}, {"subject": " "}, {"decided_by": " "}],
+)
+def test_grant_draft_rejects(bad):
+    with pytest.raises(ValidationError):
+        GrantDraft(**{**GRANT, **bad})
