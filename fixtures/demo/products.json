@@ -1,0 +1,17 @@
+{
+  "description": "Synthetic demo products for the Amaze for CM PoC consumer-ui (phase 2). Loaded only by python -m core.seed --demo. Codes start with demo_. No real products, vendors or clients; no feeds or loads stand behind them.",
+  "products": [
+    {"code": "demo_daily_close_prices", "name": "Daily close prices", "domain": "pricing", "visibility": "open",
+     "owner_id": "dev-data-owner",
+     "description": "Synthetic end-of-day prices for each instrument, one row per instrument and business date.",
+     "element_keys": ["instrument_id", "price_date", "close_price", "price_currency"]},
+    {"code": "demo_bid_ask_quotes", "name": "Bid and ask quotes", "domain": "pricing", "visibility": "open",
+     "owner_id": "dev-data-owner",
+     "description": "Synthetic best bid and best ask, taken once per business day.",
+     "element_keys": ["instrument_id", "price_date", "bid_price", "ask_price"]},
+    {"code": "demo_bond_reference", "name": "Bond reference data", "domain": "security_master", "visibility": "restricted",
+     "owner_id": "dev-data-owner",
+     "description": "Synthetic reference data for debt instruments: identifiers, issuer and terms.",
+     "element_keys": ["instrument_id", "isin", "issuer_name", "maturity_date", "coupon_rate"]}
+  ]
+}
