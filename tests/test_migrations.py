@@ -41,6 +41,24 @@ def test_upgrade_downgrade_upgrade(migrated_engine, test_database_url):
         command.upgrade(config, "head")  # leave the schema at head for the other tests
 
 
+def test_orm_models_match_migrations(migrated_engine):
+    """The tables declared in code and the tables the migrations build must not drift apart."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+
+    from migrations.models import metadata
+
+    def only_modelled(obj, name, type_, reflected, compare_to):
+        return type_ != "table" or name in metadata.tables
+
+    with migrated_engine.connect() as connection:
+        context = MigrationContext.configure(
+            connection, opts={"include_object": only_modelled, "compare_server_default": True}
+        )
+        diff = compare_metadata(context, metadata)
+    assert diff == [], f"models and migrations differ: {diff}"
+
+
 def test_proposal_log_columns(migrated_engine):
     columns = {c["name"] for c in inspect(migrated_engine).get_columns("proposal_log")}
     assert columns == {
