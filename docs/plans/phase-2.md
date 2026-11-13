@@ -1,153 +1,183 @@
 # Phase 2 plan — Consumption request and routing (17, routing checks, 01)
 
-**Status:** awaiting approval.
-**Date:** 2026-11-14. **Branch:** `phase-2`, created from `main` at `69f2d4d` (main fast-forwarded to `phase-1`). **Scope:** phase 2 of `BUILD_PLAN.md` only. Local only; nothing is pushed.
+**Status:** awaiting approval. Second draft: it replaces the first draft (`c5b5a77`) and applies your 16 decisions (section 3).
+**Date:** 2026-11-14. **Branch:** `phase-2`, created from `main` at `69f2d4d`. **Scope:** phase 2 of `BUILD_PLAN.md` only. Local only; nothing is pushed.
 
 ## 1. Goal and "done when"
 
 Phase 2 is done when all five are true:
 
-1. A requester searches in consumer-ui. Products holding the data are listed as available, or as "Access restricted" with the route to access (step 17).
-2. "Request this data" runs the routing checks in order (reuse, compose, create product, raise requirement), and the requester sees the outcome.
-3. **A search for missing data raises a requirement (step 01), and the requester sees its status on "My requests".** This is `BUILD_PLAN.md`'s done-when, proved by an API test and in the browser.
-4. Every step returns a typed result: success or one of its named negative outcomes (rule 3).
+1. A requester searches in consumer-ui. Each matching product is listed as "Available", or as "Access restricted" with the route to access (step 17).
+2. "Request this data" runs the routing checks in order (reuse, compose, create product, raise requirement), and the requester sees the outcome and its message.
+3. **A search for missing data raises a requirement (step 01), and the requester sees its status on "My requests".** This is `BUILD_PLAN.md`'s done-when. It is proved by the API test `test_done_when_missing_data_raises_a_requirement_and_shows_its_status` and in the browser (section 13).
+4. Every step returns a typed result (rule 3), and each of the eight outcome names has a named test (section 5).
 5. `pytest` passes with nothing skipped and no warnings.
 
-## 2. State at the start (checked on 2026-11-13)
+## 2. State at the start (checked on 2026-11-14)
 
 | Item | Found |
 |---|---|
-| Git | Before phase 2, on `phase-1`: the configuration guard was tightened (`9976b92`, migration `0005`) and phase 1 plan section 18 was fixed (`69f2d4d`). `main` was fast-forwarded to `69f2d4d`; bundle `F:\amaze-phase1.bundle` (all refs, verified). `phase-2` was created from `main` |
-| Tests | 374 passing |
-| Database | `alembic current`: `0005 (head)` on the application database |
-| Products, grants, requested elements | None exist. `products` has no owner, visibility or elements; `requirements` has no elements |
+| Git | `main` = `phase-1` = `69f2d4d`. `phase-2` = `c5b5a77`, which adds only the first draft of this plan. Working tree clean |
+| Tests | 374 collected |
+| Database | `alembic current` on the application database: `0005 (head)` |
+| Products, grants, requested elements | None exist. `products` has no owner, visibility or elements; `requirements` has no elements or terms |
+| Import-boundary test | Covers `core.engine`, `core.entitlement`, `core.domain` and `core.repositories`. It does **not** cover `core.steps` |
+| Glossary seed | 33 elements. No phrase (key, name or alias) belongs to two elements. One phrase starts with a stop-word: `as of date` |
+| consumer-ui | One page: the phase 0 status line and the dev-user picker. `api.ts` can only GET |
 | Plugins | Superpowers, Karpathy, i-have-adhd and Octopus are still not loaded. I follow the same flow by hand |
 
-## 3. Decisions you made
+## 3. Decisions you made (not reopened)
 
-1. **Git:** guard fix and plan fix on `phase-1`, then fast-forward `main` and branch `phase-2` from it.
-2. **Step 17 search is deterministic code, with no agent.** The DiscoveryAssistant waits until `agents/base.Agent.run()` exists (phase 3 or later). **This is a deviation from `CLAUDE.md`'s agent table**, recorded in section 16.
-3. **Term matching:**
-   - it ignores case and skips stop-words;
-   - it tries the longest glossary phrase first;
-   - the requester ticks which unmatched terms are real data needs, and only ticked terms are kept.
-4. **`element_not_in_glossary`:**
-   - the requirement is still saved, with the ticked terms, and the glossary owner is notified;
-   - routing uses matched elements only;
-   - if nothing matched, the outcome is `raise_requirement`.
-5. **Entitlement:**
-   - a product is `open` or `restricted` and has an owner;
-   - `product_grants` holds grant and revoke events, and the latest event wins;
-   - the route to access is text only: no access-request workflow.
-6. **Coverage:**
-   - reuse: one product holds every requested element;
-   - compose: the fewest products that together cover the request, at most 3, chosen by a fixed rule;
-   - create product: the elements are in Amaze's domains;
-   - partial coverage: `raise_requirement` for the missing elements only, and the result names the products that cover the rest.
-7. **Demo data** comes from `python -m core.seed --demo`, separate from the glossary seed. Tests build their own data.
-8. **Every request is recorded** in `consumer_requests`, which is append-only.
-9. **The "Known source?" check is phase 3.**
-10. **A1 to A6 accepted.** A1 uses a Pydantic discriminated union on `outcome`.
+1. **Step 17 search is deterministic code** over product name, description, domain, and element keys, names and aliases. The DiscoveryAssistant moves to phase 3. This is a deviation from `CLAUDE.md`'s agent table (section 17), and phase 3 of `BUILD_PLAN.md` gets a bullet (task 12).
+2. **Term matching:** request text is matched to glossary keys, names and aliases. Case is ignored, the longest phrase is tried first, stop-words are skipped. The requester ticks which unmatched terms are real; only ticked terms are kept.
+3. **`element_not_in_glossary`:** the requirement is still saved with the ticked terms, and the glossary owner gets an in-app notification. Routing uses matched elements only. If nothing matched, a requirement is raised.
+4. **Entitlement** lives in `core/entitlement/`. A product is `open` or `restricted`. `product_grants` is append-only and holds grant and revoke events per user or role. The latest event wins; a user's own event beats one for their role; the owner always has access. The route to access is text only: "Ask <owner> for access to <product>".
+5. **Routing, in order:** `reuse` (one product covers all), `compose` (stub: the fewest products that cover the request, at most 3, by a fixed rule), `create_product` (each element has a current approved mapping on a registered feed with at least one released load; step 20 stays in phase 7), `raise_requirement`. Partial coverage: if every uncovered element is in the domains, the outcome is `create_product`; otherwise a requirement is raised for the uncovered elements only, and the result names the products covering the rest.
+6. **Demo products** sit behind `python -m core.seed --demo`, separate from the glossary seed. Their codes start with `demo_`, and a test enforces it.
+7. **`consumer_requests` is append-only** and holds each request's routing outcome. "My requests" shows all outcomes.
+8. **"Known source?"** is left for phase 3.
+9. **Each step returns a Pydantic discriminated union on `outcome`.** The shared base is `core/steps/result.py`.
+10. **The consumer API is `/api/consumer/`**, for the requester only. Backend users get 403.
+11. **Phase 2 tables go in migration `0006`.** `0005` is applied and is never edited.
+12. **A domain word** (for example "pricing") counts as a match. It is used as a filter, never as an unmatched term or a requested element.
+13. **A phrase that belongs to two elements** shows both, unticked. A test proves the 33-element seed has no such clash.
+14. **An empty search** returns an empty list, not a negative outcome, and leads to "Request this data".
+15. **Message after a requirement is raised:** "Requirement raised; the backend team will look for a source." The backend team gets an in-app notification. The "being onboarded" message stays in phase 3.
+16. **consumer-ui** gets two hash views, Search and My requests. No new npm packages. It is checked by build and screenshots; Playwright stays in phase 7.
 
 ## 4. Assumptions — veto any by number
 
+**(new)** was not in the first draft. **(changed)** differs from the first draft. Unmarked items are carried over.
+
 **Structure**
 
-1. **Migration `0006`, not `0005`.** `0005` is now the guard fix. `0006_consumption.py` holds every phase 2 table change (A3). It is written across tasks 1 to 3 and applied to the application database only at checkpoint 1. The test fixture already rebuilds the schema each run, so a half-written `0006` cannot leave leftovers (phase 1 plan, section 17, item 4).
-2. **Steps live in `core/steps/`:**
+1. **Migration `0006_consumption.py`** holds every phase 2 table change. It is written across tasks 1 to 3 and reaches the application database only at checkpoint 1. The test fixture rebuilds the schema each run, so a half-written `0006` leaves nothing behind.
+2. **(changed) Modules.** In `core/steps/`:
    - `result.py` (shared base);
-   - `matching.py` (terms to glossary elements);
+   - `matching.py` (request text to glossary elements);
    - `s17_discover.py`;
    - `routing.py`;
-   - `s01_define_requirement.py`.
+   - `s01_define_requirement.py`;
+   - `request_data.py` (assumption 3).
 
-   The entitlement decision lives in `core/entitlement/decide.py`, which is pure code with no database access. The import-boundary test already covers `core/entitlement`.
-3. **Steps never commit.** The API endpoint owns the transaction: routing, step 01, the request record and the notifications are committed together, or not at all.
-4. **Steps receive their ports as arguments.** Step 01 is given the `Notifier` and the recipient user ids. The API finds the recipients with `Identity.list_users()`, filtered by role. Steps import no identity adapter.
+   The entitlement decision is `core/entitlement/decide.py`: pure code, no database access, no ports.
+3. **(new) One function runs a request: `core/steps/request_data.py`.** In order: check the input, run routing, run step 01 when the outcome is `raise_requirement`, send the notifications, record the `consumer_requests` row, return. The API endpoint only checks the caller, calls it and commits. Reason: the first draft put this sequence in the router and gave the `create_product` notification no owner.
+4. **Steps never commit.** The API endpoint owns the transaction: the requirement, its elements and terms, the request record and the notifications are committed together, or not at all.
+5. **(changed) Steps get what they need as arguments:** the session, the user, the `Notifier`, the recipient ids for each role, and a function `display_name(user_id)`. Steps import no adapter. The API finds recipients with `Identity.list_users()` filtered by role, and builds `display_name` on `Identity.get_user()`. An unknown owner id is shown as the id itself.
+6. **(new) The import-boundary test also covers `core.steps`.** `core.steps` is added to `BOUNDARY_PACKAGES`, and the checker's self-test gets a planted violation under `core/steps/`. Every phase 2 step is deterministic, so the whole package can be covered now. Phase 3 must settle how an agent-backed step fits (section 16).
 
 **Matching (`core/steps/matching.py`)**
 
-5. **One normalisation for both sides.** Lower-case, split on anything that is not a letter or digit, drop stop-words. The same function is applied to the query and to every glossary phrase. So `yield to maturity` and the query `yield to maturity` both become `yield maturity` and still match.
-6. **Glossary phrases:** each current element's key (underscores become spaces), name and aliases. Each domain's label (`security master`, `pricing`) is also a phrase, so a domain word is never offered as an unmatched term.
-7. **The stop-word list is a fixed tuple in code**, about 30 words: articles, prepositions, `and`, `or`, `data`, `need`, `want`, `please`, `show`, `me`, `all`, and so on. A test pins it.
-8. **Longest match, left to right.** At each position, try the longest phrase first, down to one token. Consecutive tokens that match nothing form one unmatched term (`esg score` stays one term, not two).
-9. **Ambiguous phrases:** if one normalised phrase belongs to two elements, the result lists both as candidates, with neither ticked, and the requester picks. A seed test proves today's 33 elements have no such collision, so this is a guard, not a demo path.
+7. **(new) Words and segments.** The text is lower-cased. Every character other than `a-z`, `0-9`, space, hyphen and underscore cuts it into segments. Inside a segment, hyphens and underscores count as spaces, and words are split on spaces. A phrase never spans two segments.
+8. **(changed) Glossary phrases keep every word.** Each current element gives its key, its name and its aliases, split by the rule in 7 (`yield_to_maturity` becomes `yield to maturity`). Each glossary domain gives one domain phrase (`security master`, `pricing`). The first draft dropped stop-words from glossary phrases too, which turned the alias `as_of_date` into the phrase `date`: a search for any date would have matched `price_date`.
+9. **(changed) The stop-word list is fixed in code and pinned by a test.** 38 words: `a an the and or of to for in on at by from with per as i we me my our us need want would like please show give get find have is are all any some data`. A stop-word is skipped only where no phrase starts at it, so `as of date` still matches.
+10. **(changed) Longest match, left to right, inside one segment.** At each word, try the longest phrase first (element and domain phrases together), down to one word. If nothing matches, a stop-word is skipped and any other word joins the current unmatched term. A match, a stop-word or the end of a segment closes the term. So `esg score and carbon footprint` gives two terms; the first draft gave one.
+11. **(new) No stemming, plurals or spelling help.** `prices` does not match `price`. This is risk 1.
+12. **A phrase owned by two elements** lists both as candidates, neither ticked (decision 13). **(new)** If a domain phrase ever equals an element phrase, the element wins. A seed test proves today's glossary has neither case.
+13. **What matching returns** (`Match`, a plain model): matched element keys, ambiguous phrases with their candidates, matched domains, and unmatched terms. Each list is in order of first appearance, with no duplicates. A domain is never in the elements or the terms (decision 12). In the UI, matched elements start ticked; candidates and terms start unticked.
 
-**Search (step 17)**
+**Search (step 17, `core/steps/s17_discover.py`)**
 
-10. A product is a hit if it holds any matched element, or if any query token that matched no glossary element appears as a whole word in its name or description. Domain words also match a product's domain. Hits are sorted by the number of matched elements held (most first), then by name.
-11. **Restricted products are shown to everyone**, each hit with its own outcome:
-    - `found`: the requester may use it;
-    - `not_entitled_visible`: shown with the route, "Access restricted. Ask <owner name> for access to <product name>."
-12. **A search with no hits returns an empty list.** It is not a negative outcome of step 17; it is what leads to "Request this data".
+14. **(changed) Which products are hits:**
+    1. A product is a candidate if it holds a matched element or a candidate element, or if a word of an unmatched term is a whole word of its name or description.
+    2. If the query names one or more domains, only products in those domains stay (decision 12). A query made only of domain words lists every product in those domains.
+    3. Order: the number of matched elements held (most first), then name, then code.
+15. **(changed) Each hit has its own outcome.** Restricted products are shown to everyone.
+    - `found`: the requester may use it. The UI badge is "Available".
+    - `not_entitled_visible`: shown with the route. The UI badge is "Access restricted" (`CLAUDE.md`'s wording), and the route is exactly "Ask <owner display name> for access to <product name>" (decision 4).
+16. **No hits is an empty list** (decision 14). **(new)** A blank query also returns 200 with an empty match and an empty list.
+17. **(new) Step 17's typed result is per product.** `discover()` returns the `Match` and a list of hits, each `found` or `not_entitled_visible`. This follows from decision 14: an empty list is not an outcome.
 
 **Entitlement (`core/entitlement/decide.py`)**
 
-13. **The rule, in order:**
-    1. an `open` product is entitled;
+18. **The rule, in order:**
+    1. an `open` product is entitled, whatever its grant events say;
     2. the owner is entitled;
     3. if the user's own id has grant or revoke events, the latest one decides;
-    4. otherwise, entitled if the latest event for any of the user's roles is a grant;
+    4. otherwise, entitled if the latest event for any one of the user's roles is a grant;
     5. otherwise not entitled.
-14. **Event order is total:** `product_grants` has a `seq` identity column, and "latest" means the highest `seq`. Two events in one transaction never tie.
-15. **No grant screen in phase 2.** Grants are written by the demo seed and the tests only. The repository records who granted or revoked.
+19. **Event order is total.** `product_grants` has a `seq` identity column, and "latest" means the highest `seq`.
+20. **(new) The decision names the rule that fired.** `decide(visibility, owner_id, user_id, roles, events)` returns `Access` with `entitled` and `reason`: `open`, `owner`, `user_grant`, `user_revoke`, `role_grant` or `no_grant`. Each line of assumption 18 then has a test that names it. `route_to_access(owner_name, product_name)` builds the route text.
+21. **No grant screen in phase 2.** Grants are written by tests only. The repository records who granted or revoked.
 
 **Routing (`core/steps/routing.py`)**
 
-16. **The input** is the ticked element keys E and the ticked unmatched terms T. Empty E and empty T is refused by the API with 422; the UI disables the button.
-17. **The order of checks.** "Cover" means the products' elements include every key in E.
-    1. **E is empty** (only terms were ticked): `raise_requirement`.
-    2. **reuse:** one product covers E.
-    3. **compose:** two or three products together cover E.
-    4. Otherwise take the best partial cover C (at most 3 products, covering as much of E as possible). Call the rest R = E minus the elements of C.
-    5. **create_product:** every element in R is in the domains.
-    6. **raise_requirement:** for M = R minus the in-domain elements. The result names C, the elements C covers, and any in-domain elements.
-18. **The fixed rule for choosing a cover** applies to reuse, compose and the partial cover. Pick, in this order:
+22. **The input** is the ticked element keys E and the ticked terms T. Domains from the search are not part of it (decision 12). Empty E and empty T is refused with `NothingToRequest` (422); the UI disables Submit.
+23. **(changed) The order of checks.** "Cover" means the products' elements include every key.
+    1. Find the best cover C of E by the fixed rule in 25 (at most 3 products; empty when no product holds any element of E). R is E minus the elements C holds.
+    2. T is not empty: `raise_requirement` (assumption 24). This includes the case where nothing matched (decision 3).
+    3. R is empty and C is one product: `reuse`.
+    4. R is empty and C is two or three products: `compose`.
+    5. Every element of R is in the domains: `create_product`.
+    6. Otherwise `raise_requirement` for **R, every uncovered element** (decision 5). The result names C and what each product covers, and marks which elements of R are already in the domains. The first draft raised the requirement only for the elements outside the domains.
+24. **(new) Ticked terms always lead to a requirement.** The requirement holds T and R (R may be empty), and the result names the products that cover the rest of E. Reason: decisions 3 and 5 do not say what happens to a ticked term when products cover every matched element, and the first draft dropped it silently. The cover and in-domain checks still use matched elements only. If you veto this: the outcome comes from E alone, and the terms are saved on the request and sent to the glossary owner with no requirement.
+25. **The fixed rule for choosing a cover.** Pick, in this order:
     1. the most elements of E covered;
     2. the fewest products;
     3. the fewest elements held beyond E;
     4. product codes in alphabetical order (the sorted list of codes compared as text).
 
-    It is brute force over all combinations of up to 3 products. That is fine for a PoC catalogue (risk 2).
-19. **Entitlement does not change routing.** A restricted product still counts for reuse or compose. The result carries each product's access state and route.
-20. **"In the domains"** means: a current approved mapping of that element on a registered feed with at least one `released` load. Nothing in Amaze meets this yet, so `create_product` is reached only in tests (built with approved proposals, as in phase 1) until phase 7.
-21. **compose and create_product build nothing.** compose is the stub `CLAUDE.md` names. create_product notifies the backend team; step 20 is phase 7.
-22. **Requester messages:**
+    It is brute force over all combinations of up to 3 products (risk 2).
+26. **Entitlement does not change routing.** A restricted product still counts for reuse or compose. The result carries each product's access state and route.
+27. **"In the domains"** means: some feed is `registered`, has at least one load with status `released`, and its current mapping (the highest version of a source field) points at the element. Every mapping row is approved, because the database refuses any other (`0005`). Nothing in Amaze meets this until phase 7, so `create_product` is reached only in tests.
+28. **compose and create_product build nothing.** compose is the stub `CLAUDE.md` names. For `create_product`, `request_data` notifies the backend team. Step 20 is phase 7.
+29. **(changed) Requester messages, exact text:**
     - reuse, entitled: "This data is available in <product>."
-    - reuse, not entitled: "This data is in <product>. Access restricted: ask <owner> for access."
-    - compose: "This data can be composed from <A> and <B>. Composition is not available in the PoC yet."
+    - reuse, not entitled: "This data is in <product>. Access restricted. Ask <owner> for access to <product>."
+    - compose: "This data can be composed from <A> and <B>. Composition is not available in the PoC yet." (three products: "<A>, <B> and <C>")
     - create_product: "This data is already in Amaze. The backend team has been asked to create a product."
-    - raise_requirement: "Requirement raised. The backend team will look for a source."
+    - raise_requirement: "Requirement raised; the backend team will look for a source." (decision 15)
 
-    The "being onboarded" message stays in phase 3.
+    Extra lines (`notes`) are built by `request_data` and shown under the message:
+    - one per covering product: "Already available: <element names> in <product>." A restricted product adds its route;
+    - when terms were ticked: "Not in the glossary yet: <terms>. The glossary owner has been told."
 
 **Step 01 (`core/steps/s01_define_requirement.py`)**
 
-23. **Input:** requester, query text, purpose, element keys M and ticked terms T. It creates the requirement with status `defined`, its elements and its terms.
-24. **Outcomes:**
-    - `defined` when T is empty;
-    - `element_not_in_glossary` when T has terms. The requirement is still created, and each glossary owner gets one in-app notification listing the terms.
-25. **The backend team is notified for every requirement.** An element key that is not in the glossary raises `UnknownGlossaryElement`, and the API turns it into 422. The database refuses it too (assumption 27).
-26. **Requirement title:** the query text, cut at 120 characters. Purpose goes into the existing `description` column.
+30. **Input:** requester, query text, purpose, element keys and terms. It creates the requirement with status `defined`, its elements and its terms. It refuses with `NothingToRequest` when both lists are empty.
+31. **Outcomes:**
+    - `defined` when there are no terms;
+    - `element_not_in_glossary` when there are terms. The requirement is still created with status `defined`, and each glossary owner gets one in-app notification listing the terms.
+32. **(changed) Notifications, all in-app:**
+
+    | When | To | Subject |
+    |---|---|---|
+    | every requirement (decision 15) | each `backend_team` user | "New requirement: <title>" |
+    | terms were ticked | each `glossary_owner` user | "Terms not in the glossary" |
+    | `create_product` | each `backend_team` user | "Product requested from data already in Amaze" |
+
+    The body lists the requester's name, the elements and the terms. There is no link, because backend-ui has no screen for them yet. **(new)** Each result lists the user ids it notified, so an empty list is visible (risk 9).
+33. **Requirement title:** the query text, cut at 120 characters. Purpose goes into the existing `description` column. **(new)** Purpose is optional.
+34. **(new) Terms are cleaned before they are saved.** Each term is split by the rule in 7 and joined with single spaces; blanks and duplicates are dropped. A term equal to a glossary phrase is refused with `TermInGlossary` (422), because `element_not_in_glossary` would then be untrue. The UI never sends one.
 
 **Data model (migration `0006`)**
 
-27. Tables are listed in section 6. `product_elements` and `requirement_elements` reuse phase 1's `amaze_require_glossary_key()` trigger, so an unknown key is refused even by raw SQL.
-28. **`products` gains `owner_id` and `visibility`**, both NOT NULL with no default. `0006` refuses to run if `products` already has rows, as `0002` did for decisions. The application database has none.
-29. **Append-only** (UPDATE, DELETE and TRUNCATE refused, using phase 1's functions): `product_elements`, `product_grants`, `requirement_elements`, `requirement_terms`, `consumer_requests`. A product's element list is fixed when the product is created.
+35. Tables are in section 6. `product_elements` and `requirement_elements` reuse phase 1's `amaze_require_glossary_key()` trigger, so an unknown key is refused even by raw SQL. The column is named `element_key`, as the trigger expects.
+36. **`products` gains `owner_id` and `visibility`**, both NOT NULL with no default. `0006` refuses to run if `products` already has rows, as `0002` did for decisions. The application database has none.
+37. **Append-only** (UPDATE, DELETE and TRUNCATE refused by phase 1's function): `product_elements`, `product_grants`, `requirement_elements`, `requirement_terms`, `consumer_requests`.
+38. **A product has at least one element, fixed when the product is created.** Pydantic and the repository check it; the database cannot say it simply.
+
+**Demo data**
+
+39. **Demo product codes start with `demo_`** (decision 6). A test checks the fixture file. **(new)** The loader also refuses a row without the prefix. No grants are seeded.
 
 **API and UI**
 
-30. **`/api/consumer/` is for the requester role only.** Backend users get 403 and no user gets 401, mirroring phase 1. A request that is not the caller's own returns 404, so it does not reveal that it exists.
-31. **consumer-ui** has two hash views, `#/search` and `#/requests`, plus the phase 0 status line. No new npm package.
-32. **backend-ui does not change.** The backend team's notifications are written to the in-app table but have no screen yet.
-33. **I check the UI** by building it and by a scripted browser run with screenshots. The committed Playwright test stays in phase 7.
+40. **`/api/consumer/` is for the requester only.** Not signed in: 401. Any backend role: 403. A request that is not the caller's own: 404, so it does not reveal that it exists.
+41. **consumer-ui** has two hash views, `#/search` and `#/requests`, plus the phase 0 status line. No new npm package. **(new)** Its `api.ts` gains `apiPost`; backend-ui's copy is not touched, so the two files stop being identical.
+42. **backend-ui does not change.** The backend team's and the glossary owner's notifications are written to the in-app table but have no screen yet.
+43. **I check the UI** by building it and by a scripted browser run with screenshots (section 10). The committed Playwright test stays in phase 7.
 
 **Docs**
 
-34. **I add one bullet to phase 3 in `BUILD_PLAN.md`:** "DiscoveryAssistant (step 17) on `Agent.run()`, behind the deterministic search." This keeps decision 2 from being lost. Say no if you would rather place it yourself.
+44. **(changed) Task 12 edits three documents:**
+    - `BUILD_PLAN.md`, phase 3, one new bullet: "DiscoveryAssistant (step 17): search by element, domain or purpose, on `agents/base.Agent.run()`, beside phase 2's deterministic search (moved from phase 2; phase 2 plan, section 17)."
+    - `CLAUDE.md`: the layout lines for `core/steps/`, `core/entitlement/` and `core/seed.py`, and `core/steps/` added to the sentence about the import-boundary test. Its agent table is not edited; the deviation is recorded in section 17.
+    - `README.md`: the demo seed command, the consumer-ui views, `0006 (head)`.
 
-## 5. Typed step results (A1)
+## 5. Steps and typed results
+
+### 5.1 The shapes
 
 ```python
 # core/steps/result.py
@@ -155,123 +185,219 @@ class StepResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     outcome: str                       # each subclass narrows it to one Literal
 
-# core/steps/s01_define_requirement.py
-class Defined(StepResult):
-    outcome: Literal["defined"] = "defined"
-    requirement: Requirement
-    elements: list[str]
+# core/steps/s17_discover.py
+class Found(StepResult):
+    outcome: Literal["found"] = "found"
+    product: ProductSummary            # code, name, description, domain, element keys
 
-class ElementNotInGlossary(StepResult):
-    outcome: Literal["element_not_in_glossary"] = "element_not_in_glossary"
+class NotEntitledVisible(StepResult):
+    outcome: Literal["not_entitled_visible"] = "not_entitled_visible"
+    product: ProductSummary
+    route: str                         # "Ask <owner> for access to <product>"
+
+Hit = Annotated[Found | NotEntitledVisible, Field(discriminator="outcome")]
+
+# core/steps/routing.py
+class Reuse(StepResult):               # outcome "reuse"
+    product: ProductAccess             # code, name, covers, entitled, route
+class Compose(StepResult):             # outcome "compose"
+    products: list[ProductAccess]      # two or three
+class CreateProduct(StepResult):       # outcome "create_product"
+    elements: list[str]                # R: to be built from the domains
+    covered_by: list[ProductAccess]
+class RaiseRequirement(StepResult):    # outcome "raise_requirement"
+    elements: list[str]                # R: every uncovered element
+    terms: list[str]                   # T
+    in_domains: list[str]              # the part of R already in the domains
+    covered_by: list[ProductAccess]
+
+RoutingResult = Annotated[Reuse | Compose | CreateProduct | RaiseRequirement, Field(discriminator="outcome")]
+
+# core/steps/s01_define_requirement.py
+class Defined(StepResult):             # outcome "defined"
     requirement: Requirement
-    elements: list[str]
+    notified: list[str]
+class ElementNotInGlossary(StepResult):  # outcome "element_not_in_glossary"
+    requirement: Requirement
     terms: list[str]
+    notified: list[str]
 
 DefineRequirementResult = Annotated[Defined | ElementNotInGlossary, Field(discriminator="outcome")]
 ```
 
-The same pattern applies to step 17 hits (`found`, `not_entitled_visible`) and to routing (`reuse`, `compose`, `create_product`, `raise_requirement`).
+### 5.2 The functions
 
-Checked by `test_step_results.py`:
+| Module | Function | Returns | Writes |
+|---|---|---|---|
+| `matching.py` | `match(text, phrases)` | `Match` | nothing |
+| `s17_discover.py` | `discover(...)` | the `Match` and `list[Hit]` | nothing |
+| `routing.py` | `route(...)` | `RoutingResult` | nothing |
+| `s01_define_requirement.py` | `define_requirement(...)` | `DefineRequirementResult` | the requirement, its elements and terms; notifications |
+| `request_data.py` | `request_data(...)` | the request id, the routing result, the step 01 result if any, `message`, `notes` | the `consumer_requests` row; the `create_product` notification |
 
-- each union's outcome names equal the list in `CLAUDE.md`, copied into the test;
+### 5.3 Every outcome name and its test
+
+The names are `CLAUDE.md`'s, letter for letter.
+
+| Outcome | Step | Named test |
+|---|---|---|
+| `found` | 17 | `test_s17_discover.py::test_found_for_an_open_product` |
+| `not_entitled_visible` | 17 | `test_s17_discover.py::test_not_entitled_visible_carries_the_route` |
+| `reuse` | routing | `test_routing.py::test_reuse_when_one_product_covers_every_element` |
+| `compose` | routing | `test_routing.py::test_compose_when_two_or_three_products_cover_every_element` |
+| `create_product` | routing | `test_routing.py::test_create_product_when_every_uncovered_element_is_in_the_domains` |
+| `raise_requirement` | routing | `test_routing.py::test_raise_requirement_for_the_uncovered_elements_only` |
+| `defined` | 01 | `test_s01_define_requirement.py::test_defined_when_no_terms_were_ticked` |
+| `element_not_in_glossary` | 01 | `test_s01_define_requirement.py::test_element_not_in_glossary_saves_the_terms_and_tells_the_glossary_owner` |
+
+`known_source` and `no_known_source` belong to phase 3 (decision 8) and are not implemented.
+
+`test_step_results.py` also checks:
+
+- **the names match `CLAUDE.md`:** the test reads the lines "17 Discover", "Routing checks" and "01 Define requirement" from `CLAUDE.md` and compares the names in backticks with each union's outcomes. A rename on either side fails the test;
 - each result round-trips through JSON via its `TypeAdapter`;
 - an unknown outcome is refused.
 
+### 5.4 Each decision and its test
+
+| Decision | Named test |
+|---|---|
+| 1 search is deterministic | `test_import_boundaries.py` with `core.steps` in the boundary; `test_checker_catches_planted_violation[core.steps]` |
+| 2 matching | `test_matching.py`: `test_case_is_ignored`, `test_longest_phrase_first`, `test_stop_words_are_skipped`, `test_stop_word_list_is_pinned`, `test_a_phrase_starting_with_a_stop_word_still_matches`, `test_a_stop_word_closes_an_unmatched_term`; `test_api_consumer.py::test_only_ticked_terms_are_kept` |
+| 3 terms | `test_routing.py::test_only_terms_raises_a_requirement`, `test_ticked_terms_raise_a_requirement_even_when_products_cover_the_elements` |
+| 4 entitlement | `test_entitlement.py`: `test_open_product_ignores_grant_events`, `test_owner_always_has_access`, `test_latest_user_event_wins`, `test_user_event_beats_role_event`, `test_latest_role_event_wins`, `test_any_granted_role_is_enough`, `test_no_event_is_not_entitled`, `test_route_text`; `test_repo_grants.py::test_events_are_append_only_and_ordered_by_seq` |
+| 5 routing | the four outcome tests, plus `test_checks_run_in_order`, `test_cover_rule_tie_breaks` (one case per tie-break), `test_at_most_three_products`, `test_partial_cover_with_in_domain_rest_is_create_product`, `test_restricted_product_still_counts`; `test_coverage.py` (in the domains: registered feed, released load, current mapping; and the three ways to miss) |
+| 6 demo seed | `test_demo_seed.py`: `test_every_demo_code_starts_with_demo`, `test_loader_refuses_a_code_without_the_prefix`, `test_glossary_seed_creates_no_product` |
+| 7 request log | `test_append_only.py[consumer_requests]`; `test_api_consumer.py::test_my_requests_lists_every_outcome` |
+| 10 requester only | `test_api_consumer.py`: `test_backend_user_gets_403`, `test_no_user_gets_401`, `test_another_requesters_request_is_404` |
+| 11 migration | `test_migrations.py`: `HEAD = "0006"`, `test_upgrade_downgrade_upgrade`, `test_0006_refuses_when_products_has_rows` |
+| 12 domain word | `test_matching.py::test_a_domain_word_is_never_a_term_or_an_element`; `test_s17_discover.py::test_a_domain_word_filters_the_hits`; `test_glossary_seed.py::test_no_domain_phrase_is_an_element_phrase` |
+| 13 two elements | `test_matching.py::test_a_phrase_of_two_elements_lists_both`; `test_glossary_seed.py::test_no_phrase_belongs_to_two_elements` |
+| 14 empty search | `test_s17_discover.py::test_no_hits_is_an_empty_list`; `test_api_consumer.py::test_blank_query_returns_empty` |
+| 15 message | `test_request_data.py::test_raise_requirement_message_and_backend_notification` |
+
+Decisions 8, 9 and 16 are covered by sections 14, 5.3 and 10.
+
 ## 6. Data model (migration `0006`)
 
-Every new table has `id` (uuid) and `created_at` (`clock_timestamp()`, phase 1 plan, section 17, tasks 4 to 9, item 3).
+Every new table has `id` (uuid) and `created_at` (`clock_timestamp()`).
 
 | Table | Columns beyond `id`, `created_at` | Rules |
 |---|---|---|
-| `products` (changed) | + `owner_id` (text), `visibility` (`open` or `restricted`) | both NOT NULL; check on visibility |
+| `products` (changed) | + `owner_id` (text), `visibility` | both NOT NULL; owner not blank; visibility is `open` or `restricted` |
 | `product_elements` | product_id, element_key | **Append-only.** Unique (product, element). Glossary-key trigger |
-| `product_grants` | seq (identity), product_id, subject_type (`user` or `role`), subject, action (`grant` or `revoke`), decided_by | **Append-only.** A role subject must be one of the seven roles |
-| `requirement_elements` | requirement_id, element_key | **Append-only.** Unique. Glossary-key trigger |
-| `requirement_terms` | requirement_id, term | **Append-only.** Unique; term is not blank |
-| `consumer_requests` | requester_id, query, purpose, element_keys (text[]), terms (text[]), outcome, product_codes (text[]), requirement_id (optional), result (jsonb snapshot of the routing result) | **Append-only.** outcome is one of the four routing names; `requirement_id` is required exactly when outcome is `raise_requirement` |
+| `product_grants` | seq (identity), product_id, subject_type, subject, action, decided_by | **Append-only.** subject_type is `user` or `role`; action is `grant` or `revoke`; a role subject is one of the seven roles; subject and decided_by not blank |
+| `requirement_elements` | requirement_id, element_key | **Append-only.** Unique (requirement, element). Glossary-key trigger |
+| `requirement_terms` | requirement_id, term | **Append-only.** Unique (requirement, term); term not blank |
+| `consumer_requests` | requester_id, query, purpose, element_keys (text[]), terms (text[]), outcome, product_codes (text[]), requirement_id (optional), result (jsonb: the typed result, message and notes as returned) | **Append-only.** outcome is one of the four routing names; `requirement_id` is set exactly when outcome is `raise_requirement`; element_keys and terms are not both empty |
 
-Only features present since PostgreSQL 14: tables, arrays, `jsonb`, an identity column, check constraints and plpgsql triggers.
+`consumer_requests.element_keys` is an array, so the glossary-key trigger cannot guard it; `request_data` checks the keys first, and the requirement's own elements are guarded by the database.
+
+**PostgreSQL 14 or older only:** identity column (10), `jsonb`, arrays and `cardinality()` (9.4), `gen_random_uuid()` (13), check constraints, plpgsql triggers. Not used: `NULLS NOT DISTINCT` and `MERGE` (15), SQL/JSON constructors and `JSON_TABLE` (16, 17), `uuidv7()` and virtual generated columns (18). The local server is 18, so this is checked by review in task 13, not by a test (risk 7).
 
 ## 7. Domain models and repositories
 
 | Item | Change |
 |---|---|
 | `core/domain/product.py` | `ProductDraft` gains `owner_id`, `visibility`, `element_keys` (at least one) |
-| `core/domain/entitlement.py` | `GrantEvent`, `Access` (`entitled`, or `not_entitled` with route) |
+| `core/domain/entitlement.py` | `GrantEvent`, `Access` (`entitled`, `reason`) |
 | `core/domain/requirement.py` | `Requirement` gains `elements` and `terms` |
 | `core/domain/consumer_request.py` | `ConsumerRequest` |
 | `ProductRepository` | `create` writes the elements; `list_with_elements()`, `elements_of()` |
-| `ProductGrantRepository` (new) | `record(product_id, subject_type, subject, action, decided_by)`, `events_for(product_id)` |
+| `ProductGrantRepository` (new) | `record(product_id, subject_type, subject, action, decided_by)`, `events_for(product_id)` in `seq` order |
 | `RequirementRepository` | `create` takes element keys and terms; `get` and `list` return them |
-| `ConsumerRequestRepository` (new) | `record(...)`, `get_for(requester_id, id)`, `list_for(requester_id)` |
-| `DomainCoverage` (new, in `core/repositories/coverage.py`) | `in_domain(element_keys) -> set[str]`, the query in assumption 20 |
+| `ConsumerRequestRepository` (new) | `record(...)`, `get_for(requester_id, id)`, `list_for(requester_id)` newest first |
+| `DomainCoverage` (new, `core/repositories/coverage.py`) | `in_domains(element_keys) -> set[str]`, the query in assumption 27 |
 
-New named errors: `ConsumerRequestNotFound` and `NothingToRequest`. Existing ones are reused: `UnknownGlossaryElement`, `ProductNotFound`, `RequirementNotFound`. An unknown visibility value is refused by Pydantic and by a check constraint.
+New named errors: `ConsumerRequestNotFound`, `NothingToRequest`, `TermInGlossary`. Reused: `UnknownGlossaryElement`, `ProductNotFound`, `RequirementNotFound`, `DuplicateProductCode`. An unknown visibility, subject type or action is refused by Pydantic and by a check constraint.
 
 ## 8. Demo seed (`python -m core.seed --demo`)
 
-`fixtures/demo/products.json`. Synthetic names and invented definitions only. Safe to run again: it inserts missing products by code and never changes one. It needs the glossary seed first, and stops with that message if the glossary is empty.
+`fixtures/demo/products.json`. Synthetic names and invented descriptions only.
 
-| Code | Name | Visibility | Owner | Elements |
-|---|---|---|---|---|
-| `daily_close_prices` | Daily close prices | open | dev-data-owner | instrument_id, price_date, close_price, price_currency |
-| `bid_ask_quotes` | Bid and ask quotes | open | dev-data-owner | instrument_id, price_date, bid_price, ask_price |
-| `bond_reference` | Bond reference data | restricted | dev-data-owner | instrument_id, isin, issuer_name, maturity_date, coupon_rate |
+- `python -m core.seed` loads the glossary only, as today. `--demo` loads the demo products only.
+- Safe to run again: it inserts missing products by code and never changes one.
+- It needs the glossary first. If an element key is missing, it stops with "Run python -m core.seed first" and exit code 1.
 
-No grants are seeded, so Riley Requester is not entitled to `bond_reference`.
+| Code | Name | Domain | Visibility | Owner | Elements |
+|---|---|---|---|---|---|
+| `demo_daily_close_prices` | Daily close prices | pricing | open | dev-data-owner | instrument_id, price_date, close_price, price_currency |
+| `demo_bid_ask_quotes` | Bid and ask quotes | pricing | open | dev-data-owner | instrument_id, price_date, bid_price, ask_price |
+| `demo_bond_reference` | Bond reference data | security_master | restricted | dev-data-owner | instrument_id, isin, issuer_name, maturity_date, coupon_rate |
 
-The searches it makes possible:
+No grants are seeded, so Riley Requester is not entitled to `demo_bond_reference`.
 
-| Search | Outcome |
-|---|---|
-| `close price` | hit `daily_close_prices` (found); request: `reuse` |
-| `maturity date` | hit `bond_reference` (not_entitled_visible); request: `reuse` with "Access restricted" |
-| `close price and bid price` | request: `compose` (`bid_ask_quotes` and `daily_close_prices`) |
-| `close price and volume` | request: `raise_requirement` for `volume`, naming `daily_close_prices` for `close_price` |
-| `volume` | no hits; request: `raise_requirement` (**the done-when path**) |
-| `esg score` | unmatched term; ticked: `raise_requirement`, step 01 `element_not_in_glossary` |
+The searches it makes possible, signed in as Riley Requester:
 
-Checked by `test_demo_seed.py`: every element key exists in the glossary; the rule 6 checks from `test_glossary_seed.py` also run on this file; a second run inserts 0; a missing glossary gives the named message.
+| # | Search | Hits | "Request this data" |
+|---|---|---|---|
+| 1 | `close price` | Daily close prices: Available | `reuse` |
+| 2 | `maturity date` | Bond reference data: Access restricted, "Ask Devon Owner for access to Bond reference data" | `reuse`, with the same route in the message |
+| 3 | `close price and bid price` | Bid and ask quotes; Daily close prices | `compose` of the two |
+| 4 | `close price and volume` | Daily close prices | `raise_requirement` for `volume`; note "Already available: Close price in Daily close prices."; step 01 `defined` |
+| 5 | `volume` | none: "No products hold this data." | `raise_requirement`; step 01 `defined`. **The done-when path** |
+| 6 | `esg score` | none | the term is unticked; once ticked: `raise_requirement`, step 01 `element_not_in_glossary` |
+| 7 | `close price and esg score` | Daily close prices | term ticked: `raise_requirement` for the term, naming Daily close prices (assumption 24). Term unticked: `reuse` |
+| 8 | `pricing` | Bid and ask quotes; Daily close prices (domain filter) | nothing to tick; Submit is disabled |
+| 9 | `quotes` | Bid and ask quotes (a word of its name) | the term `quotes` is unticked |
+
+Checked by `test_demo_seed.py`:
+
+- the tests named in section 5.4;
+- every element key and domain exists in the glossary seed, and every owner is a dev user;
+- the rule 6 checks from `test_glossary_seed.py` also run on this file;
+- a second run inserts 0;
+- a missing glossary gives the named message.
 
 ## 9. API (`apps/api/routers/consumer.py`)
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/consumer/search?q=` | matched elements, ambiguous candidates, matched domains, unmatched terms, and the hits (each `found` or `not_entitled_visible`, with the product's elements and the route) |
-| `POST /api/consumer/requests` | body `{query, purpose, element_keys, terms}`. Runs routing, step 01 if needed, records the request, sends notifications, commits. 201 with the routing result and message |
-| `GET /api/consumer/requests` | the caller's requests, newest first, each with the requirement's current status where there is one |
-| `GET /api/consumer/requests/{id}` | one of the caller's requests; 404 otherwise |
+| `GET /api/consumer/search?q=` | `match` (elements, ambiguous candidates, domains, terms) and `hits` (each `found` or `not_entitled_visible`, with the product's elements and, where restricted, the route) |
+| `POST /api/consumer/requests` | body `{query, purpose, element_keys, terms}`. Calls `request_data` and commits. 201 with the request id, the routing result, the step 01 result if any, `message` and `notes` |
+| `GET /api/consumer/requests` | the caller's requests, newest first: when, query, outcome, products, message, and the requirement's current status where there is one |
+| `GET /api/consumer/requests/{id}` | one of the caller's requests with its stored result; 404 otherwise |
 
-- 401 if not signed in, 403 for backend roles, 422 for an unknown element key or nothing to request. Never a 500 for an expected case.
-- Owner display names for routes come from `Identity.get_user()`. An unknown owner id is shown as the id itself.
+- 401 if not signed in. 403 for any backend role.
+- 422 for an unknown element key, nothing to request, a term that is a glossary phrase, a blank query on POST, or input over the limits (query 500 characters, purpose 2000, 20 terms of 100 characters).
+- Never a 500 for an expected case.
+- The notifier is a FastAPI dependency built on the request's session, so its rows join the same transaction and a test can replace it.
 
-Checked by `test_api_consumer.py`, one test per row of section 8's search table, plus:
+Checked by `test_api_consumer.py`. The tests load the glossary and the demo fixture into the test's own transaction:
 
-- the auth cases;
-- the 404 on another requester's request;
-- the 422 cases;
-- **the done-when test:** search `volume`, then POST, then GET shows the request with `raise_requirement` and requirement status `defined`;
-- a test that a failure inside step 01 leaves no `consumer_requests` row and no notification behind (one transaction).
+- one test per row of section 8's table (nine);
+- the tests named in section 5.4;
+- the 422 cases, one each;
+- **the done-when test:** search `volume` gives no hits; POST gives 201, `raise_requirement` and the decision 15 message; GET shows the request with requirement status `defined`;
+- `test_a_failed_request_leaves_nothing_behind`: the notifier fails on its last call, after the requirement and the first notification were written. Afterwards there is no requirement, no element or term row, no notification and no request row.
 
 ## 10. consumer-ui
 
-1. **Shell:** the title, two links (Search, My requests), the dev-user picker and the phase 0 status line.
+1. **Shell:** the title, two links (Search, My requests), the dev-user picker and the phase 0 status line. The view follows the URL hash; an empty hash opens Search.
 2. **Search:**
    - a box and a Search button;
    - the hits, each with its name, description, elements, and an "Available" or "Access restricted" badge with the route;
    - "No products hold this data." when there are none;
-   - below the hits, "Request this data": the matched elements as ticked checkboxes, ambiguous candidates unticked, unmatched terms unticked with the question "Is this a data item you need?", and a purpose box;
-   - Submit shows the routing message and a link to My requests.
-3. **My requests:** a table of when, what was asked, outcome, products, requirement status. "No requests yet." when it is empty.
+   - below the hits, "Request this data": matched elements ticked, candidate elements unticked, unmatched terms unticked under the question "Is this a data item you need?", and an optional purpose box;
+   - Submit is disabled while nothing is ticked;
+   - after Submit: the message, the notes and a link to My requests.
+3. **My requests:** a table of when, what was asked, outcome, products, requirement status and message, newest first. "No requests yet." when it is empty.
 4. **Errors are shown, not hidden:** API unreachable, not signed in, not allowed, validation messages.
+
+Checked by `npm run build` and by a scripted browser run. Screenshots go to `.playwright-mcp/` (git-ignored):
+
+- `phase2-search-1.png` to `phase2-search-9.png`: one per row of section 8's table, after Submit where the row has a request;
+- `phase2-requests.png`: My requests after those rows, showing `reuse`, `compose` and `raise_requirement`. `create_product` cannot appear in the demo (risk 3); the API test `test_my_requests_lists_every_outcome` covers all four;
+- `phase2-api-down.png`: Search with the API stopped, showing "API unreachable".
+
+The run also checks that the browser console has no errors or warnings.
 
 ## 11. Files
 
 ```
 docs/plans/phase-2.md                        this plan
-BUILD_PLAN.md                         edit   phase 3 bullet (assumption 34)
-CLAUDE.md                             edit   layout: core/steps/ modules; seed --demo
+BUILD_PLAN.md                         edit   phase 3 bullet (assumption 44)
+CLAUDE.md                             edit   layout lines; boundary sentence (assumption 44)
 README.md                             edit   demo seed command, consumer-ui views, alembic head 0006
 migrations/
   models.py                           edit
@@ -283,9 +409,10 @@ core/
   repositories/ tables.py  errors.py  products.py  requirements.py edit
                 grants.py  consumer_requests.py  coverage.py       new
   entitlement/ decide.py                                           new
-  steps/       result.py  matching.py  s17_discover.py  routing.py  s01_define_requirement.py   new
+  steps/       result.py  matching.py  s17_discover.py  routing.py
+               s01_define_requirement.py  request_data.py          new
 apps/api/
-  main.py  deps.py                    edit   consumer router; requester guard
+  main.py  deps.py                    edit   consumer router; requester guard; notifier dependency
   routers/consumer.py                 new
 apps/consumer-ui/src/
   App.tsx  api.ts                     edit
@@ -293,11 +420,12 @@ apps/consumer-ui/src/
 fixtures/demo/products.json           new
 tests/
   test_repo_products.py  test_repo_requirements.py  test_append_only.py
-  test_migrations.py  test_domain_models.py  test_glossary_seed.py       edit
+  test_migrations.py  test_domain_models.py  test_glossary_seed.py
+  test_import_boundaries.py                                              edit
   test_repo_grants.py  test_repo_consumer_requests.py  test_coverage.py
   test_entitlement.py  test_step_results.py  test_matching.py
   test_s17_discover.py  test_routing.py  test_s01_define_requirement.py
-  test_demo_seed.py  test_api_consumer.py                                new
+  test_request_data.py  test_demo_seed.py  test_api_consumer.py          new
 ```
 
 ## 12. Tasks, in order
@@ -308,17 +436,19 @@ Each task: tests first and shown failing, then code, then its check, then one co
 |---|---|---|---|
 | 1 | Products: owner, visibility, `product_elements` (`0006`, first part); `ProductRepository` | `test_repo_products.py`, `test_append_only.py`, `test_domain_models.py` | pytest |
 | 2 | `product_grants` and the entitlement decision | `test_repo_grants.py`, `test_entitlement.py` | pytest |
-| 3 | Requirement elements and terms, `consumer_requests`, `DomainCoverage`; `0006` complete | `test_repo_requirements.py`, `test_repo_consumer_requests.py`, `test_coverage.py`, `test_migrations.py` | pytest; `alembic upgrade head`; `alembic current` is `0006 (head)`. **CHECKPOINT 1:** pytest output and `alembic current` |
-| 4 | `StepResult` and term matching | `test_step_results.py`, `test_matching.py`, the collision check in `test_glossary_seed.py` | pytest |
+| 3 | Requirement elements and terms, `consumer_requests`, `DomainCoverage`; `0006` complete | `test_repo_requirements.py`, `test_repo_consumer_requests.py`, `test_coverage.py`, `test_migrations.py` | pytest; `alembic upgrade head`; `alembic current` is `0006 (head)`. **CHECKPOINT 1:** pytest summary, `alembic current`, the list of triggers on the five new append-only tables |
+| 4 | `StepResult`; boundary test extended to `core.steps`; term matching | `test_step_results.py`, `test_import_boundaries.py`, `test_matching.py`, the clash test in `test_glossary_seed.py` | pytest |
 | 5 | Step 17 discover | `test_s17_discover.py` | pytest |
-| 6 | Routing checks | `test_routing.py`: each outcome, the order, the cover rule's four tie-breaks, the 3-product cap, partial coverage, empty E | pytest |
-| 7 | Step 01 and its notifications | `test_s01_define_requirement.py` | pytest. **CHECKPOINT 2:** pytest output and the routing test list |
+| 6 | Routing checks | `test_routing.py` | pytest |
+| 7 | Step 01, its notifications, and `request_data` | `test_s01_define_requirement.py`, `test_request_data.py` | pytest. **CHECKPOINT 2:** pytest summary, and the section 5.3 table with each test shown passing |
 | 8 | Demo seed (`--demo`) | `test_demo_seed.py` | pytest; the command inserts 3, then 0 |
-| 9 | Consumer API | `test_api_consumer.py` | pytest. **CHECKPOINT 3:** pytest output and the done-when API test |
+| 9 | Consumer API | `test_api_consumer.py` | pytest. **CHECKPOINT 3:** pytest summary, and the done-when API test's output |
 | 10 | consumer-ui shell and Search view | none | `npm run build`; view loaded in a browser |
 | 11 | consumer-ui My requests view | none | build; view loaded in a browser |
-| 12 | `README.md`, `CLAUDE.md`, `BUILD_PLAN.md` | none | documents read back |
-| 13 | Review against `CLAUDE.md`'s seven rules and this plan | none | findings recorded here. **CHECKPOINT 4:** section 13 results and screenshots. Phase 3 is not started |
+| 12 | `README.md`, `CLAUDE.md`, `BUILD_PLAN.md` (assumption 44) | none | documents read back |
+| 13 | Review against `CLAUDE.md`'s seven rules, the PostgreSQL 14 list and this plan | none | findings recorded in section 17. **CHECKPOINT 4:** section 13 results and the screenshots. Phase 3 is not started |
+
+`test_step_results.py` grows with tasks 4 to 7, as each union is added. `test_append_only.py` grows with tasks 1 to 3.
 
 ## 13. Commands that prove phase 2 is done
 
@@ -337,41 +467,56 @@ npm --prefix apps\consumer-ui run build
 
 | Command | Expected result |
 |---|---|
-| `core.seed --demo` | first run: 3 products inserted; later runs: 0 inserted, 3 already present |
+| `core.seed` | `glossary seed: 0 inserted, 33 already present` |
+| `core.seed --demo` | first run: `demo seed: 3 inserted, 0 already present`; later runs: `0 inserted, 3 already present` |
 | `pytest -v` | all pass; 0 failed, 0 skipped, 0 warnings |
 | `alembic current` | `0006 (head)` |
 | `npm ... run build` (twice) | exit code 0 |
 | `dev.ps1` | three `OK` lines and health `ok` |
 
-Then in the browser at `http://localhost:5174`, signed in as Riley Requester, run each search in section 8's table and check its outcome. Finally:
+Then in the browser at `http://localhost:5174`, signed in as Riley Requester, run the nine searches in section 8's table and check each outcome. Finally, the done-when path:
 
 1. search `volume`;
 2. see "No products hold this data.";
 3. submit;
-4. see "Requirement raised. The backend team will look for a source.";
-5. open `#/requests` and see the request with status `defined`.
+4. see "Requirement raised; the backend team will look for a source.";
+5. open `#/requests` and see the request with outcome `raise_requirement` and requirement status `defined`.
 
 ## 14. Not in phase 2
 
-- The DiscoveryAssistant agent, `agents/base.py`, prompts.
-- The "Known source?" check and S1 to S4.
+- The DiscoveryAssistant agent, `agents/base.py`, prompts (phase 3).
+- The "Known source?" check, its two outcomes, and S1 to S4 (phase 3).
+- The "being onboarded", "Ready" and requirement-level "Access restricted" messages (phases 3 and 7).
+- Any change to a requirement's status after `defined`.
 - Access-request workflow and grant screens.
 - The composition engine (stub only).
-- Step 20 product creation.
+- Step 20 product creation (phase 7).
 - backend-ui screens for requirements or notifications.
 - A notifications view in consumer-ui.
 - Requirement de-duplication.
-- The Playwright test.
+- The committed Playwright test (phase 7).
 
 ## 15. Risks
 
-1. **Matching is text only.** "closing" does not match "close", and no synonyms exist beyond the glossary aliases. The DiscoveryAssistant is the planned answer. Until then, the requester's ticks are the safety net.
-2. **The cover search is brute force over combinations of up to 3 products.** It is instant for tens of products and slow for thousands. A production catalogue needs an index or a greedy rule; the fixed tie-break rule would then need re-checking.
+1. **Matching is text only.** No plurals, stemming or synonyms beyond the glossary aliases: `prices` is offered as an unmatched term, and "rate of return" is offered as `rate` and `return`. One-word aliases such as `open`, `high`, `ask` and `offer` match everyday words and arrive ticked. The requester's ticks are the safety net until the DiscoveryAssistant.
+2. **The cover search is brute force over combinations of up to 3 products.** It is instant for tens of products and slow for thousands. A production catalogue needs an index or a greedy rule; the tie-break rule would then need re-checking.
 3. **`create_product` cannot be shown in the demo** until phase 7 produces released loads. It is covered by tests only.
-4. **Demo products have no feeds or loads behind them.** They exist so search and routing can be seen. Phase 7's real products will sit beside them with nothing marking which are demo. Say if you want demo products flagged.
+4. **Demo products have no feeds or loads behind them.** The `demo_` prefix marks them; phase 7's real products will sit beside them.
 5. **No de-duplication.** Two identical requests raise two requirements. Fine for the PoC; the backend team will see both.
 6. **Grant and revoke events are trusted as written.** Who may grant is not checked until there is a grant screen.
+7. **PostgreSQL 14 compatibility is checked by review, not by a test.** Both laptops run 18, so a newer feature would not fail locally.
+8. **Assumption 24 changes one visible case.** A request whose elements are all covered, plus one ticked term, shows `raise_requirement`, not `reuse`. The note names the product, so the requester still sees the data is available.
+9. **Notifications reach only users who hold the role.** The dev users always include one backend team member and one glossary owner. With Entra ID a role could be empty; the result's `notified` list would show it. Phase 8 must decide what happens then.
+10. **API write tests share the test's rolled-back transaction.** The endpoint commits and rolls back on that session, so test data must be committed to the savepoint before the request. If this proves unstable, each request gets its own session on the same connection (phase 1 plan, risk 4).
 
-## 16. Results and deviations (recorded during implementation)
+## 16. Carried forward to phase 3
 
-1. **Deviation from `CLAUDE.md`'s agent table (decision 2):** step 17 has no DiscoveryAssistant in phase 2. Search is deterministic matching (section 4, assumptions 5 to 12). The agent is added after `agents/base.Agent.run()` exists. Read-only, so rule 1 and rule 4 are not affected.
+Notes only; nothing here is built in phase 2.
+
+1. **DiscoveryAssistant** (the `BUILD_PLAN.md` bullet in assumption 44).
+2. **Agent-backed steps and the import boundary.** Phase 2 puts all of `core.steps` inside the boundary. The phase 3 plan must choose: steps receive the agent as an argument and stay inside, or the boundary becomes a list of the deterministic step modules.
+3. **"Known source?"** starts from a requirement with status `defined`.
+
+## 17. Results and deviations (recorded during implementation)
+
+1. **Deviation from `CLAUDE.md`'s agent table (decision 1):** step 17 has no DiscoveryAssistant in phase 2. Search is deterministic matching (assumptions 7 to 17). The agent is added in phase 3, once `agents/base.Agent.run()` exists. The search is read-only and makes no model call, so rules 1 and 4 are not affected.
