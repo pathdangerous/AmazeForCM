@@ -1,0 +1,9 @@
+[
+  {"id": "dev-requester", "display_name": "Riley Requester", "email": "riley.requester@example.test", "roles": ["requester"]},
+  {"id": "dev-backend-team", "display_name": "Blake Backend", "email": "blake.backend@example.test", "roles": ["backend_team"]},
+  {"id": "dev-data-owner", "display_name": "Devon Owner", "email": "devon.owner@example.test", "roles": ["data_owner"]},
+  {"id": "dev-data-steward", "display_name": "Sam Steward", "email": "sam.steward@example.test", "roles": ["data_steward"]},
+  {"id": "dev-checker", "display_name": "Casey Checker", "email": "casey.checker@example.test", "roles": ["checker"]},
+  {"id": "dev-glossary-owner", "display_name": "Glenn Glossary", "email": "glenn.glossary@example.test", "roles": ["glossary_owner"]},
+  {"id": "dev-operations", "display_name": "Opal Operations", "email": "opal.operations@example.test", "roles": ["operations"]}
+]

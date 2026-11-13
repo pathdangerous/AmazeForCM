@@ -23,6 +23,7 @@ PAIRS = [
     ("ports.llm.mock:MockProvider", "ports.llm.azure_openai:AzureOpenAIProvider"),
     ("ports.storage.local:LocalBlobStore", "ports.storage.azure_blob:AzureBlobStore"),
     ("ports.scheduler.local:LocalScheduler", "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
+    ("ports.identity.dev:DevIdentity", "ports.identity.entra_id:EntraIdIdentity"),
 ]
 
 

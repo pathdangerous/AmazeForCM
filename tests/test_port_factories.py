@@ -17,6 +17,8 @@ CASES = [
     ("ports.scheduler:get_scheduler", "scheduler_provider", "local", "ports.scheduler.local:LocalScheduler"),
     ("ports.scheduler:get_scheduler", "scheduler_provider", "azure_functions",
      "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
+    ("ports.identity:get_identity", "identity_provider", "dev", "ports.identity.dev:DevIdentity"),
+    ("ports.identity:get_identity", "identity_provider", "entra_id", "ports.identity.entra_id:EntraIdIdentity"),
 ]
 
 DEFAULTS = {
@@ -24,6 +26,7 @@ DEFAULTS = {
     "ports.llm:get_llm_provider": "ports.llm.mock:MockProvider",
     "ports.storage:get_blob_store": "ports.storage.local:LocalBlobStore",
     "ports.scheduler:get_scheduler": "ports.scheduler.local:LocalScheduler",
+    "ports.identity:get_identity": "ports.identity.dev:DevIdentity",
 }
 
 
