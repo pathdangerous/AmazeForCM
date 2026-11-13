@@ -128,6 +128,11 @@ def test_invalid_decision_value(repo, make_proposal):
         repo.record_decision(proposal.id, user=dev_user_for("data_steward"), decision="maybe")
 
 
+def test_list_is_newest_first_within_one_transaction(repo, make_proposal):
+    ids = [make_proposal().id for _ in range(5)]
+    assert [p.id for p in repo.list()] == list(reversed(ids))
+
+
 def test_list_filters(repo, make_proposal, approved_proposal):
     pending = make_proposal(kind="mapping")
     approved = approved_proposal(kind="rule", roles=STEWARD_THEN_CHECKER)

@@ -41,3 +41,26 @@ class WrongProposalKind(RepositoryError):
 
 class UnknownGlossaryElement(RepositoryError, LookupError):
     """No glossary element has this key."""
+
+
+# ---- requirements and feeds
+
+
+class RequirementNotFound(RepositoryError, LookupError):
+    """No requirement has this id."""
+
+
+class FeedNotFound(RepositoryError, LookupError):
+    """No feed has this id or code."""
+
+
+class DuplicateFeedCode(RepositoryError):
+    """Another feed already has this code."""
+
+
+class FeedHasNoOwner(RepositoryError):
+    """A feed cannot be registered without an owner (step 04 outcome no_owner)."""
+
+
+class FeedNotACandidate(RepositoryError):
+    """Only a candidate feed can be registered."""

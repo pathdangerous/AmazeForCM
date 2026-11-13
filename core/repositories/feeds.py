@@ -1,0 +1,72 @@
+"""FeedRepository: the feed registry. Candidates are created; registration (step 04) needs an owner."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from core.domain.feed import Feed, FeedDraft, FeedStage
+from core.repositories.errors import (
+    DuplicateFeedCode,
+    FeedHasNoOwner,
+    FeedNotACandidate,
+    FeedNotFound,
+    RequirementNotFound,
+)
+from core.repositories.tables import FeedRow as Row
+from core.repositories.tables import RequirementRow
+
+
+class FeedRepository:
+    def __init__(self, session: Session):
+        self._session = session
+
+    def create_candidate(self, **fields: Any) -> Feed:
+        draft = FeedDraft(**fields)
+        if self._session.scalar(select(Row.id).where(Row.code == draft.code)) is not None:
+            raise DuplicateFeedCode(f"A feed with code {draft.code!r} already exists")
+        if draft.requirement_id is not None and self._session.get(RequirementRow, draft.requirement_id) is None:
+            raise RequirementNotFound(f"No requirement with id {draft.requirement_id}")
+        row = Row(**draft.model_dump(), stage="candidate")
+        self._session.add(row)
+        self._session.flush()
+        return Feed.model_validate(row)
+
+    def get(self, feed_id: UUID) -> Feed:
+        return Feed.model_validate(self._row(feed_id))
+
+    def get_by_code(self, code: str) -> Feed:
+        row = self._session.scalars(select(Row).where(Row.code == code)).one_or_none()
+        if row is None:
+            raise FeedNotFound(f"No feed with code {code!r}")
+        return Feed.model_validate(row)
+
+    def list(self, stage: FeedStage | None = None) -> list[Feed]:
+        query = select(Row).order_by(Row.created_at.desc(), Row.id)
+        if stage is not None:
+            query = query.where(Row.stage == stage)
+        return [Feed.model_validate(r) for r in self._session.scalars(query)]
+
+    def register(self, feed_id: UUID, owner_id: str | None = None) -> Feed:
+        row = self._row(feed_id, lock=True)
+        if row.stage != "candidate":
+            raise FeedNotACandidate(f"Feed {row.code!r} is {row.stage}, not a candidate")
+        owner = (owner_id or "").strip() or row.owner_id
+        if not owner:
+            raise FeedHasNoOwner(f"Feed {row.code!r} has no owner; name one to register it")
+        row.owner_id, row.stage, row.registered_at = owner, "registered", datetime.now(UTC)
+        self._session.flush()
+        return Feed.model_validate(row)
+
+    def _row(self, feed_id: UUID, *, lock: bool = False) -> Row:
+        query = select(Row).where(Row.id == feed_id)
+        if lock:
+            query = query.with_for_update()
+        row = self._session.scalars(query).one_or_none()
+        if row is None:
+            raise FeedNotFound(f"No feed with id {feed_id}")
+        return row

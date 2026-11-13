@@ -8,17 +8,16 @@ snake_case. Identifier type names (isin, cusip, sedol, figi) are allowed; real i
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, get_args
+from typing import Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from core.domain.common import NonBlank as Text
+from core.domain.common import SnakeName
 
 DataType = Literal["string", "integer", "decimal", "date", "datetime", "boolean"]
 DATA_TYPES: tuple[str, ...] = get_args(DataType)
-
-SNAKE = r"^[a-z][a-z0-9_]*$"
-SnakeName = Annotated[str, StringConstraints(pattern=SNAKE)]
-Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class GlossaryElementDraft(BaseModel):

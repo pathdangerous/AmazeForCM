@@ -26,8 +26,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.domain.feed import FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.proposal import PROPOSAL_KINDS
+from core.domain.requirement import REQUIREMENT_STATUSES
 from ports.db import Base
 from ports.identity.base import ROLES
 
@@ -40,8 +42,10 @@ def _id() -> Mapped[uuid.UUID]:
     return mapped_column(Uuid, primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
 
 
-def _created_at() -> Mapped[datetime]:
-    return mapped_column(DateTime(timezone=True), server_default=func.now())
+def _created_at(*, clock: bool = False) -> Mapped[datetime]:
+    """now() is the transaction start, the same for every row of one transaction. Tables listed
+    "newest first" use clock_timestamp() (the moment of the insert) so their order is stable."""
+    return mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp() if clock else func.now())
 
 
 class ProposalLogEntry(Base):
@@ -78,7 +82,7 @@ class ProposalRow(Base):
     )
 
     id: Mapped[uuid.UUID] = _id()
-    created_at: Mapped[datetime] = _created_at()
+    created_at: Mapped[datetime] = _created_at(clock=True)  # default changed in migration 0004
     proposal_log_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_log.id"))
     kind: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
@@ -86,8 +90,8 @@ class ProposalRow(Base):
     required_approver_roles: Mapped[list[str]] = mapped_column(ARRAY(Text))
     status: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    requirement_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    feed_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
+    feed_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feeds.id"))
 
 
 class ApprovalRow(Base):
@@ -139,3 +143,40 @@ class GlossaryElementRow(Base):
     aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
     created_by: Mapped[str] = mapped_column(Text)
     proposal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))
+
+
+class RequirementRow(Base):
+    __tablename__ = "requirements"
+    __table_args__ = (
+        CheckConstraint(_in("status", REQUIREMENT_STATUSES), name="status"),
+        CheckConstraint("length(btrim(requester_id)) > 0 AND length(btrim(title)) > 0", name="text_present"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    requester_id: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    status: Mapped[str] = mapped_column(Text, default="defined", server_default="defined")
+
+
+class FeedRow(Base):
+    __tablename__ = "feeds"
+    __table_args__ = (
+        UniqueConstraint("code"),
+        CheckConstraint("code ~ '^[a-z][a-z0-9_]*$'", name="code_format"),
+        CheckConstraint(_in("stage", FEED_STAGES), name="stage"),
+        # Step 04 outcome no_owner: a registered feed must have an owner.
+        CheckConstraint("stage <> 'registered' OR owner_id IS NOT NULL", name="registered_has_owner"),
+        CheckConstraint("(stage = 'registered') = (registered_at IS NOT NULL)", name="registered_at_matches_stage"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    code: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    stage: Mapped[str] = mapped_column(Text, default="candidate", server_default="candidate")
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
+    owner_id: Mapped[str | None] = mapped_column(Text)
+    source_ref: Mapped[str | None] = mapped_column(Text)
+    registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
