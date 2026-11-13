@@ -12,11 +12,13 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0005"
+HEAD = "0006"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
 }
+PHASE_2_TABLES = {"product_elements"}  # migration 0006; each task adds its tables
+TABLES |= PHASE_2_TABLES
 
 
 def _tables(url: str) -> set[str]:
@@ -103,3 +105,42 @@ def test_0002_refuses_to_drop_a_recorded_decision(migrated_engine, test_database
             if version == "0001":
                 connection.execute(text("DELETE FROM proposal_log WHERE id = :id"), {"id": row_id})
         command.upgrade(config, "head")
+
+
+# ---------------------------------------------------------------- phase 2: migration 0006
+
+
+def test_0006_refuses_when_products_has_rows(migrated_engine, test_database_url):
+    """Upgrading from 0005 must stop rather than invent an owner and a visibility for a product."""
+    config = alembic_config(test_database_url)
+    try:
+        command.downgrade(config, "0005")
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO products (code, name, domain) VALUES ('before_0006', 'Before 0006', 'pricing')")
+            )
+        with pytest.raises(DBAPIError, match="migration 0006"):
+            command.upgrade(config, "0006")
+    finally:
+        with migrated_engine.begin() as connection:
+            version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+            if version == "0005":
+                connection.execute(text("DELETE FROM products WHERE code = 'before_0006'"))
+        command.upgrade(config, "head")
+
+
+def _check_constraints(engine, table: str) -> set[str]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT conname FROM pg_constraint WHERE contype = 'c' AND conrelid = to_regclass(:t)"), {"t": table}
+        )
+        return {name for (name,) in rows}
+
+
+def test_0006_check_constraints_have_the_convention_names(migrated_engine):
+    """A full name passed through the naming convention is prefixed twice (ck_products_ck_products_...),
+    as 0002 to 0004 did. 0006 marks its names as final with op.f()."""
+    assert {"ck_products_owner_present", "ck_products_visibility"} <= _check_constraints(migrated_engine, "products")
+    for table in sorted(PHASE_2_TABLES):
+        doubled = {name for name in _check_constraints(migrated_engine, table) if f"ck_{table}_ck_" in name}
+        assert doubled == set(), table

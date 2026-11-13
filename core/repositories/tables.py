@@ -29,6 +29,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from core.domain.feed import FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.load import LOAD_STATUSES
+from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
 from ports.db import Base
@@ -249,6 +250,8 @@ class ProductRow(Base):
         CheckConstraint("code ~ '^[a-z][a-z0-9_]*$'", name="code_format"),
         CheckConstraint("domain ~ '^[a-z][a-z0-9_]*$'", name="domain_format"),
         CheckConstraint("length(btrim(name)) > 0", name="name_present"),
+        CheckConstraint("length(btrim(owner_id)) > 0", name="owner_present"),
+        CheckConstraint(_in("visibility", VISIBILITIES), name="visibility"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -258,3 +261,20 @@ class ProductRow(Base):
     domain: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
+    owner_id: Mapped[str] = mapped_column(Text)  # migration 0006
+    visibility: Mapped[str] = mapped_column(Text)  # migration 0006: open or restricted
+
+
+class ProductElementRow(Base):
+    """One glossary element a product holds. Append-only: the list is fixed when the product is created.
+
+    A database trigger (migration 0006) refuses an element_key that has no row in glossary_elements.
+    """
+
+    __tablename__ = "product_elements"
+    __table_args__ = (UniqueConstraint("product_id", "element_key"),)
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id"))
+    element_key: Mapped[str] = mapped_column(Text)

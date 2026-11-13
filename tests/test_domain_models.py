@@ -97,10 +97,41 @@ def test_status_lists_are_the_names_in_claude_md():
         (MappingDraft, {"source_field": "ClosePx", "element_key": "close_price"}, {"source_field": ""}),
         (RuleDraft, {"rule_key": "r", "sql": "SELECT 1", "description": "D"}, {"sql": " "}),
         (LoadDraft, {"file_ref": "local://raw/x.csv"}, {"file_ref": ""}),
-        (ProductDraft, {"code": "p", "name": "P", "domain": "pricing"}, {"domain": "Pricing"}),
     ],
 )
 def test_drafts_validate(model, valid, bad):
     model(**valid)
     with pytest.raises(ValidationError):
         model(**{**valid, **bad})
+
+
+# ---- Product: owner, visibility and elements (phase 2, task 1)
+
+from core.domain.product import VISIBILITIES  # noqa: E402
+
+PRODUCT = {"code": "p", "name": "P", "domain": "pricing", "owner_id": "dev-data-owner", "visibility": "open",
+           "element_keys": ["close_price", "price_date"]}
+
+
+def test_visibilities():
+    assert VISIBILITIES == ("open", "restricted")
+
+
+def test_product_draft_accepts_valid_input():
+    assert ProductDraft(**PRODUCT).element_keys == ["close_price", "price_date"]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"domain": "Pricing"},
+        {"owner_id": " "},
+        {"visibility": "secret"},
+        {"element_keys": []},
+        {"element_keys": ["close_price", "close_price"]},
+        {"element_keys": ["Close Price"]},
+    ],
+)
+def test_product_draft_rejects(bad):
+    with pytest.raises(ValidationError):
+        ProductDraft(**{**PRODUCT, **bad})

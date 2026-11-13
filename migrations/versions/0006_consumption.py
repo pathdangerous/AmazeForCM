@@ -1,0 +1,94 @@
+"""consumption: product owner, visibility and elements
+
+Revision ID: 0006
+Revises: 0005
+Create Date: 2026-11-14
+
+Written across phase 2 tasks 1 to 3 (phase 2 plan, section 6).
+
+Task 1: products gains owner_id and visibility, both required and with no default. The upgrade stops
+if products already has rows, because it cannot invent an owner or a visibility for them.
+product_elements lists the glossary elements a product holds. It is append-only, and it reuses the
+0004 trigger function that refuses an element_key with no row in glossary_elements.
+
+Check constraints are named with op.f(): the name is final. A plain name is passed through the
+naming convention a second time, which is why 0002 to 0004 created ck_<table>_ck_<table>_<name>.
+
+Value lists are copied here on purpose: a migration must not change when code changes.
+PostgreSQL 14 features only.
+"""
+
+import sqlalchemy as sa
+from alembic import op
+
+revision = "0006"
+down_revision = "0005"
+branch_labels = None
+depends_on = None
+
+APPEND_ONLY = ("product_elements",)
+GLOSSARY_KEYED = ("product_elements",)
+
+
+def _id() -> sa.Column:
+    return sa.Column("id", sa.Uuid(), primary_key=True, server_default=sa.text("gen_random_uuid()"))
+
+
+def _created_at() -> sa.Column:
+    return sa.Column(
+        "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("clock_timestamp()")
+    )
+
+
+def upgrade() -> None:
+    # ---- task 1: products get an owner and a visibility; product_elements
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM products) THEN
+                RAISE EXCEPTION 'migration 0006 adds a required owner_id and visibility to products; '
+                                'products already has rows, so set those values by hand first';
+            END IF;
+        END $$;
+        """
+    )
+    op.add_column("products", sa.Column("owner_id", sa.Text(), nullable=False))
+    op.add_column("products", sa.Column("visibility", sa.Text(), nullable=False))
+    op.create_check_constraint(op.f("ck_products_owner_present"), "products", "length(btrim(owner_id)) > 0")
+    op.create_check_constraint(op.f("ck_products_visibility"), "products", "visibility IN ('open', 'restricted')")
+
+    op.create_table(
+        "product_elements",
+        _id(),
+        _created_at(),
+        sa.Column("product_id", sa.Uuid(), nullable=False),
+        sa.Column("element_key", sa.Text(), nullable=False),
+        sa.PrimaryKeyConstraint("id", name="pk_product_elements"),
+        sa.ForeignKeyConstraint(["product_id"], ["products.id"], name="fk_product_elements_product_id_products"),
+        sa.UniqueConstraint("product_id", "element_key", name="uq_product_elements_product_id_element_key"),
+    )
+
+    # ---- every phase 2 table that is append-only: UPDATE, DELETE and TRUNCATE refused (function from 0002)
+    for table in APPEND_ONLY:
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_append_only BEFORE UPDATE OR DELETE ON {table} "
+            "FOR EACH ROW EXECUTE FUNCTION amaze_refuse_update_delete()"
+        )
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_no_truncate BEFORE TRUNCATE ON {table} "
+            "FOR EACH STATEMENT EXECUTE FUNCTION amaze_refuse_update_delete()"
+        )
+    # ---- element_key must be in the glossary (function from 0004; the column must be named element_key)
+    for table in GLOSSARY_KEYED:
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_glossary_key BEFORE INSERT ON {table} "
+            "FOR EACH ROW EXECUTE FUNCTION amaze_require_glossary_key()"
+        )
+
+
+def downgrade() -> None:
+    # Dropping a table drops its triggers; dropping a column drops the check constraints on it.
+    op.drop_table("product_elements")
+    op.drop_column("products", "visibility")
+    op.drop_column("products", "owner_id")

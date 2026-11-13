@@ -169,3 +169,29 @@ def approved_proposal(db_session, make_proposal):
         return repo.get(proposal.id)
 
     return _approve
+
+
+# ---------------------------------------------------------------- phase 2: glossary and products
+
+
+@pytest.fixture
+def glossary(db_session):
+    """The 33 seed elements, inside the test's transaction."""
+    from core.repositories.glossary import GlossaryRepository
+    from core.seed import seed_glossary
+
+    seed_glossary(db_session)
+    return GlossaryRepository(db_session)
+
+
+@pytest.fixture
+def make_product(db_session, glossary):
+    """Create a product; by default open, owned by dev-data-owner and holding close_price."""
+    from core.repositories.products import ProductRepository
+
+    def _make(code="synthetic_prices", *, name=None, element_keys=("close_price",), **more):
+        fields = {"name": name or code.replace("_", " ").capitalize(), "domain": "pricing",
+                  "owner_id": "dev-data-owner", "visibility": "open", **more}
+        return ProductRepository(db_session).create(code=code, element_keys=list(element_keys), **fields)
+
+    return _make

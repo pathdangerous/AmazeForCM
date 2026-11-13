@@ -60,12 +60,34 @@ def _rules_row(db_session, request):
     return "rules", rule.id
 
 
+# ---- phase 2 (migration 0006)
+
+
+def _product(db_session, request):
+    from core.repositories.products import ProductRepository
+
+    _glossary_row(db_session, request)
+    return ProductRepository(db_session).create(
+        code="append_only_product", name="Append-only product", domain="pricing", owner_id="dev-data-owner",
+        visibility="restricted", element_keys=["append_only_probe"],
+    )
+
+
+def _product_elements_row(db_session, request):
+    product = _product(db_session, request)
+    row_id = db_session.execute(
+        text("SELECT id FROM product_elements WHERE product_id = :p"), {"p": product.id}
+    ).scalar_one()
+    return "product_elements", row_id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
     "approvals": _approvals_row,
     "glossary_elements": _glossary_row,
     "mappings": _mappings_row,
     "rules": _rules_row,
+    "product_elements": _product_elements_row,
 }
 
 
