@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
@@ -31,6 +33,16 @@ class ProductGrantRepository:
         self._require_product(product_id)
         query = select(Row).where(Row.product_id == product_id).order_by(Row.seq)
         return [GrantEvent.model_validate(r) for r in self._session.scalars(query)]
+
+    def events_by_product(self, product_ids: Iterable[UUID]) -> dict[UUID, list[GrantEvent]]:
+        """The events of many products in one query, each list oldest first. A product without events
+        has no entry."""
+        ids = list(product_ids)
+        events: dict[UUID, list[GrantEvent]] = defaultdict(list)
+        if ids:
+            for row in self._session.scalars(select(Row).where(Row.product_id.in_(ids)).order_by(Row.seq)):
+                events[row.product_id].append(GrantEvent.model_validate(row))
+        return dict(events)
 
     def _require_product(self, product_id: UUID) -> None:
         if self._session.get(ProductRow, product_id) is None:

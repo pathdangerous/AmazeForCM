@@ -53,6 +53,17 @@ def test_events_of_another_product_are_not_returned(repo, product, make_product)
     assert repo.events_for(product.id) == []
 
 
+def test_events_by_product_reads_many_products_at_once(repo, product, make_product):
+    other = make_product("other_prices", visibility="restricted")
+    quiet = make_product("quiet_prices", visibility="restricted")
+    first = repo.record(product_id=product.id, **GRANT)
+    second = repo.record(product_id=other.id, **GRANT)
+    third = repo.record(product_id=product.id, **{**GRANT, "action": "revoke"})
+    events = repo.events_by_product([product.id, other.id, quiet.id])
+    assert {k: [e.id for e in v] for k, v in events.items()} == {product.id: [first.id, third.id], other.id: [second.id]}
+    assert repo.events_by_product([]) == {}
+
+
 def test_unknown_product(repo):
     with pytest.raises(ProductNotFound):
         repo.record(product_id=uuid.uuid4(), **GRANT)

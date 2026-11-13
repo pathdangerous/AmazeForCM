@@ -26,6 +26,40 @@ def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("01 Define requirement") == ["defined", "element_not_in_glossary"]
 
 
+def union_outcomes(union) -> list[str]:
+    """The outcome names of a discriminated union, in declaration order."""
+    from typing import get_args
+
+    members = get_args(get_args(union)[0])
+    return [m.model_fields["outcome"].default for m in members]
+
+
+def round_trips(union, value) -> None:
+    from pydantic import TypeAdapter
+
+    adapter = TypeAdapter(union)
+    assert adapter.validate_json(adapter.dump_json(value)) == value
+    with pytest.raises(ValidationError):
+        adapter.validate_python({**adapter.dump_python(value), "outcome": "lost"})
+
+
+# ---- step 17 (task 5)
+
+
+def test_step_17_outcomes_are_claude_mds():
+    from core.steps.s17_discover import Hit
+
+    assert union_outcomes(Hit) == claude_md_outcomes("17 Discover")
+
+
+def test_step_17_hits_round_trip():
+    from core.steps.s17_discover import Found, Hit, NotEntitledVisible, ProductSummary
+
+    product = ProductSummary(code="p", name="P", description="", domain="pricing", element_keys=["close_price"])
+    round_trips(Hit, Found(product=product))
+    round_trips(Hit, NotEntitledVisible(product=product, route="Ask Devon Owner for access to P"))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str
