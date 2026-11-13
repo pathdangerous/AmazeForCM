@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ports.config import Settings, get_settings
 from ports.db import get_engine
 from ports.identity import Identity, User
+from ports.notify import Notifier, get_notifier
 from ports.secrets import SecretNotFound
 
 
@@ -52,3 +53,18 @@ def backend_user(user: Annotated[User, Depends(current_user)]) -> User:
     if user.app != "backend":
         raise HTTPException(status_code=403, detail="Backend role required")
     return user
+
+
+def requester_user(user: Annotated[User, Depends(current_user)]) -> User:
+    """Consumption (consumer-ui) endpoints: the requester only; every backend role gets 403."""
+    if user.app != "consumer":
+        raise HTTPException(status_code=403, detail="Requester role required")
+    return user
+
+
+def get_request_notifier(
+    session: Annotated[Session, Depends(get_db_session)], settings: Annotated[Settings, Depends(get_app_settings)]
+) -> Notifier:
+    """The Notifier selected by NOTIFY_PROVIDER, on the request's session, so in-app notifications are
+    committed or rolled back with the rest of the request."""
+    return get_notifier(settings, session=session)

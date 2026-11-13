@@ -598,4 +598,41 @@ Tests: 592 pass, none skipped, no warnings. Each of the eight outcome tests in s
 5. **Notes are written for `compose`, `create_product` and `raise_requirement`**, one per product named, with the route for a restricted one. For `reuse` the message already names the product and its route.
 6. **One test was wrong, not the code.** The first "most covered" case in `test_cover_rule_tie_breaks` had two products holding the same element, so rule 5 (codes) decided it. The case now has only the products that rule 1 must choose.
 
-**Proof that the boundary test covers `core.steps`:** the planted `from ports.llm.base import LLMProvider` in `core/steps/s17_discover.py` is reported as `core.steps.s17_discover -> ports.llm`. With `core.steps` taken out of `BOUNDARY_PACKAGES`, the same tree gives no violation.
+**Proof that the boundary test covers `core.steps` (tasks 4 to 7):** the planted `from ports.llm.base import LLMProvider` in `core/steps/s17_discover.py` is reported as `core.steps.s17_discover -> ports.llm`. With `core.steps` taken out of `BOUNDARY_PACKAGES`, the same tree gives no violation.
+
+### Tasks 8 and 9 (checkpoint 3)
+
+Tests: 631 pass, none skipped, no warnings; the full suite was run twice.
+
+**Task 8, demo seed.**
+
+```
+python -m core.seed --demo     demo seed: 3 inserted, 0 already present
+python -m core.seed --demo     demo seed: 0 inserted, 3 already present
+python -m core.seed            glossary seed: 0 inserted, 33 already present
+```
+
+- `python -m core.seed` without the flag still loads the glossary only.
+- With elements missing, `--demo` prints "... Run python -m core.seed first." to stderr and exits with code 1 (`DemoNeedsGlossary`).
+- The demo descriptions avoid words that would change section 8's searches.
+
+**Task 9, consumer API.**
+
+1. `test_api_consumer.py` has 30 tests:
+   - the nine searches of section 8;
+   - the done-when test;
+   - every outcome on My requests;
+   - only ticked terms kept;
+   - the 404 on another requester's request;
+   - the blank query;
+   - 401, and 403 for each of the six backend roles;
+   - eight 422 cases;
+   - the one-transaction test.
+2. **The done-when test** (`test_done_when_missing_data_raises_a_requirement_and_shows_its_status`): search `volume` gives no hits; POST gives 201 with `raise_requirement` and "Requirement raised; the backend team will look for a source."; `GET /api/consumer/requests` shows it with requirement status `defined`; the detail endpoint returns the stored result.
+3. **Proof for the one-transaction test.** With `session.rollback()` removed from the endpoint's error path, `test_a_failed_request_leaves_nothing_behind` failed: the requirement was left behind. The line was restored with the Edit tool.
+4. **More than the plan listed:**
+   - `requester_user` (in `deps.py`) is the requester-only guard.
+   - `get_request_notifier` is the notifier dependency that the tests replace.
+   - `GET /requests/{id}` returns the same 404 for an unknown id and for another requester's request.
+5. **An unexpected error is not turned into a 422.** The endpoint rolls back and re-raises it. A stub notifier still gives 503, through the phase 1 handler.
+6. **Not run against the application database:** a live POST. `consumer_requests` and the requirement tables are append-only, so a test row could never be removed. The browser run in tasks 10 and 11 writes the section 8 requests, as section 13 plans.

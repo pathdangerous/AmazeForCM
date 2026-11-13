@@ -1,6 +1,7 @@
 """Amaze for CM PoC API. Run: .venv\\Scripts\\python -m uvicorn apps.api.main:app --port 8000
 
-Phase 0: health and dev identity only. Per-platform routers arrive with the phases that need them.
+Routers: health and dev identity (phase 0), Amaze for the backend team (phase 1), consumption for the
+requester (phase 2).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from apps.api.routers import amaze, dev_identity, health
+from apps.api.routers import amaze, consumer, dev_identity, health
 from ports.config import get_settings
 from ports.identity import get_identity
 from ports.scheduler import get_scheduler
@@ -46,3 +47,4 @@ async def adapter_not_implemented(request: Request, exc: NotImplementedError) ->
 app.include_router(health.router)
 app.include_router(dev_identity.router)
 app.include_router(amaze.router)
+app.include_router(consumer.router)
