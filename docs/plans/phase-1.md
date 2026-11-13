@@ -481,13 +481,23 @@ The 14 triggers are present afterwards: 5 append-only, 5 no-truncate, 3 approval
 3. **Development-only finding:** a page left open while Vite hot-updated `App.tsx` kept the old list of views, so `#/feeds` showed Status until the page was reloaded. A fresh load and in-app nav work.
 4. **`BUILD_PLAN.md` phase 3 also got a third bullet:** scheduler jobs must survive an API restart (phase 0 risk 1).
 
+## 18. Carried forward to phase 3
+
+These three points are also added to phase 3 in `BUILD_PLAN.md` (task 14).
+
+1. **The agent base class must log every proposal itself.** `agents/base.Agent.run()` is the only public entry point. It calls the `LLMProvider`, then `ProposalLog.record()`, then creates the proposal rows linked to that log row, and only then returns. A subclass supplies the prompt and turns the output into proposals; it cannot replace `run()`. Tests must prove:
+   - a subclass that defines its own `run()` is refused when the class is created;
+   - an agent run always leaves one `proposal_log` row per model call, and every proposal points at it.
+2. **The HTTP connector must close its connections.** `HttpConnector` gets `close()` and works in a `with` block; the step that uses it closes it. A test asserts the connection is closed after the fetch, including when the fetch fails.
+3. **Scheduler jobs must survive an API restart.** The local scheduler keeps jobs in memory (phase 0 risk 1). Store them in PostgreSQL, or re-register them from the database at start-up.
+
 ## 19. End-of-phase review (task 15)
 
 Against `CLAUDE.md`'s rules:
 
 | Rule | Phase 1 state |
 |---|---|
-| 1 AI proposes, people decide | Decisions live only in `approvals`, one row per named person and step; order, role, same-person and first-rejection rules in `ProposalRepository`. The database refuses configuration rows (mapping, rule, non-seed glossary) unless the proposal is approved, of the matching kind, and has an approved decision |
+| 1 AI proposes, people decide | Decisions live only in `approvals`, one row per named person and step; order, role, same-person and first-rejection rules in `ProposalRepository`. The database refuses configuration rows (mapping, rule, non-seed glossary) unless the proposal is approved, of the matching kind, has an approved decision from every required role and no rejection (`0005`, after the review) |
 | 2 No model call in engine or entitlement | Boundary test now covers `core/engine`, `core/entitlement`, `core/domain` and `core/repositories`. `core/proposal_log.py` imports `ports.llm.base` and is outside them; the test would catch the engine importing it |
 | 3 Explicit negative outcomes | 20 named repository errors; the API turns them into 404, 401, 403, 422 or 503, never a 500. Steps and `StepResult` start in phase 2 |
 | 4 Every proposal logged | Every proposal must point at a `proposal_log` row (foreign key, not null). The `proposal_audit` view shows agent, provider, model and version, prompt version, input, output and every decision in one row |
@@ -503,12 +513,3 @@ Plan "done when" (section 1): all five met. Results in the checkpoint 3 report.
 2. **`proposals` itself is not append-only**, because its status changes by design. A hand-written UPDATE can change it; finding 1 limits what that achieves.
 3. **The database cannot tell who inserted an `approvals` row by hand.** Identity is checked by the application until Entra ID (phase 8).
 4. **The three dev windows started during task 12 are still open.** Close them before running `dev.ps1` again.
-
-## 18. Carried forward to phase 3
-
-These two points are also added to phase 3 in `BUILD_PLAN.md` (task 14).
-
-1. **The agent base class must log every proposal itself.** `agents/base.Agent.run()` is the only public entry point. It calls the `LLMProvider`, then `ProposalLog.record()`, then creates the proposal rows linked to that log row, and only then returns. A subclass supplies the prompt and turns the output into proposals; it cannot replace `run()`. Tests must prove:
-   - a subclass that defines its own `run()` is refused when the class is created;
-   - an agent run always leaves one `proposal_log` row per model call, and every proposal points at it.
-2. **The HTTP connector must close its connections.** `HttpConnector` gets `close()` and works in a `with` block; the step that uses it closes it. A test asserts the connection is closed after the fetch, including when the fetch fails.
