@@ -12,11 +12,14 @@ CASES = [
     ("ports.secrets:get_secrets", "secrets_provider", "key_vault", "ports.secrets.key_vault:KeyVaultSecrets"),
     ("ports.llm:get_llm_provider", "llm_provider", "mock", "ports.llm.mock:MockProvider"),
     ("ports.llm:get_llm_provider", "llm_provider", "azure_openai", "ports.llm.azure_openai:AzureOpenAIProvider"),
+    ("ports.storage:get_blob_store", "storage_provider", "local", "ports.storage.local:LocalBlobStore"),
+    ("ports.storage:get_blob_store", "storage_provider", "azure_blob", "ports.storage.azure_blob:AzureBlobStore"),
 ]
 
 DEFAULTS = {
     "ports.secrets:get_secrets": "ports.secrets.env:EnvSecrets",
     "ports.llm:get_llm_provider": "ports.llm.mock:MockProvider",
+    "ports.storage:get_blob_store": "ports.storage.local:LocalBlobStore",
 }
 
 

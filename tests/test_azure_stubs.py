@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PAIRS = [
     ("ports.secrets.env:EnvSecrets", "ports.secrets.key_vault:KeyVaultSecrets"),
     ("ports.llm.mock:MockProvider", "ports.llm.azure_openai:AzureOpenAIProvider"),
+    ("ports.storage.local:LocalBlobStore", "ports.storage.azure_blob:AzureBlobStore"),
 ]
 
 
