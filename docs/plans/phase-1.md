@@ -453,6 +453,27 @@ Health builds the six selected adapters on each call to find the stubs. Each is 
 6. **Glossary-key trigger proven:** with the `CREATE TRIGGER` line removed from `0004`, the raw-SQL test inserting an unknown key failed (`DID NOT RAISE`); restored with the Edit tool.
 7. **`core/domain/common.py`** added for the two shared field types (`SnakeName`, `NonBlank`).
 
+### Before task 10: two database gaps closed (your request after checkpoint 2)
+
+Both added to `0004`, tests written first and shown failing (14 refusal tests did not raise before).
+
+1. **TRUNCATE refused on all five append-only tables.** TRUNCATE skips row-level triggers, so each table gets a statement-level `BEFORE TRUNCATE` trigger using the same `amaze_refuse_update_delete()` function. Tested with `TRUNCATE <table> CASCADE`.
+2. **Approval guard on insert** for `mappings`, `rules` and `glossary_elements`: the proposal must be `approved`, of the matching kind, and have at least one `approved` row in `approvals`. Only the glossary seed (`created_by = 'seed'`) is exempt. Raw-SQL tests per table: a pending proposal, an approved proposal of another kind, and a status forged by `UPDATE proposals SET status = 'approved'` with no approval row are each refused; a properly approved proposal is accepted; a seed element needs no proposal.
+3. **Findings while building it:**
+   - PL/pgSQL does not short-circuit `AND`, so `TG_TABLE_NAME = 'glossary_elements' AND NEW.created_by = 'seed'` failed on `mappings`, which has no `created_by` column. The check is nested.
+   - The guard fires before `ck_glossary_elements_proposal_unless_seed`. That constraint stays as a second guard; one test's expected message changed.
+4. **`0004`'s downgrade uses `DROP ... IF EXISTS`** for the new triggers, because the application database held the task 9 build of `0004` without them.
+5. **Application database, as you asked:**
+
+```
+alembic downgrade 0003   Running downgrade 0004 -> 0003   exit 0
+alembic upgrade head     Running upgrade 0003 -> 0004     exit 0
+alembic current          0004 (head)
+python -m core.seed      glossary seed: 0 inserted, 33 already present
+```
+
+The 14 triggers are present afterwards: 5 append-only, 5 no-truncate, 3 approval guards, 1 glossary key. The suite is at 346 passed.
+
 ## 18. Carried forward to phase 3
 
 These two points are also added to phase 3 in `BUILD_PLAN.md` (task 14).

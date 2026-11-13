@@ -91,7 +91,9 @@ def test_approved_new_element_starts_at_version_1(repo, approved_proposal):
 
 
 def test_database_refuses_a_non_seed_element_without_a_proposal(db_session):
-    with pytest.raises(IntegrityError, match="ck_glossary_elements_proposal_unless_seed"):
+    # The BEFORE INSERT approval guard (0004) fires first; ck_glossary_elements_proposal_unless_seed stays
+    # as a second guard behind it.
+    with pytest.raises(IntegrityError, match="needs an approved glossary_element proposal"):
         db_session.execute(text(
             "INSERT INTO glossary_elements (key, version, name, domain, data_type, definition, created_by) "
             "VALUES ('x_key', 1, 'X', 'pricing', 'string', 'Synthetic.', 'dev-glossary-owner')"

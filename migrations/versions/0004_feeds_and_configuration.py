@@ -20,6 +20,8 @@ depends_on = None
 REQUIREMENT_STATUSES = ("defined", "onboarding", "ready", "access_restricted", "rejected")
 FEED_STAGES = ("candidate", "registered", "rejected")
 LOAD_STATUSES = ("received", "held", "failed_rolled_back", "released")
+APPEND_ONLY = ("proposal_log", "approvals", "glossary_elements", "mappings", "rules")
+APPROVAL_GUARDED = {"mappings": "mapping", "rules": "rule", "glossary_elements": "glossary_element"}
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -175,8 +177,71 @@ def upgrade() -> None:
     )
     op.alter_column("notifications", "created_at", server_default=sa.text("clock_timestamp()"))
 
+    # ---- before task 10: TRUNCATE refused on every append-only table (TRUNCATE skips row triggers)
+    for table in APPEND_ONLY:
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_no_truncate BEFORE TRUNCATE ON {table} "
+            "FOR EACH STATEMENT EXECUTE FUNCTION amaze_refuse_update_delete()"
+        )
+
+    # ---- before task 10: rule 1 in the database. Configuration rows need a proposal that is approved,
+    # of the matching kind (trigger argument), and has at least one 'approved' decision in approvals.
+    # Only the glossary seed (created_by = 'seed') is exempt.
+    op.execute(
+        """
+        CREATE FUNCTION amaze_require_approved_proposal() RETURNS trigger LANGUAGE plpgsql AS $$
+        DECLARE
+            wanted text := TG_ARGV[0];
+            p_status text;
+            p_kind text;
+        BEGIN
+            -- Nested on purpose: PL/pgSQL does not short-circuit AND, and only glossary_elements
+            -- has a created_by column.
+            IF TG_TABLE_NAME = 'glossary_elements' THEN
+                IF NEW.created_by = 'seed' THEN
+                    RETURN NEW;
+                END IF;
+            END IF;
+            IF NEW.proposal_id IS NULL THEN
+                RAISE EXCEPTION '% row needs an approved % proposal', TG_TABLE_NAME, wanted
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            SELECT status, kind INTO p_status, p_kind FROM proposals WHERE id = NEW.proposal_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'proposal % does not exist', NEW.proposal_id
+                    USING ERRCODE = 'foreign_key_violation';
+            END IF;
+            IF p_kind <> wanted THEN
+                RAISE EXCEPTION 'proposal % is a % proposal, not %', NEW.proposal_id, p_kind, wanted
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            IF p_status <> 'approved' THEN
+                RAISE EXCEPTION 'proposal % is %, not approved', NEW.proposal_id, p_status
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM approvals
+                            WHERE proposal_id = NEW.proposal_id AND decision = 'approved') THEN
+                RAISE EXCEPTION 'proposal % has no approved decision in approvals', NEW.proposal_id
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            RETURN NEW;
+        END $$;
+        """
+    )
+    for table, kind in APPROVAL_GUARDED.items():
+        op.execute(
+            f"CREATE TRIGGER trg_{table}_approved_proposal BEFORE INSERT ON {table} "
+            f"FOR EACH ROW EXECUTE FUNCTION amaze_require_approved_proposal('{kind}')"
+        )
+
 
 def downgrade() -> None:
+    # IF EXISTS: a database may hold an earlier build of 0004 without these (phase 1, before task 10).
+    for table in APPROVAL_GUARDED:
+        op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_approved_proposal ON {table}")
+    op.execute("DROP FUNCTION IF EXISTS amaze_require_approved_proposal()")
+    for table in APPEND_ONLY:
+        op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_no_truncate ON {table}")
     op.alter_column("notifications", "created_at", server_default=sa.text("now()"))
     op.drop_table("products")
     op.drop_index("ix_loads_feed_id", table_name="loads")

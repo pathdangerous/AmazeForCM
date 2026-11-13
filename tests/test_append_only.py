@@ -77,6 +77,14 @@ def test_update_is_refused(db_session, request, table):
 
 
 @pytest.mark.parametrize("table", sorted(ROWS))
+def test_truncate_is_refused(db_session, request, table):
+    """TRUNCATE skips row-level triggers, so each table also has a statement-level BEFORE TRUNCATE trigger."""
+    name, _ = ROWS[table](db_session, request)
+    with pytest.raises(DBAPIError, match=f"{name} is append-only: TRUNCATE refused"):
+        db_session.execute(text(f"TRUNCATE {name} CASCADE"))
+
+
+@pytest.mark.parametrize("table", sorted(ROWS))
 def test_delete_is_refused(db_session, request, table):
     name, row_id = ROWS[table](db_session, request)
     with pytest.raises(DBAPIError, match=f"{name} is append-only"):
