@@ -10,10 +10,13 @@ from ports.config import Settings
 CASES = [
     ("ports.secrets:get_secrets", "secrets_provider", "env", "ports.secrets.env:EnvSecrets"),
     ("ports.secrets:get_secrets", "secrets_provider", "key_vault", "ports.secrets.key_vault:KeyVaultSecrets"),
+    ("ports.llm:get_llm_provider", "llm_provider", "mock", "ports.llm.mock:MockProvider"),
+    ("ports.llm:get_llm_provider", "llm_provider", "azure_openai", "ports.llm.azure_openai:AzureOpenAIProvider"),
 ]
 
 DEFAULTS = {
     "ports.secrets:get_secrets": "ports.secrets.env:EnvSecrets",
+    "ports.llm:get_llm_provider": "ports.llm.mock:MockProvider",
 }
 
 

@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # (local adapter, Azure stub). Each port adds its row when it is built.
 PAIRS = [
     ("ports.secrets.env:EnvSecrets", "ports.secrets.key_vault:KeyVaultSecrets"),
+    ("ports.llm.mock:MockProvider", "ports.llm.azure_openai:AzureOpenAIProvider"),
 ]
 
 
