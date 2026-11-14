@@ -161,8 +161,28 @@ def _source_fetches_row(db_session, request):
     return "source_fetches", row.id
 
 
+def _requirement_scopes_row(db_session, request):
+    from core.repositories.proposals import ProposalRepository
+    from core.repositories.requirement_scopes import RequirementScopeRepository
+    from core.repositories.requirements import RequirementRepository
+    from tests.conftest import dev_user_for
+
+    requirement = RequirementRepository(db_session).create(requester_id="dev-requester", title="Append-only")
+    make_proposal = request.getfixturevalue("make_proposal")
+    proposal = make_proposal(kind="scope", roles=("requester",), requirement_id=requirement.id,
+                             payload={"visibility": "public", "provider": "P", "where_to_search": ["exchanges"],
+                                      "reason": "r"})
+    ProposalRepository(db_session).record_decision(proposal.id, user=dev_user_for("requester"), decision="approved")
+    scope = RequirementScopeRepository(db_session).add_version(
+        requirement_id=requirement.id, visibility="public", provider="P", where_to_search=["exchanges"],
+        proposal_id=proposal.id, confirmed_by="dev-requester",
+    )
+    return "requirement_scopes", scope.id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
+    "requirement_scopes": _requirement_scopes_row,
     "approvals": _approvals_row,
     "glossary_elements": _glossary_row,
     "mappings": _mappings_row,

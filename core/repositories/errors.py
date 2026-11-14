@@ -87,7 +87,23 @@ class RequirementNotInStatus(RepositoryError):
 
 
 class RequirementAlreadyHasSource(RepositoryError):
-    """A requirement is handed to one source only."""
+    """The requirement's current source choice is already a selection (from 0009: versioned choices)."""
+
+
+class NothingToRelease(RepositoryError):
+    """The requirement's current source choice is not a selection, so there is nothing to release."""
+
+
+class SourceAlreadyReleased(RepositoryError):
+    """This requirement released the source; it cannot select it again (phase 3 plan, assumption 53)."""
+
+
+class ProposalForAnotherRequirement(RepositoryError):
+    """The proposal belongs to another requirement."""
+
+
+class SourceNotInProposal(RepositoryError):
+    """The proposal does not name this source."""
 
 
 # ---- loads and products

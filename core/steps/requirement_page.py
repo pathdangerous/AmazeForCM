@@ -63,7 +63,9 @@ class RequirementPage(BaseModel):
 
 def requirement_page(session: Session, requirement: Requirement, catalogue: SourceCatalogue) -> RequirementPage:
     source = last = None
-    choice = SourceChoiceRepository(session).for_requirement(requirement.id)
+    choice = SourceChoiceRepository(session).current(requirement.id)
+    if choice is not None and choice.action != "selected":
+        choice = None  # released: no source is selected now (task 17 adds the release messages)
     if choice is not None:
         feed = FeedRepository(session).get(choice.feed_id)
         try:

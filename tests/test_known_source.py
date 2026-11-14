@@ -102,8 +102,8 @@ def test_find_selects_the_source_and_hands_over_a_candidate_feed(db_session, req
         "syn_exchange_volumes", "candidate", "local_file", "files/exchange_volumes.csv", req.id,
     )
     assert result.feed == feed
-    choice = SourceChoiceRepository(db_session).for_requirement(req.id)
-    assert (choice.feed_id, choice.basis) == (feed.id, "known_source")
+    choice = SourceChoiceRepository(db_session).current(req.id)
+    assert (choice.feed_id, choice.basis, choice.version, choice.action) == (feed.id, "known_source", 1, "selected")
     assert RequirementRepository(db_session).get(req.id).status == "source_selected"
 
 
@@ -113,7 +113,7 @@ def test_a_second_requirement_reuses_the_feed(db_session, requirement):
     find_known_source(db_session, requirement_id=second.id, catalogue=CATALOGUE)
     assert count(db_session, FeedRow) == 1
     feed = FeedRepository(db_session).get_by_source("syn_exchange_volumes")
-    assert SourceChoiceRepository(db_session).requirements_for_feed(feed.id) == [first.id, second.id]
+    assert SourceChoiceRepository(db_session).requirements_selecting(feed.id) == [first.id, second.id]
 
 
 def test_no_known_source_writes_nothing(db_session, requirement):

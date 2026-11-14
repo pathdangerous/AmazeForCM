@@ -104,7 +104,7 @@ def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable
     fetches.record(feed_id=feed.id, fetch_id=fetch_id, outcome="fetched", blob_ref=key, size_bytes=file.size)
     requirements = RequirementRepository(session)
     moved = []
-    for requirement_id in SourceChoiceRepository(session).requirements_for_feed(feed.id):
+    for requirement_id in SourceChoiceRepository(session).requirements_selecting(feed.id):
         if requirements.get(requirement_id).status == "source_selected":
             requirements.advance(requirement_id, "onboarding")
             moved.append(requirement_id)

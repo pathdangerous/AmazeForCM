@@ -46,22 +46,61 @@ class SourceSummary(BaseModel):
         return cls(code=entry.code, name=entry.name, provider=entry.provider, visibility=entry.visibility,
                    conditions=entry.conditions)
 
-ChoiceBasis = Literal["known_source"]
+ChoiceBasis = Literal["known_source", "requester_pick"]
 CHOICE_BASES: tuple[str, ...] = get_args(ChoiceBasis)
+ChoiceAction = Literal["selected", "released"]
+CHOICE_ACTIONS: tuple[str, ...] = get_args(ChoiceAction)
+ReleaseReason = Literal["source_down_n_days", "requester_asked"]
+RELEASE_REASONS: tuple[str, ...] = get_args(ReleaseReason)
+Visibility = Literal["public", "private"]  # a scope's; not a product's visibility
+SCOPE_VISIBILITIES: tuple[str, ...] = get_args(Visibility)
 
 FetchOutcome = Literal["fetched", "source_down"]
 FETCH_OUTCOMES: tuple[str, ...] = get_args(FetchOutcome)
 
 
 class SourceChoice(BaseModel):
+    """One version of a requirement's source choice (0009): a selection (a known source, or the
+    requester's pick with the conditions accepted) or a release. The highest version is current."""
+
     model_config = ConfigDict(from_attributes=True, frozen=True)
 
     id: UUID
     created_at: datetime
     requirement_id: UUID
+    version: int
+    action: ChoiceAction
     feed_id: UUID
     source_code: str
-    basis: ChoiceBasis
+    basis: ChoiceBasis | None
+    reason: ReleaseReason | None
+    proposal_id: UUID | None
+    accepted_conditions: SourceConditions | None
+    decided_by: str | None
+
+
+class RequirementScopeDraft(BaseModel):
+    """S1: what the requester confirmed, exactly as the IntentAgent proposed it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visibility: Visibility
+    provider: NonBlank
+    where_to_search: list[NonBlank] = Field(min_length=1)
+
+
+class RequirementScope(BaseModel):
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    created_at: datetime
+    requirement_id: UUID
+    version: int
+    visibility: Visibility
+    provider: str
+    where_to_search: list[str]
+    proposal_id: UUID
+    confirmed_by: str
 
 
 class SourceFetchDraft(BaseModel):

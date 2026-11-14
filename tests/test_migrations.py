@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0008"
+HEAD = "0009"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -20,7 +20,7 @@ TABLES = {
 PHASE_2_TABLES = {  # migration 0006
     "product_elements", "product_grants", "requirement_elements", "requirement_terms", "consumer_requests",
 }
-PHASE_3_TABLES = {"source_choices", "source_fetches"}  # migration 0008
+PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes"}  # migrations 0008 and 0009
 TABLES |= PHASE_2_TABLES | PHASE_3_TABLES
 
 
@@ -185,6 +185,19 @@ REVIEWED_NULLABLE_CHECKS = {
         "detail IS NOT NULL spelt out before btrim (fixed before 0008 was applied)",
     "source_fetches.ck_source_fetches_fetched_has_a_file":
         "size_bytes IS NOT NULL spelt out before > 0 (fixed before 0008 was applied)",
+    # 0009 (phase 3 plan, assumption 50). Each has a NULL case in test_db_source_guards.py.
+    "source_choices.ck_source_choices_basis":
+        "NULL basis passes on purpose (a release); ck_source_choices_selection_or_release needs it on a selection",
+    "source_choices.ck_source_choices_reason":
+        "NULL reason passes on purpose (a selection); ck_source_choices_selection_or_release needs it on a release",
+    "source_choices.ck_source_choices_selection_or_release":
+        "IS NULL / IS NOT NULL on basis and reason; action is NOT NULL: never NULL",
+    "source_choices.ck_source_choices_pick_has_its_acceptance":
+        "COALESCE(basis, '') and IS NOT NULL only: never NULL",
+    "source_choices.ck_source_choices_decided_by_only_for_a_person":
+        "COALESCE on basis and reason, IS NOT NULL on decided_by: never NULL",
+    "source_choices.ck_source_choices_conditions_are_an_object":
+        "accepted_conditions IS NULL OR ... spelt out before jsonb_typeof",
 }
 
 
@@ -218,6 +231,101 @@ def test_0008_downgrade_refuses_while_a_requirement_is_source_selected(migrated_
         with migrated_engine.begin() as connection:
             connection.execute(text("DELETE FROM requirements WHERE id = :id"), {"id": row_id})
         command.upgrade(config, "head")
+
+
+@pytest.fixture
+def scratch_schema(test_database_url):
+    """(engine, url) on a new, empty schema of amaze_test; dropped afterwards. For tests that must leave
+    rows in append-only tables, which cannot be deleted row by row."""
+    from sqlalchemy.engine import make_url
+
+    schema = f"migration_check_{uuid.uuid4().hex[:8]}"
+    base = create_engine(test_database_url)
+    with base.begin() as connection:
+        connection.execute(text(f"CREATE SCHEMA {schema}"))
+    url = make_url(test_database_url).update_query_dict({"options": f"-csearch_path={schema}"})
+    url_text = url.render_as_string(hide_password=False)
+    engine = create_engine(url_text)
+    try:
+        yield engine, url_text
+    finally:
+        engine.dispose()
+        with base.begin() as connection:
+            connection.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+        base.dispose()
+
+
+def _a_3a_choice(connection) -> uuid.UUID:
+    """A requirement selected to a known source, written as 0008 knows it. Returns the requirement id."""
+    requirement_id, feed_id = uuid.uuid4(), uuid.uuid4()
+    connection.execute(text("INSERT INTO requirements (id, requester_id, title, status) "
+                            "VALUES (:id, 'dev-requester', 'volume', 'source_selected')"), {"id": requirement_id})
+    connection.execute(text("INSERT INTO feeds (id, code, name, source_code, connector, source_ref) VALUES "
+                            "(:id, 'syn_x', 'X', 'syn_x', 'local_file', 'files/x.csv')"), {"id": feed_id})
+    connection.execute(text("INSERT INTO source_choices (requirement_id, feed_id, source_code, basis) "
+                            "VALUES (:r, :f, 'syn_x', 'known_source')"), {"r": requirement_id, "f": feed_id})
+    return requirement_id
+
+
+def test_0009_makes_existing_choices_version_1_selected(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0008")
+    with engine.begin() as connection:
+        requirement_id = _a_3a_choice(connection)
+    command.upgrade(config, "0009")
+    with engine.connect() as connection:
+        row = connection.execute(text(
+            "SELECT version, action, basis, reason, proposal_id, accepted_conditions, decided_by "
+            "FROM source_choices WHERE requirement_id = :r"), {"r": requirement_id}).one()
+        defaults = connection.execute(text(
+            "SELECT column_name, column_default FROM information_schema.columns "
+            "WHERE table_name = 'source_choices' AND column_name IN ('version', 'action') "
+            "AND table_schema = current_schema()")).all()
+    assert tuple(row) == (1, "selected", "known_source", None, None, None, None)
+    assert sorted(defaults) == [("action", None), ("version", None)]  # the defaults were only for existing rows
+
+
+@pytest.mark.parametrize("case", ["a 3b status", "a release"])
+def test_0009_downgrade_refuses_when_3b_rows_exist(scratch_schema, case):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0009")
+    with engine.begin() as connection:
+        if case == "a 3b status":
+            connection.execute(text("INSERT INTO requirements (requester_id, title, status) "
+                                    "VALUES ('dev-requester', 'T', 'awaiting_scope_confirmation')"))
+        else:
+            requirement_id, feed_id = uuid.uuid4(), uuid.uuid4()
+            connection.execute(text("INSERT INTO requirements (id, requester_id, title, status) "
+                                    "VALUES (:id, 'dev-requester', 'T', 'source_selected')"), {"id": requirement_id})
+            connection.execute(text("INSERT INTO feeds (id, code, name, source_code, connector, source_ref) "
+                                    "VALUES (:id, 'syn_x', 'X', 'syn_x', 'local_file', 'files/x.csv')"),
+                               {"id": feed_id})
+            for version, action, basis, reason in ((1, "selected", "known_source", None),
+                                                   (2, "released", None, "source_down_n_days")):
+                connection.execute(text(
+                    "INSERT INTO source_choices (requirement_id, version, action, feed_id, source_code, basis, "
+                    "reason) VALUES (:r, :v, :a, :f, 'syn_x', :b, :reason)"),
+                    {"r": requirement_id, "v": version, "a": action, "f": feed_id, "b": basis, "reason": reason})
+    with pytest.raises(DBAPIError, match="migration 0009"):
+        command.downgrade(config, "0008")
+
+
+def test_0009_downgrade_restores_0008_when_there_are_no_3b_rows(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0008")
+    with engine.begin() as connection:
+        _a_3a_choice(connection)
+    command.upgrade(config, "0009")
+    command.downgrade(config, "0008")
+    with engine.connect() as connection:
+        columns = {c["name"] for c in inspect(connection).get_columns("source_choices")}
+        unique = {u["name"] for u in inspect(connection).get_unique_constraints("source_choices")}
+    assert columns == {"id", "created_at", "requirement_id", "feed_id", "source_code", "basis"}
+    assert unique == {"uq_source_choices_requirement_id"}
+    assert "requirement_scopes" not in inspect(engine).get_table_names()
 
 
 def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):

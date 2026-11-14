@@ -35,7 +35,7 @@ from core.domain.load import LOAD_STATUSES
 from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
-from core.domain.sourcing import CHOICE_BASES, FETCH_OUTCOMES
+from core.domain.sourcing import CHOICE_ACTIONS, CHOICE_BASES, FETCH_OUTCOMES, RELEASE_REASONS, SCOPE_VISIBILITIES
 from ports.db import Base
 from ports.identity.base import ROLES
 
@@ -226,13 +226,40 @@ class FeedRow(Base):
 
 
 class SourceChoiceRow(Base):
-    """Which source, and so which candidate feed, a requirement was handed to. One per requirement.
-    Append-only (migration 0008)."""
+    """Which source, and so which candidate feed, a requirement was handed to: one row per version, a
+    selection or a release; the highest version is current. Append-only (migrations 0008 and 0009).
+
+    The database also enforces the versions, the order of selections and releases, and the pick's
+    approved proposal (triggers in 0009; phase 3 plan, assumption 50)."""
 
     __tablename__ = "source_choices"
     __table_args__ = (
-        UniqueConstraint("requirement_id"),
+        UniqueConstraint("requirement_id", "version"),
+        Index("uq_source_choices_selected_source", "requirement_id", "source_code", unique=True,
+              postgresql_where=text("action = 'selected'")),
         CheckConstraint(_in("basis", CHOICE_BASES), name="basis"),
+        CheckConstraint(_in("action", CHOICE_ACTIONS), name="action"),
+        CheckConstraint(_in("reason", RELEASE_REASONS), name="reason"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint(
+            "(action = 'selected' AND basis IS NOT NULL AND reason IS NULL) OR "
+            "(action = 'released' AND reason IS NOT NULL AND basis IS NULL)",
+            name="selection_or_release",
+        ),
+        CheckConstraint(
+            "(COALESCE(basis, '') = 'requester_pick') = (proposal_id IS NOT NULL) AND "
+            "(COALESCE(basis, '') = 'requester_pick') = (accepted_conditions IS NOT NULL)",
+            name="pick_has_its_acceptance",
+        ),
+        CheckConstraint(
+            "(decided_by IS NOT NULL) = "
+            "(COALESCE(basis, '') = 'requester_pick' OR COALESCE(reason, '') = 'requester_asked')",
+            name="decided_by_only_for_a_person",
+        ),
+        CheckConstraint(
+            "accepted_conditions IS NULL OR jsonb_typeof(accepted_conditions) = 'object'",
+            name="conditions_are_an_object",
+        ),
         Index("ix_source_choices_feed_id", "feed_id"),
     )
 
@@ -241,7 +268,39 @@ class SourceChoiceRow(Base):
     requirement_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("requirements.id"))
     feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
     source_code: Mapped[str] = mapped_column(Text)
-    basis: Mapped[str] = mapped_column(Text)
+    basis: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))
+    accepted_conditions: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    decided_by: Mapped[str | None] = mapped_column(Text)
+
+
+class RequirementScopeRow(Base):
+    """S1: the scope the requester confirmed, versioned per requirement. Append-only (migration 0009).
+
+    Triggers: an approved scope proposal of the same requirement, holding exactly this scope; confirmed
+    by the requirement's own requester."""
+
+    __tablename__ = "requirement_scopes"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", "version"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint(_in("visibility", SCOPE_VISIBILITIES), name="visibility"),
+        CheckConstraint("length(btrim(provider)) > 0", name="provider"),
+        CheckConstraint("cardinality(where_to_search) >= 1", name="where_to_search"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    requirement_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("requirements.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    visibility: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text)
+    where_to_search: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+    confirmed_by: Mapped[str] = mapped_column(Text)
 
 
 class SourceFetchRow(Base):

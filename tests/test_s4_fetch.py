@@ -169,6 +169,28 @@ def test_only_requirements_waiting_on_the_feed_move(db_session, selected, fetch,
     assert (status(db_session, first), status(db_session, later)) == ("onboarding", "onboarding")
 
 
+def test_a_fetch_moves_only_requirements_that_currently_select_the_feed(db_session, selected, fetch, sources,
+                                                                        requirement):
+    """Phase 3 plan, assumption 54: a requirement that released this feed and now waits on another source
+    is not touched, even though it is source_selected again."""
+    from core.repositories.source_choices import SourceChoiceRepository
+
+    first, feed = selected
+    moved_on = requirement("moved on")
+    find_known_source(db_session, requirement_id=moved_on.id, catalogue=CATALOGUE)
+    choices, requirements = SourceChoiceRepository(db_session), RequirementRepository(db_session)
+    choices.record_release(requirement_id=moved_on.id, reason="requester_asked", decided_by="dev-requester")
+    requirements.advance(moved_on.id, "awaiting_source_choice")
+    other = FeedRepository(db_session).create_candidate(code="syn_other", name="Other", source_code="syn_other",
+                                                        connector="local_file", source_ref="files/other.csv")
+    choices.record_known(requirement_id=moved_on.id, feed_id=other.id, source_code="syn_other")
+    requirements.advance(moved_on.id, "source_selected")
+
+    put_file(sources)
+    assert fetch(feed).requirements_onboarding == [first.id]
+    assert (status(db_session, first), status(db_session, moved_on)) == ("onboarding", "source_selected")
+
+
 class SpyConnector:
     name = "spy"
 

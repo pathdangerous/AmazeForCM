@@ -83,7 +83,11 @@ from core.domain.requirement import REQUIREMENT_STATUSES, RequirementDraft  # no
 
 def test_status_lists_are_the_names_in_claude_md():
     # phase 3 (migration 0008) adds source_selected
-    assert REQUIREMENT_STATUSES == ("defined", "onboarding", "ready", "access_restricted", "rejected", "source_selected")
+    assert REQUIREMENT_STATUSES == (
+        "defined", "onboarding", "ready", "access_restricted", "rejected", "source_selected",  # phases 1, 3a
+        "awaiting_scope_confirmation", "scope_not_confirmed", "scope_confirmed", "awaiting_source_choice",
+        "no_source_found",  # phase 3b, migration 0009
+    )
     assert FEED_STAGES == ("candidate", "registered", "rejected")
     assert LOAD_STATUSES == ("received", "held", "failed_rolled_back", "released")
 
@@ -220,8 +224,19 @@ from core.domain.sourcing import SourceFetchDraft  # noqa: E402
 
 
 def test_requirement_statuses_and_transitions_are_the_plans():
-    """Phase 3 plan, section 5.1: the 3a moves that change a status, and nothing else."""
-    assert REQUIREMENT_TRANSITIONS == frozenset({("defined", "source_selected"), ("source_selected", "onboarding")})
+    """Phase 3 plan, section 5.1: the 13 moves that change a status (3a and 3b), and nothing else."""
+    assert REQUIREMENT_TRANSITIONS == frozenset({
+        ("defined", "source_selected"), ("source_selected", "onboarding"),  # 3a
+        ("defined", "awaiting_scope_confirmation"),  # S1
+        ("awaiting_scope_confirmation", "scope_confirmed"),
+        ("awaiting_scope_confirmation", "scope_not_confirmed"),
+        ("scope_not_confirmed", "awaiting_scope_confirmation"),
+        ("no_source_found", "awaiting_scope_confirmation"),
+        ("scope_confirmed", "awaiting_source_choice"), ("scope_confirmed", "no_source_found"),  # S2
+        ("awaiting_source_choice", "source_selected"), ("awaiting_source_choice", "no_source_found"),  # S3
+        ("source_selected", "awaiting_source_choice"), ("source_selected", "no_source_found"),  # release
+    })
+    assert len(REQUIREMENT_TRANSITIONS) == 13
     assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
 
 
