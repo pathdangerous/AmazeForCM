@@ -698,3 +698,74 @@ Tests: 769 pass, none skipped, no warnings; the full suite was run twice before 
 | `source_fetches.ck_source_fetches_fetched_has_a_file` | Yes, since the same fix |
 
 **No check needs fixing, so no migration was added.** The application database holds the fixed `source_fetches` checks. To keep it that way, `test_every_check_on_a_nullable_column_is_reviewed` lists the ten with their reasons and fails on any new check on a nullable column until it is reviewed. It was shown failing with one entry removed.
+
+### Tasks 7 to 9 (checkpoint 3)
+
+Tests: 779 pass, none skipped, no warnings.
+
+**Task 7, consumer API.** `test_api_consumer_sourcing.py` has 9 tests:
+- the 3a done-when test, `test_done_when_a_known_source_is_fetched_and_the_requester_sees_onboarding`: raise `volume`, Find a source, `known_source` and `fetched`, the exact message, the requirement page `onboarding`, and the candidate feed in `/api/amaze/feeds`;
+- `source_down` (row B), `no_known_source` both ways (rows C and D);
+- 409 on a second click, 404 for another requester's requirement, 403 and 401;
+- My requests linking the requirement.
+
+**A test gap I could not close: a missing commit after the fetch.** The API tests share one session (risk 11). If the endpoint forgot `session.commit()` after the fetch, they would still see the rows and pass. The browser run against the application database is the check for it: the fetch rows and the `onboarding` status were there after the requests ended.
+
+**Task 8, consumer-ui.** A Requirement view (`#/requirement/<id>`); after a raise, Search calls Find a source and shows its message; My requests links each requirement and has "Find a source" for a `defined` one. One build error on the way: the new state reused the name `found`, which already held the search results. It is renamed `sourceResult`.
+
+**Browser run** on the application database, as Riley Requester. Screenshots in `.playwright-mcp/` (git-ignored). No console errors or warnings.
+
+| Row | Search, then Submit | Seen under the raise message |
+|---|---|---|
+| A | `volume` | "Your data is getting onboarded; we will notify you once it is ready." The requirement page (`phase3a-requirement.png`) shows `onboarding`, the source and its licence, and "File received" |
+| B | `accrued interest` | "A source was found: Accrued interest feed. It did not answer; Amaze tries again every day." In amber |
+| C | `open price` | "No known source has this data yet." |
+| D | `esg score`, term ticked | "No known source has this data yet." |
+
+Also on My requests: "Find a source" on the phase 2 requirement `volume` found the known source and reused its feed, so it is `onboarding` too (`phase3a-requests.png`). The feed registry in backend-ui shows the two candidate feeds (`phase3a-feeds.png`). The API was stopped and started again; health was `ok`.
+
+**What the run left in the application database:** 8 requirements (5 `defined`, 2 `onboarding`, 1 `source_selected`), 2 candidate feeds, 3 source choices, 3 fetch rows (2 `fetched`, 1 `source_down`), and two stored files under `data/blob/raw/syn_exchange_volumes/`. All of it is append-only or real data, by design.
+
+**Task 9, documents.**
+- `CLAUDE.md`: layout lines for `apps/api/jobs.py`, the phase 3 step modules (and that a step receives its agent as an argument), the catalogue and connector rules, `fixtures/sources/`.
+- `BUILD_PLAN.md`: phase 3 is built as 3a and 3b; the requester's acceptance is the only approval of a source.
+- `README.md`: the requirement view, what `volume` and `accrued interest` do, `0008 (head)`, the phase 3 append-only tables.
+- `.env.example`: `SOURCE_CATALOGUE` and `SOURCE_HTTP_ALLOWED_HOSTS`.
+
+**A bug found while writing `.env.example`, fixed with a test first.** A relative `SOURCE_CATALOGUE` was read from the current folder, not the repository. It is now resolved against the repository, as `LOCAL_BLOB_ROOT` already is (`test_a_relative_catalogue_path_is_read_from_the_repository_not_the_current_folder`).
+
+### Section 13 results for 3a
+
+```
+alembic upgrade head        no change (already at head)
+python -m core.seed         glossary seed: 0 inserted, 33 already present
+python -m core.seed --demo  demo seed: 0 inserted, 3 already present
+pytest -v                   779 passed; 0 failed, 0 skipped, 0 warnings
+alembic current             0008 (head)
+npm ... run build           backend-ui exit 0; consumer-ui exit 0
+dev.ps1                     three OK lines; health {"status":"ok", ..., "unavailable":[]}
+```
+
+### Review of 3a (task 9)
+
+| Rule | 3a state |
+|---|---|
+| 1 AI proposes, people decide | No agent and no model call in 3a. A known source is selected by a rule; the decision that a source is known is a person's, recorded in the catalogue, and a known source cannot carry external approvals |
+| 2 No model call in engine or entitlement | No model call anywhere in 3a. `core.steps` stays inside the import boundary; the only `ports.llm` imports are the phase 0 and 1 ones outside it. `.complete(` appears nowhere in `core` or `apps` |
+| 3 Explicit negative outcomes | Four typed outcomes with named tests; the names are read from `CLAUDE.md`. A wrong status is 409, another's requirement 404; an unexpected error is rolled back, never turned into an outcome |
+| 4 Every proposal logged | No proposal in 3a |
+| 5 Azure behind interfaces | Connectors, blob store, scheduler and notifier are ports and FastAPI dependencies. The daily job has the shape of a Functions timer. No Azure import |
+| 6 Synthetic data only | `syn_` codes enforced; the catalogue and every sample file pass the real-data checks; HTTP reaches this machine only and never follows a redirect |
+| 7 Versioned, never edited in place | `source_choices` and `source_fetches` are append-only (UPDATE, DELETE and TRUNCATE refused). Requirement status moves only along the transition table |
+
+**PostgreSQL 14:** `0008` uses `ADD COLUMN`, unique and check constraints, `BIGINT`, indexes and the phase 1 trigger function. Nothing newer.
+
+**3a done-when (section 1):** all five met. Item 1: the known-source tests. Item 2: the done-when API test and the browser. Item 3: the `source_down` tests and row B. Item 4: the restart test. Item 5: 779 pass.
+
+**Nothing from 3b or later phases was built:** no agent, no S1 to S3, no `agents/base.py`, no profiling.
+
+**Findings left open (none blocks 3a):**
+
+1. **The three `dev.ps1` windows are still open.** Close them before running `dev.ps1` again.
+2. **The API tests cannot see a missing commit** (above, and risk 11).
+3. **A `source_down` requirement has no way back yet.** Section 16 records your decision for 3b.

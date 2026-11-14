@@ -107,3 +107,11 @@ def test_settings_defaults():
     assert settings.source_catalogue == DEFAULT_CATALOGUE
     assert settings.allowed_source_hosts() == ("127.0.0.1", "localhost")
     assert Settings(_env_file=None, source_http_allowed_hosts=" 127.0.0.1 ").allowed_source_hosts() == ("127.0.0.1",)
+
+
+@pytest.mark.parametrize("relative", ["./fixtures/sources/catalogue.json", "fixtures/sources/catalogue.json"])
+def test_a_relative_catalogue_path_is_read_from_the_repository_not_the_current_folder(relative, tmp_path,
+                                                                                       monkeypatch):
+    """As .env.example writes it; the API and the tests may run from another folder."""
+    monkeypatch.chdir(tmp_path)
+    assert Settings(_env_file=None, source_catalogue=relative).source_catalogue == DEFAULT_CATALOGUE

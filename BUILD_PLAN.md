@@ -31,6 +31,8 @@ One end-to-end path, built in phases. Each phase ends with something that runs a
 
 ## Phase 3 — Custom data product ingestion (S1–S4)
 
+Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetch, the daily job, connectors) and **3b** with them (S1–S3, the agent base, the DiscoveryAssistant). The requester's acceptance of a source's stated conditions is the only approval of a source; the backend team reviews the data in phase 4.
+
 - IntentAgent and SourceDiscoveryAgent (mock) list candidate sources from `fixtures/sources/`, with licence and approvals needed.
 - Requester picks a source in `consumer-ui`; sees "Your data is getting onboarded; we will notify you once it is ready."
 - Local HTTP or file connector fetches a sample; local scheduler registers a daily job (Azure Functions stub in place).

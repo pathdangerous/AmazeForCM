@@ -35,7 +35,8 @@ The system is three platforms, in the order data moves:
 
 ```
 apps/
-  api/                    FastAPI app, routers per platform
+  api/                    FastAPI app, routers per platform; jobs.py: the one daily source fetch, registered
+                          at every start-up, reading the feeds table when it runs
   backend-ui/             Amaze workbenches (data owner, steward, glossary owner, operations)
   consumer-ui/            Marketplace portal for end users
 core/
@@ -48,7 +49,10 @@ core/
   steps/                  One module per step (s1_scope.py ... s22_monitor.py); each returns a typed StepResult
                           (result.py: a Pydantic union discriminated on `outcome`). Also matching.py (request
                           text to glossary elements), routing.py (routing checks), request_data.py (one
-                          "Request this data", end to end) and errors.py (refused step input)
+                          "Request this data", end to end) and errors.py (refused step input). Phase 3:
+                          known_source.py (Known source?), s4_fetch.py (S4) and requirement_page.py (what the
+                          requester sees). A step that needs an agent receives it as an argument, so
+                          core/steps never imports agents
   engine/                 Deterministic run engine (step 13). No AI imports allowed here.
   entitlement/            Rules-based entitlement decisions (decide.py). No AI imports allowed here.
 agents/
@@ -66,11 +70,14 @@ ports/                    Ports (interfaces) and adapters — see Placeholders. 
   identity/               Identity: dev users, entra_id (stub)
   secrets/                Secrets: env file, key_vault (stub)
   notify/                 Notifier: in-app, email/Teams (stub)
-  connectors/             Source connectors: local file, HTTP (for the custom data product)
+  connectors/             Source connectors: local file, HTTP (for the custom data product), and the source
+                          catalogue (catalogue.py). HTTP reaches only SOURCE_HTTP_ALLOWED_HOSTS (this
+                          machine until the Azure move) and never follows a redirect
 migrations/               Alembic migrations (alembic.ini at the repository root)
 scripts/                  setup_db.ps1, dev.ps1 (PowerShell, Windows)
 infra/                    Bicep templates (placeholders until the Azure move)
-fixtures/                 Synthetic feeds, sample files, glossary seed, gold mappings for evaluation
+fixtures/                 Synthetic feeds, sample files, glossary seed, gold mappings for evaluation;
+                          sources/: the synthetic source catalogue and its files (codes start with syn_)
 tests/
 ```
 
