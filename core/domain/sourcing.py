@@ -121,6 +121,56 @@ class IntentOutput(BaseModel):
     reason: NonBlank
 
 
+class Coverage(BaseModel):
+    """What a source covers of a requirement, computed by code from the catalogue (assumption 30)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    elements: list[str]  # requested elements the source declares
+    terms: list[str]  # ticked terms equal to one of the source's other fields
+    missing: list[str]  # requested elements and terms it does not cover
+
+
+class CandidateRef(BaseModel):
+    """S2: one catalogue source in scope, as the SourceDiscoveryAgent sees it. Its conditions and
+    coverage come from the catalogue and are copied into the proposal; the model only ranks."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    name: str
+    provider: str
+    description: str
+    elements: list[str]
+    other_fields: list[str]
+    conditions: SourceConditions
+    coverage: Coverage
+
+
+class SourceDiscoveryInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: UUID
+    requested_elements: list[str]
+    requested_terms: list[str]
+    scope_visibility: Visibility
+    where_to_search: list[str]
+    candidates: list[CandidateRef]
+
+
+class RankedSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # no coverage or conditions from the model
+
+    source_code: str
+    reason: NonBlank
+
+
+class SourceDiscoveryOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ranked: list[RankedSource]
+
+
 class RequirementScopeDraft(BaseModel):
     """S1: what the requester confirmed, exactly as the IntentAgent proposed it."""
 

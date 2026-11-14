@@ -41,6 +41,14 @@
      "conditions": {"licence": "Internal data, no licence", "permitted_use": "Internal risk and valuation",
                     "redistribution": "Not allowed", "external_approvals": []},
      "elements": ["instrument_id", "price_date", "mid_price"], "other_fields": [],
-     "connector": "local_file", "source_ref": "files/internal_desk_marks.csv"}
+     "connector": "local_file", "source_ref": "files/internal_desk_marks.csv"},
+
+    {"code": "syn_backup_eod_prices", "name": "Backup end-of-day prices", "provider": "Synthetic Backup Pricing Co",
+     "description": "Open and close prices per instrument and business day. Its sample file is missing on purpose, so a fetch gives source_down and the requester can release it.",
+     "visibility": "public", "channel": "market_data_vendors", "known": false,
+     "conditions": {"licence": "Synthetic backup pricing licence", "permitted_use": "Internal analysis",
+                    "redistribution": "Not allowed", "external_approvals": []},
+     "elements": ["instrument_id", "price_date", "open_price", "close_price"], "other_fields": [],
+     "connector": "local_file", "source_ref": "files/backup_eod_prices.csv"}
   ]
 }

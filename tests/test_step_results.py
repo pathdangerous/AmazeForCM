@@ -169,6 +169,22 @@ def test_s1_results_round_trip():
     round_trips(ScopeResult, ScopeNotConfirmed(note=None))
 
 
+# ---- phase 3b: S2 sources (task 14)
+
+
+def test_s2_outcomes_are_the_second_two_of_claude_mds_s1_to_s4():
+    from core.steps.s2_sources import SourcesResult
+
+    assert union_outcomes(SourcesResult) == claude_md_outcomes("S1–S4")[2:4] == ["sources_listed", "no_fit"]
+
+
+def test_s2_results_round_trip():
+    from core.steps.s2_sources import NoFit, SourcesListed, SourcesResult
+
+    round_trips(SourcesResult, SourcesListed(candidates=[]))
+    round_trips(SourcesResult, NoFit(reason="nothing_in_scope"))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str

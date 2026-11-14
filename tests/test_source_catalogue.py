@@ -36,11 +36,15 @@ def catalogue():
     return SourceCatalogue.load(DEFAULT_CATALOGUE)
 
 
-def test_the_five_synthetic_sources(catalogue):
+def test_the_six_synthetic_sources(catalogue):
     assert [s.code for s in catalogue.entries] == [
         "syn_exchange_volumes", "syn_offline_accruals", "syn_vendor_eod_prices", "syn_open_esg_scores",
-        "syn_internal_desk_marks",
+        "syn_internal_desk_marks", "syn_backup_eod_prices",
     ]
+    backup = catalogue.get("syn_backup_eod_prices")  # assumption 58
+    assert (backup.visibility, backup.channel, backup.known, backup.conditions.external_approvals) == (
+        "public", "market_data_vendors", False, [])
+    assert backup.elements == ["instrument_id", "price_date", "open_price", "close_price"]
     assert [s.code for s in catalogue.known()] == ["syn_exchange_volumes", "syn_offline_accruals"]
     assert catalogue.get("syn_vendor_eod_prices").conditions.external_approvals == [
         "A signed data agreement with the vendor, held by your desk",
@@ -56,7 +60,12 @@ def test_every_element_is_in_the_glossary_seed(catalogue):
 
 def test_every_file_exists_except_the_one_missing_on_purpose(catalogue):
     missing = [s.code for s in catalogue.entries if not (SOURCES / s.source_ref).is_file()]
-    assert missing == ["syn_offline_accruals"]  # row B of the plan: source_down
+    assert missing == ["syn_offline_accruals", "syn_backup_eod_prices"]  # rows B and J of the plan: source_down
+
+
+def test_channels_each_once_with_their_visibility(catalogue):
+    assert catalogue.channels() == [("exchanges", "public"), ("market_data_vendors", "public"),
+                                    ("public_websites", "public"), ("internal_systems", "private")]
 
 
 def test_catalogue_and_files_have_no_real_data(catalogue):
