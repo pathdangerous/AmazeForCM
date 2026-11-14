@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
 import RequestsView from "./views/RequestsView";
+import RequirementView from "./views/RequirementView";
 import SearchView from "./views/SearchView";
 import StatusLine from "./views/StatusLine";
 
@@ -8,12 +9,16 @@ const TITLE = "Amaze Marketplace";
 const STORAGE_KEY = "amaze.consumer-ui.devUser";
 
 // Views, chosen by the URL hash (#/search). No router library (phase 2 plan, decision 16).
+// Phase 3 adds #/requirement/<id>, reached from My requests and after a raise; it is not in the nav.
 const VIEWS = { search: "Search", requests: "My requests" } as const;
 type View = keyof typeof VIEWS;
+type Route = { view: View } | { view: "requirement"; id: string };
 
-function viewFromHash(): View {
-  const name = window.location.hash.replace(/^#\/?/, "");
-  return name in VIEWS ? (name as View) : "search";
+function routeFromHash(): Route {
+  const path = window.location.hash.replace(/^#\/?/, "");
+  const requirement = /^requirement\/([0-9a-f-]{36})$/.exec(path);
+  if (requirement) return { view: "requirement", id: requirement[1] };
+  return { view: path in VIEWS ? (path as View) : "search" };
 }
 
 function remembered(): string | null {
@@ -33,14 +38,14 @@ function remember(userId: string): void {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>(viewFromHash);
+  const [route, setRoute] = useState<Route>(routeFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
 
   useEffect(() => {
-    const onHash = () => setView(viewFromHash());
+    const onHash = () => setRoute(routeFromHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -80,7 +85,7 @@ export default function App() {
         <h1>{TITLE}</h1>
         <nav aria-label="Views">
           {(Object.keys(VIEWS) as View[]).map((name) => (
-            <a key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
+            <a key={name} href={`#/${name}`} aria-current={route.view === name ? "page" : undefined}>
               {VIEWS[name]}
             </a>
           ))}
@@ -101,8 +106,11 @@ export default function App() {
         <StatusLine />
       </header>
       <main>
-        {view === "search" && <SearchView devUser={devUser} />}
-        {view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
+        {route.view === "search" && <SearchView devUser={devUser} />}
+        {route.view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
+        {route.view === "requirement" && (
+          <RequirementView key={`${devUser}-${route.id}`} devUser={devUser} requirementId={route.id} />
+        )}
       </main>
       <footer>Synthetic data only.</footer>
     </>

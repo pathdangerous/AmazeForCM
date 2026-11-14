@@ -59,6 +59,36 @@ export type RequestSummary = {
   requirement_status: string | null;
 };
 
+// ---- phase 3: the custom data product
+
+export type SourceConditions = {
+  licence: string;
+  permitted_use: string;
+  redistribution: string;
+  external_approvals: string[];
+};
+
+export type RequirementPage = {
+  id: string;
+  created_at: string;
+  title: string;
+  description: string;
+  status: string;
+  message: string;
+  elements: string[];
+  terms: string[];
+  source: { code: string; name: string; provider: string; feed_code: string; conditions: SourceConditions } | null;
+  last_fetch: { outcome: "fetched" | "source_down"; at: string; detail: string | null } | null;
+  next_action: "find_source" | null;
+};
+
+export type FindSourceResponse = {
+  check: { outcome: "known_source" | "no_known_source"; reason?: string };
+  fetch: { outcome: "fetched" | "source_down" } | null;
+  message: string;
+  requirement: RequirementPage;
+};
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { apiGet, apiPost, describeError, type Discovery, type RequestResult } from "../api";
+import { apiGet, apiPost, describeError, type Discovery, type FindSourceResponse, type RequestResult } from "../api";
 
 // Step 17 search, then "Request this data" (routing checks and step 01). Phase 2 plan, section 10.
 export default function SearchView({ devUser }: { devUser: string }) {
@@ -10,6 +10,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
   const [terms, setTerms] = useState<Set<string>>(new Set());
   const [purpose, setPurpose] = useState("");
   const [result, setResult] = useState<RequestResult | null>(null);
+  const [sourceResult, setSourceResult] = useState<FindSourceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -18,6 +19,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
     setBusy(true);
     setError(null);
     setResult(null);
+    setSourceResult(null);
     setFound(null); // never leave the previous search's results and ticks on screen
     try {
       const d = await apiGet<Discovery>(`/api/consumer/search?q=${encodeURIComponent(query)}`, devUser);
@@ -38,10 +40,18 @@ export default function SearchView({ devUser }: { devUser: string }) {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setSourceResult(null);
     try {
-      setResult(await apiPost<RequestResult>("/api/consumer/requests", {
+      const raised = await apiPost<RequestResult>("/api/consumer/requests", {
         query: searched, purpose, element_keys: [...elements], terms: [...terms],
-      }, devUser));
+      }, devUser);
+      setResult(raised);
+      // Right after a raise, look for a source (phase 3 plan, assumption 2). The raise stays as it is.
+      const requirementId = raised.requirement?.requirement.id;
+      if (requirementId) {
+        setSourceResult(await apiPost<FindSourceResponse>(
+          `/api/consumer/requirements/${requirementId}/find-source`, {}, devUser));
+      }
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -135,6 +145,15 @@ export default function SearchView({ devUser }: { devUser: string }) {
              data-testid="result">
           <p><strong data-testid="result-message">{result.message}</strong></p>
           {result.notes.length > 0 && <ul>{result.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+          {sourceResult && (
+            <p data-testid="find-source-message"
+               className={sourceResult.fetch?.outcome === "source_down" ? "warn" : sourceResult.fetch ? "ok" : undefined}>
+              {sourceResult.message}
+            </p>
+          )}
+          {result.requirement && (
+            <p><a href={`#/requirement/${result.requirement.requirement.id}`}>See this requirement</a></p>
+          )}
           <p><a href="#/requests">See My requests</a></p>
         </div>
       )}
