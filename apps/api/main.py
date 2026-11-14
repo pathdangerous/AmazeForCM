@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from apps.api.jobs import DailyFetch, register_daily_fetch
 from apps.api.routers import amaze, consumer, dev_identity, health
 from ports.config import get_settings
 from ports.identity import get_identity
@@ -27,6 +28,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # A stub scheduler is not started; /api/health reports it as unavailable instead.
     runs_scheduler = not getattr(scheduler, "is_stub", False)
     if runs_scheduler:
+        # The daily fetch is registered at every start: it reads the feeds table when it runs, so a
+        # restart loses nothing (phase 3 plan, assumption 17). Tests set app.state.daily_fetch.
+        daily = getattr(app.state, "daily_fetch", None) or DailyFetch.from_settings(settings, app.state.identity)
+        register_daily_fetch(scheduler, daily)
         scheduler.start()
     try:
         yield

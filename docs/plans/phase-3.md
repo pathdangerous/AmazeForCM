@@ -597,7 +597,15 @@ Then in the browser, signed in as Riley Requester:
 
 ## 16. Carried forward
 
-Notes only; nothing here is built in phase 3.
+Notes only; nothing here is built in 3a.
+
+**Part 3b (your note at checkpoint 1, 2026-11-14)**
+
+0. **A selected source that stays `source_down` has no route back.** In 3a the requirement waits as `source_selected` for good, and the daily job tries again each day. When 3b starts, I propose one route back to `awaiting_source_choice` (so the requester can pick another listed source, or ask for a new scope), with its own move in the transition table and a test:
+   - after N failed days in a row (N to be decided; for example 3), and
+   - on the requester's request ("Choose another source").
+
+   The feed and its fetch history stay; only the requirement moves. This needs a decision on what the `source_choices` row (one per requirement, append-only) becomes: a second row with a version, or a separate "released" row.
 
 **Phase 4**
 
@@ -652,3 +660,39 @@ python -m core.seed      glossary seed: 0 inserted, 33 already present
 ```
 
 The 4 new triggers are present: `source_choices` and `source_fetches` each have `append_only` and `no_truncate`. `feeds` has its 3 new checks and `uq_feeds_source_code`. The 4 requirements are still `defined`. No constraint name repeats its prefix.
+
+### Tasks 4 to 6 (checkpoint 2)
+
+Tests: 769 pass, none skipped, no warnings; the full suite was run twice before the last test was added.
+
+**Proofs that tests can fail.** In `s4_fetch.py`, both notification conditions were changed to always notify. Then `test_file_ready_is_sent_on_the_first_fetched_only` and `test_source_down_is_sent_once_per_run_of_failures` failed, and the conditions were restored with the Edit tool.
+
+**Deviations from the plan:**
+
+1. **The HTTP connector no longer follows redirects.** A redirect could lead to a host the allow-list refuses, so a 3xx answer is `source_down`. Test first: `test_a_redirect_is_not_followed_and_is_not_a_file`.
+2. **`HttpConnector`'s default allowed hosts are this machine**, not "any host". The phase 0 tests on the reserved name `data.example.test` (a mock transport) now pass that host explicitly.
+3. **`source_fetches.blob_ref` holds the `BlobStore` key** (`raw/...`), not the adapter's reference (`local://raw/...`). `BlobStore.get()` takes a key, and a key works with any adapter.
+4. **An unsafe file name is cleaned into one key segment** (`.hidden:prices?.csv` becomes `hidden_prices_.csv`).
+5. **The job's dependencies are one `DailyFetch` object.** The API builds it from the settings at start-up; tests put their own in `app.state.daily_fetch`.
+6. **Phase 0's `test_scheduler_runs_with_the_api_and_has_no_jobs`** now expects the one daily job; it is renamed `..._holds_only_the_daily_fetch`.
+
+**The four 3a outcome tests, by name:** `test_known_source_when_one_known_source_declares_every_element`, `test_no_known_source_when_none_covers_or_a_term_was_ticked`, `test_fetched_stores_the_file_and_moves_the_requirement_to_onboarding`, `test_source_down_is_recorded_and_the_requirement_waits`: all pass.
+
+**The restart test:** `test_after_a_restart_the_job_fetches_feeds_read_from_the_database` starts the API, stops it, creates a selected feed while it is down, starts it again, and runs the job. The fetch row is `fetched` and the requirement is `onboarding`.
+
+**Audit: check constraints on nullable columns (migrations 0002 to 0008).** A check that evaluates to NULL passes. Ten checks involve a nullable column:
+
+| Check | Is NULL handled? |
+|---|---|
+| `consumer_requests.ck_consumer_requests_requirement_matches_outcome` | Yes: `IS NOT NULL` on the nullable column; `outcome` is NOT NULL. Never NULL |
+| `feeds.ck_feeds_connector` | NULL passes, **on purpose**: a feed without a source |
+| `feeds.ck_feeds_connector_has_source_ref` | Yes: `IS NULL` / `IS NOT NULL` only |
+| `feeds.ck_feeds_registered_at_matches_stage` | Yes: `IS NOT NULL`; `stage` is NOT NULL |
+| `feeds.ck_feeds_registered_has_owner` | Yes: `IS NOT NULL`; `stage` is NOT NULL |
+| `feeds.ck_feeds_source_and_connector_together` | Yes: `IS NULL` on both sides |
+| `glossary_elements.ck_glossary_elements_proposal_unless_seed` | Yes: `IS NULL`; `created_by` is NOT NULL |
+| `proposals.ck_proposals_decided_at_matches_status` | Yes: `IS NULL`; `status` is NOT NULL |
+| `source_fetches.ck_source_fetches_down_has_a_reason` | Yes, since the fix before `0008` was applied (checkpoint 1) |
+| `source_fetches.ck_source_fetches_fetched_has_a_file` | Yes, since the same fix |
+
+**No check needs fixing, so no migration was added.** The application database holds the fixed `source_fetches` checks. To keep it that way, `test_every_check_on_a_nullable_column_is_reviewed` lists the ten with their reasons and fails on any new check on a nullable column until it is reviewed. It was shown failing with one entry removed.

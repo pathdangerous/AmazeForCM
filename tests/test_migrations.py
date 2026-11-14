@@ -164,6 +164,40 @@ def test_0006_check_constraints_have_the_convention_names(migrated_engine):
         assert doubled == set(), table
 
 
+# ---------------------------------------------------------------- checks on nullable columns
+
+# A check that evaluates to NULL passes, so a check on a nullable column must be read with NULL in mind.
+# Every such check is listed here with why NULL is handled; a new one fails this test until it is
+# reviewed and added (audit at phase 3 checkpoint 2).
+REVIEWED_NULLABLE_CHECKS = {
+    "consumer_requests.ck_consumer_requests_requirement_matches_outcome":
+        "IS NOT NULL on requirement_id; outcome is NOT NULL: never NULL",
+    "feeds.ck_feeds_connector":
+        "NULL connector passes on purpose: a feed without a source",
+    "feeds.ck_feeds_connector_has_source_ref": "IS NULL / IS NOT NULL only: never NULL",
+    "feeds.ck_feeds_registered_at_matches_stage": "IS NOT NULL; stage is NOT NULL: never NULL",
+    "feeds.ck_feeds_registered_has_owner": "IS NOT NULL; stage is NOT NULL: never NULL",
+    "feeds.ck_feeds_source_and_connector_together": "IS NULL on both sides: never NULL",
+    "glossary_elements.ck_glossary_elements_proposal_unless_seed":
+        "IS NULL; created_by is NOT NULL: never NULL",
+    "proposals.ck_proposals_decided_at_matches_status": "IS NULL; status is NOT NULL: never NULL",
+    "source_fetches.ck_source_fetches_down_has_a_reason":
+        "detail IS NOT NULL spelt out before btrim (fixed before 0008 was applied)",
+    "source_fetches.ck_source_fetches_fetched_has_a_file":
+        "size_bytes IS NOT NULL spelt out before > 0 (fixed before 0008 was applied)",
+}
+
+
+def test_every_check_on_a_nullable_column_is_reviewed(migrated_engine):
+    with migrated_engine.connect() as connection:
+        rows = connection.execute(text(
+            "SELECT DISTINCT c.conrelid::regclass::text || '.' || c.conname FROM pg_constraint c "
+            "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) "
+            "WHERE c.contype = 'c' AND c.connamespace = 'public'::regnamespace AND NOT a.attnotnull"
+        )).scalars().all()
+    assert sorted(rows) == sorted(REVIEWED_NULLABLE_CHECKS)
+
+
 # ---------------------------------------------------------------- phase 3a: migration 0008
 
 

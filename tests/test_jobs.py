@@ -1,0 +1,135 @@
+"""The daily fetch job (apps/api/jobs.py): carried item 3, scheduler jobs survive an API restart.
+
+Phase 3 plan, assumptions 17 and 18: one daily job, registered at every start-up, that reads the feeds
+table when it runs. Nothing per feed is registered, so nothing is lost on a restart. Each feed is
+fetched in its own transaction; one feed's failure does not stop the others.
+"""
+
+from contextlib import nullcontext
+
+import pytest
+
+from apps.api.jobs import DAILY_FETCH_HOUR, DAILY_FETCH_JOB_ID, DailyFetch
+from core.repositories.requirements import RequirementRepository
+from core.repositories.source_fetches import SourceFetchRepository
+from core.steps.known_source import find_known_source
+from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+from ports.connectors.local_file import LocalFileConnector
+from ports.storage.local import LocalBlobStore
+from tests.conftest import running_app
+
+pytestmark = pytest.mark.anyio
+
+CATALOGUE = SourceCatalogue.load(DEFAULT_CATALOGUE)
+CSV = b"instr_id,trade_date,traded_qty\nsyn-0001,2026-11-02,120500\n"
+
+
+@pytest.fixture
+def sources(tmp_path):
+    (tmp_path / "sources" / "files").mkdir(parents=True)
+    (tmp_path / "sources" / "files" / "exchange_volumes.csv").write_bytes(CSV)
+    return tmp_path / "sources"
+
+
+@pytest.fixture
+def daily(db_session, sources, tmp_path):
+    """The job's dependencies, pointed at the test's session, a temporary blob store and sources."""
+
+    def _daily(connector_factory=None):
+        return DailyFetch(
+            session_factory=lambda: nullcontext(db_session),
+            blob_store=LocalBlobStore(tmp_path / "blob"),
+            connector_factory=connector_factory or (lambda name: LocalFileConnector(sources)),
+            backend_team=lambda: ["dev-backend-team"],
+        )
+
+    return _daily
+
+
+@pytest.fixture
+def selected(db_session, glossary):
+    """A requirement handed to syn_exchange_volumes, committed to the test's savepoint (the job commits)."""
+
+    def _select(title="volume"):
+        req = RequirementRepository(db_session).create(requester_id="dev-requester", title=title,
+                                                       element_keys=["volume"])
+        feed = find_known_source(db_session, requirement_id=req.id, catalogue=CATALOGUE).feed
+        db_session.commit()
+        return req, feed
+
+    return _select
+
+
+async def start_and_stop(daily_fetch):
+    """One API start-up and shutdown with this job; returns the jobs the scheduler held while running."""
+    from apps.api.main import app
+
+    app.state.daily_fetch = daily_fetch
+    try:
+        async with running_app():
+            return app.state.scheduler.list_jobs(), app.state.scheduler
+    finally:
+        del app.state.daily_fetch
+
+
+async def test_the_daily_job_is_registered_at_every_start(daily):
+    for _ in range(2):
+        jobs, _ = await start_and_stop(daily())
+        assert [(j.job_id, j.hour, j.minute) for j in jobs] == [(DAILY_FETCH_JOB_ID, DAILY_FETCH_HOUR, 0)]
+
+
+async def test_after_a_restart_the_job_fetches_feeds_read_from_the_database(db_session, daily, selected):
+    """The feed is created while the API is down. The new start-up registers the job again, and the job
+    finds the feed in the database: nothing about the feed was kept in the scheduler."""
+    from apps.api.main import app
+
+    await start_and_stop(daily())
+    req, feed = selected()
+    app.state.daily_fetch = daily()
+    try:
+        async with running_app():
+            app.state.scheduler.run_now(DAILY_FETCH_JOB_ID)
+    finally:
+        del app.state.daily_fetch
+    assert SourceFetchRepository(db_session).latest(feed.id).outcome == "fetched"
+    assert RequirementRepository(db_session).get(req.id).status == "onboarding"
+
+
+def test_the_job_fetches_every_feed_with_a_source(db_session, daily, selected):
+    _, feed = selected()
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    assert len(SourceFetchRepository(db_session).list_for_feed(feed.id)) == 1
+
+
+def test_one_failing_feed_does_not_stop_the_others(db_session, daily, selected, sources):
+    """An unexpected error in one feed is rolled back and reported; the next feed is still fetched."""
+    from core.repositories.feeds import FeedRepository
+
+    FeedRepository(db_session).create_candidate(
+        code="syn_broken", name="Broken", source_code="syn_broken", connector="http",
+        source_ref="http://127.0.0.1:9/x.csv",
+    )
+    _, feed = selected()
+
+    def factory(name):
+        if name == "http":
+            raise RuntimeError("connector cannot be built")
+        return LocalFileConnector(sources)
+
+    assert daily(factory).run() == {"syn_broken": "error: connector cannot be built", "syn_exchange_volumes": "fetched"}
+    assert SourceFetchRepository(db_session).latest(feed.id).outcome == "fetched"
+
+
+async def test_a_stub_scheduler_gets_no_job(daily, monkeypatch):
+    from apps.api import main
+    from ports.scheduler.azure_functions import AzureFunctionsScheduler
+
+    monkeypatch.setattr(main, "get_scheduler", lambda settings: AzureFunctionsScheduler())
+    jobs_seen = []
+    main.app.state.daily_fetch = daily()
+    try:
+        async with running_app():
+            jobs_seen.append(main.app.state.scheduler)
+    finally:
+        del main.app.state.daily_fetch
+    assert getattr(jobs_seen[0], "is_stub", False)

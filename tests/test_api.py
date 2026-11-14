@@ -128,7 +128,8 @@ async def test_me_without_valid_user_is_401(client, headers):
     assert (await client.get("/api/me", headers=headers)).status_code == 401
 
 
-async def test_scheduler_runs_with_the_api_and_has_no_jobs(client):
+async def test_scheduler_runs_with_the_api_and_holds_only_the_daily_fetch(client):
+    """Phase 0 started with no jobs; phase 3 registers the one daily fetch at every start-up."""
     scheduler = app.state.scheduler
     assert scheduler.name == "local"
-    assert scheduler.list_jobs() == []
+    assert [job.job_id for job in scheduler.list_jobs()] == ["daily-source-fetch"]
