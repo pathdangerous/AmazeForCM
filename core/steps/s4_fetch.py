@@ -33,8 +33,10 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.steps.release import release_source
 from core.steps.result import StepResult
 from ports.connectors.base import SourceConnector, SourceUnavailable
+from ports.connectors.catalogue import SourceCatalogue
 from ports.notify.base import Notifier
 from ports.storage.base import BlobStore
 
@@ -55,6 +57,7 @@ class SourceDown(StepResult):
     feed_code: str
     fetch_id: UUID
     detail: str
+    released: list[UUID] = []  # 3b: requirements the N-day rule released (usually none)
 
 
 FetchResult = Annotated[Fetched | SourceDown, Field(discriminator="outcome")]
@@ -66,9 +69,35 @@ def blob_key(feed_code: str, day: date, fetch_id: UUID, filename: str) -> str:
     return f"raw/{feed_code}/{day.isoformat()}/{fetch_id}/{safe}"
 
 
+def _release_after_n_days(session: Session, feed_id: UUID, n: int, *, catalogue: SourceCatalogue,
+                          notifier: Notifier, backend_team: Sequence[str]) -> list[UUID]:
+    """Per requirement: failed days since the later of its selection and the feed's last fetched.
+    Only source_selected requirements: an onboarding one already has its file (assumption 51)."""
+    choices, fetches, requirements = (SourceChoiceRepository(session), SourceFetchRepository(session),
+                                      RequirementRepository(session))
+    last_fetched = fetches.latest_fetched(feed_id)
+    released = []
+    for requirement_id in choices.requirements_selecting(feed_id):
+        if requirements.get(requirement_id).status != "source_selected":
+            continue
+        since = choices.current(requirement_id).created_at
+        if last_fetched is not None and last_fetched.created_at > since:
+            since = last_fetched.created_at
+        if fetches.failed_days_since(feed_id, since) >= n:
+            release_source(session, requirement_id=requirement_id, reason="source_down_n_days", user=None,
+                           catalogue=catalogue, notifier=notifier, backend_team=backend_team)
+            released.append(requirement_id)
+    return released
+
+
 def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
                  blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
-                 today: date | None = None) -> Fetched | SourceDown:
+                 today: date | None = None, release_after_days: int | None = None,
+                 catalogue: SourceCatalogue | None = None) -> Fetched | SourceDown:
+    """release_after_days (with catalogue): after a source_down, release every requirement that is
+    source_selected on this feed and has failed that many UTC days in a row (assumption 51). None: no rule."""
+    if release_after_days is not None and (release_after_days < 1 or catalogue is None):
+        raise ValueError("release_after_days is at least 1 and needs the catalogue")
     feed = FeedRepository(session).get(feed_id)
     if feed.connector is None or feed.source_ref is None:
         raise FeedHasNoSource(f"Feed {feed.code!r} has no connector; there is nothing to fetch")
@@ -97,7 +126,11 @@ def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable
         if previous is None or previous.outcome == "fetched":
             tell(f"Source down: {feed.code}", f"The source of feed {feed.code} did not answer: {detail}. "
                                               "Amaze tries again every day.")
-        return SourceDown(feed_code=feed.code, fetch_id=fetch_id, detail=detail)
+        released = []
+        if release_after_days is not None:
+            released = _release_after_n_days(session, feed.id, release_after_days, catalogue=catalogue,
+                                             notifier=notifier, backend_team=backend_team)
+        return SourceDown(feed_code=feed.code, fetch_id=fetch_id, detail=detail, released=released)
 
     key = blob_key(feed.code, day, fetch_id, file.filename)
     blob_store.put(key, file.content)

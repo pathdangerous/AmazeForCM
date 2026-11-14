@@ -74,13 +74,20 @@ def test_one_feed_per_source(repo):
         repo.create_candidate(code="feed_b", name="Feed B", **SOURCE)
 
 
-def test_list_with_source_skips_feeds_without_a_connector_and_rejected_feeds(repo, db_session):
-    with_source = repo.create_candidate(code="feed_a", name="Feed A", **SOURCE)
-    repo.create_candidate(code="feed_b", name="Feed B")
+def test_list_to_fetch_skips_feeds_without_a_connector_and_rejected_feeds(repo, db_session):
+    """Registered feeds, so a requirement's selection plays no part here (test_jobs.py covers it; Q4)."""
+    with_source = repo.register(repo.create_candidate(code="feed_a", name="Feed A", **SOURCE).id,
+                                owner_id="dev-data-owner")
+    repo.register(repo.create_candidate(code="feed_b", name="Feed B").id, owner_id="dev-data-owner")
     rejected = repo.create_candidate(code="feed_c", name="Feed C", **{**SOURCE, "source_code": "syn_other"})
     db_session.execute(text("UPDATE feeds SET stage = 'rejected' WHERE id = :id"), {"id": rejected.id})
     db_session.expire_all()
-    assert [f.id for f in repo.list_with_source()] == [with_source.id]
+    assert [f.id for f in repo.list_to_fetch()] == [with_source.id]
+
+
+def test_list_to_fetch_leaves_out_a_candidate_feed_no_requirement_selects(repo):
+    repo.create_candidate(code="feed_a", name="Feed A", **SOURCE)
+    assert repo.list_to_fetch() == []
 
 
 @pytest.mark.parametrize(

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from core.domain.feed import Feed, FeedDraft, FeedStage
@@ -19,7 +19,7 @@ from core.repositories.errors import (
     RequirementNotFound,
 )
 from core.repositories.tables import FeedRow as Row
-from core.repositories.tables import RequirementRow
+from core.repositories.tables import RequirementRow, SourceChoiceRow
 
 
 class FeedRepository:
@@ -47,11 +47,23 @@ class FeedRepository:
         row = self._session.scalars(select(Row).where(Row.source_code == source_code)).one_or_none()
         return None if row is None else Feed.model_validate(row)
 
-    def list_with_source(self) -> list[Feed]:
-        """Feeds the daily job fetches: they have a connector and are not rejected. Oldest first."""
+    def list_to_fetch(self) -> list[Feed]:
+        """Feeds the daily job fetches (phase 3 plan, assumption 54, as changed by Q4): a connector, not
+        rejected, and either registered or currently selected by some requirement (its highest
+        source_choices version is a selection of the feed). A candidate feed every requirement released
+        is idle. Oldest first."""
+        latest = (select(SourceChoiceRow.requirement_id, func.max(SourceChoiceRow.version).label("version"))
+                  .group_by(SourceChoiceRow.requirement_id).subquery())
+        selected = (
+            select(SourceChoiceRow.id)
+            .join(latest, (latest.c.requirement_id == SourceChoiceRow.requirement_id)
+                  & (latest.c.version == SourceChoiceRow.version))
+            .where(SourceChoiceRow.feed_id == Row.id, SourceChoiceRow.action == "selected")
+            .exists()
+        )
         query = (
             select(Row)
-            .where(Row.connector.is_not(None), Row.stage != "rejected")
+            .where(Row.connector.is_not(None), Row.stage != "rejected", or_(Row.stage == "registered", selected))
             .order_by(Row.created_at, Row.id)
         )
         return [Feed.model_validate(r) for r in self._session.scalars(query)]

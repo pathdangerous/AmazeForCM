@@ -22,6 +22,7 @@ from core.repositories.feeds import FeedRepository
 from core.steps.s4_fetch import fetch_source
 from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
+from ports.connectors.catalogue import SourceCatalogue
 from ports.identity import Identity
 from ports.notify import get_notifier
 from ports.notify.inapp import InAppNotifier
@@ -43,6 +44,9 @@ class DailyFetch:
     connector_factory: Callable[[str], SourceConnector]
     backend_team: Callable[[], Sequence[str]]
     settings: Settings | None = None  # selects the notifier; None means in-app
+    # 3b: release after N failed days (SOURCE_DOWN_RELEASE_DAYS). None means no catalogue: no release.
+    catalogue: SourceCatalogue | None = None
+    release_after_days: int = 3
 
     @classmethod
     def from_settings(cls, settings: Settings, identity: Identity) -> DailyFetch:
@@ -57,12 +61,15 @@ class DailyFetch:
             connector_factory=lambda name: get_connector(name, settings),
             backend_team=lambda: [u.id for u in identity.list_users() if "backend_team" in u.roles],
             settings=settings,
+            catalogue=SourceCatalogue.load(settings.source_catalogue, settings.allowed_source_hosts()),
+            release_after_days=settings.source_down_release_days,
         )
 
     def run(self, today: date | None = None) -> dict[str, str]:
-        """Fetch every feed with a source. Returns feed code -> outcome, or "error: ..." for that feed."""
+        """Fetch every registered feed, and every candidate feed a requirement currently selects (Q4).
+        Returns feed code -> outcome, or "error: ..." for that feed."""
         with self.session_factory() as session:
-            feeds = [(f.id, f.code) for f in FeedRepository(session).list_with_source()]
+            feeds = [(f.id, f.code) for f in FeedRepository(session).list_to_fetch()]
         results: dict[str, str] = {}
         for feed_id, code in feeds:
             with self.session_factory() as session:
@@ -71,7 +78,8 @@ class DailyFetch:
                     result = fetch_source(
                         session, feed_id=feed_id, connector_factory=self.connector_factory,
                         blob_store=self.blob_store, notifier=notifier, backend_team=self.backend_team(),
-                        today=today,
+                        today=today, catalogue=self.catalogue,
+                        release_after_days=self.release_after_days if self.catalogue else None,
                     )
                     session.commit()
                     results[code] = result.outcome

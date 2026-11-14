@@ -9,7 +9,7 @@ Outcomes (CLAUDE.md): fetched; source_down. Phase 3 plan, assumptions 10 to 15 a
 - the connector is always closed.
 """
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from sqlalchemy import text
@@ -189,6 +189,119 @@ def test_a_fetch_moves_only_requirements_that_currently_select_the_feed(db_sessi
     put_file(sources)
     assert fetch(feed).requirements_onboarding == [first.id]
     assert (status(db_session, first), status(db_session, moved_on)) == ("onboarding", "source_selected")
+
+
+# ---------------------------------------------------------------- 3b: release after N failed days (assumption 51)
+
+
+def ago(days, hour=None):
+    """A moment `days` ago (UTC), or that day at `hour`:00 UTC."""
+    from datetime import timedelta
+
+    moment = datetime.now(UTC) - timedelta(days=days)
+    return moment if hour is None else moment.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+def the_feed(db_session):
+    feeds = FeedRepository(db_session)
+    return feeds.get_by_source("syn_exchange_volumes") or feeds.create_candidate(
+        code="syn_exchange_volumes", name="Exchange daily volumes", source_code="syn_exchange_volumes",
+        connector="local_file", source_ref="files/exchange_volumes.csv")
+
+
+def selected_days_ago(db_session, requirement, days, title="volume"):
+    """A requirement whose known-source selection of syn_exchange_volumes was made `days` ago. Inserting
+    rows with a past created_at is allowed on an append-only table; nothing is updated in it."""
+    from sqlalchemy import text
+
+    req, feed = requirement(title), the_feed(db_session)
+    db_session.execute(text(
+        "INSERT INTO source_choices (requirement_id, version, action, feed_id, source_code, basis, created_at) "
+        "VALUES (:r, 1, 'selected', :f, 'syn_exchange_volumes', 'known_source', :at)"),
+        {"r": req.id, "f": feed.id, "at": ago(days)})
+    db_session.execute(text("UPDATE requirements SET status = 'source_selected' WHERE id = :id"), {"id": req.id})
+    db_session.expire_all()
+    return req, feed
+
+
+def past_fetch(db_session, feed, at, outcome="source_down"):
+    from sqlalchemy import text
+
+    values = {"blob_ref": "raw/x/old.csv", "size": 10, "detail": None} if outcome == "fetched" else \
+        {"blob_ref": None, "size": None, "detail": "not answering"}
+    db_session.execute(text(
+        "INSERT INTO source_fetches (feed_id, outcome, blob_ref, size_bytes, detail, created_at) "
+        "VALUES (:f, :o, :blob_ref, :size, :detail, :at)"), {"f": feed.id, "o": outcome, "at": at, **values})
+
+
+def fetch_with_rule(db_session, sources, blobs, feed, n):
+    return fetch_source(db_session, feed_id=feed.id, connector_factory=lambda name: LocalFileConnector(sources),
+                        blob_store=blobs, notifier=InAppNotifier(db_session), backend_team=TEAM, today=DAY,
+                        release_after_days=n, catalogue=CATALOGUE)
+
+
+def test_released_after_n_failed_days_in_a_row(db_session, requirement, sources, blobs):
+    req, feed = selected_days_ago(db_session, requirement, 10)
+    past_fetch(db_session, feed, ago(2))
+    result = fetch_with_rule(db_session, sources, blobs, feed, 3)  # day 2 of 3: waits
+    assert isinstance(result, SourceDown) and result.released == []
+    past_fetch(db_session, feed, ago(1))  # the history now reads: 2 days ago, 1 day ago, today (twice)
+    result = fetch_with_rule(db_session, sources, blobs, feed, 3)
+    assert result.released == [req.id]
+    assert status(db_session, req) == "no_source_found"  # a known source: nothing else is listed
+    from core.repositories.source_choices import SourceChoiceRepository
+
+    choice = SourceChoiceRepository(db_session).current(req.id)
+    assert (choice.action, choice.reason, choice.decided_by) == ("released", "source_down_n_days", None)
+    assert "Source released: syn_exchange_volumes" in inbox(db_session)
+
+
+def test_two_failures_on_one_day_count_as_one_day(db_session, requirement, sources, blobs):
+    req, feed = selected_days_ago(db_session, requirement, 10)
+    past_fetch(db_session, feed, ago(1, hour=1))
+    past_fetch(db_session, feed, ago(1, hour=2))  # yesterday, twice: one day
+    result = fetch_with_rule(db_session, sources, blobs, feed, 3)  # yesterday and today: 2 of 3
+    assert result.released == [] and status(db_session, req) == "source_selected"
+
+
+def test_a_fetched_day_starts_the_count_again(db_session, requirement, sources, blobs):
+    req, feed = selected_days_ago(db_session, requirement, 10)
+    for days, outcome in ((4, "source_down"), (3, "source_down"), (2, "fetched"), (1, "source_down")):
+        past_fetch(db_session, feed, ago(days), outcome)
+    result = fetch_with_rule(db_session, sources, blobs, feed, 3)  # since the fetched: 1 day ago and today
+    assert result.released == [] and status(db_session, req) == "source_selected"
+
+
+def test_days_before_the_selection_do_not_count(db_session, requirement, sources, blobs):
+    """A requirement that selects a source that is already down gets its own N days."""
+    feed = the_feed(db_session)
+    for days in (4, 3, 2):
+        past_fetch(db_session, feed, ago(days))
+    req, feed = selected_days_ago(db_session, requirement, 1.5)
+    result = fetch_with_rule(db_session, sources, blobs, feed, 2)  # since the selection: today only
+    assert result.released == [] and status(db_session, req) == "source_selected"
+
+
+def test_n_is_the_setting(db_session, requirement, sources, blobs):
+    from apps.api.jobs import DailyFetch
+    from ports.config import Settings
+    from ports.identity.dev import DevIdentity
+
+    daily = DailyFetch.from_settings(Settings(_env_file=None, source_down_release_days=5), DevIdentity())
+    assert daily.release_after_days == 5
+    assert DailyFetch.from_settings(Settings(_env_file=None), DevIdentity()).release_after_days == 3
+    req, feed = selected_days_ago(db_session, requirement, 10)
+    assert fetch_with_rule(db_session, sources, blobs, feed, 1).released == [req.id]  # N=1: the first failed day
+
+
+def test_an_onboarding_requirement_is_never_released(db_session, selected, sources, blobs):
+    """Its file is already with step 02; a feed that stops answering later is a late delivery (phase 7)."""
+    req, feed = selected
+    put_file(sources)
+    fetch_with_rule(db_session, sources, blobs, feed, 1)
+    remove_file(sources)
+    assert fetch_with_rule(db_session, sources, blobs, feed, 1).released == []
+    assert status(db_session, req) == "onboarding"
 
 
 class SpyConnector:

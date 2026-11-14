@@ -105,10 +105,12 @@ def test_one_failing_feed_does_not_stop_the_others(db_session, daily, selected, 
     """An unexpected error in one feed is rolled back and reported; the next feed is still fetched."""
     from core.repositories.feeds import FeedRepository
 
-    FeedRepository(db_session).create_candidate(
+    feeds = FeedRepository(db_session)
+    broken = feeds.create_candidate(
         code="syn_broken", name="Broken", source_code="syn_broken", connector="http",
         source_ref="http://127.0.0.1:9/x.csv",
     )
+    feeds.register(broken.id, owner_id="dev-data-owner")  # 3b, Q4: registered, so fetched with no selection
     _, feed = selected()
 
     def factory(name):
@@ -133,3 +135,45 @@ async def test_a_stub_scheduler_gets_no_job(daily, monkeypatch):
     finally:
         del main.app.state.daily_fetch
     assert getattr(jobs_seen[0], "is_stub", False)
+
+
+# ---------------------------------------------------------------- 3b: which feeds the job fetches (Q4, assumption 54)
+
+
+def test_the_job_always_fetches_a_registered_feed(db_session, daily):
+    """A registered feed is a regular feed: fetched though no requirement selects it."""
+    from core.repositories.feeds import FeedRepository
+
+    feeds = FeedRepository(db_session)
+    feed = feeds.create_candidate(code="syn_exchange_volumes", name="Exchange daily volumes",
+                                  source_code="syn_exchange_volumes", connector="local_file",
+                                  source_ref="files/exchange_volumes.csv")
+    feeds.register(feed.id, owner_id="dev-data-owner")
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+
+
+def test_the_job_skips_a_candidate_feed_that_no_requirement_selects(db_session, daily, selected):
+    """Every requirement released it: the candidate feed is idle, so no more failures or notifications."""
+    from core.repositories.source_choices import SourceChoiceRepository
+
+    req, feed = selected()
+    SourceChoiceRepository(db_session).record_release(requirement_id=req.id, reason="requester_asked",
+                                                      decided_by="dev-requester")
+    RequirementRepository(db_session).advance(req.id, "no_source_found")
+    assert daily().run() == {}
+    assert SourceFetchRepository(db_session).list_for_feed(feed.id) == []
+
+
+def test_a_new_selection_wakes_the_feed(db_session, daily, selected):
+    from core.repositories.source_choices import SourceChoiceRepository
+
+    first, feed = selected("first")
+    SourceChoiceRepository(db_session).record_release(requirement_id=first.id, reason="requester_asked",
+                                                      decided_by="dev-requester")
+    RequirementRepository(db_session).advance(first.id, "no_source_found")
+    assert daily().run() == {}
+    second, same_feed = selected("second")
+    assert same_feed.id == feed.id
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    assert RequirementRepository(db_session).get(second.id).status == "onboarding"
+    assert RequirementRepository(db_session).get(first.id).status == "no_source_found"

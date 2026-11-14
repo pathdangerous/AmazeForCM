@@ -7,10 +7,11 @@ raw/<feed>/<date>/<fetch id>/<file> can be built before the row is written.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.domain.sourcing import SourceFetch, SourceFetchDraft
@@ -42,6 +43,14 @@ class SourceFetchRepository:
 
     def latest_fetched(self, feed_id: UUID) -> SourceFetch | None:
         return self._first(select(Row).where(Row.feed_id == feed_id, Row.outcome == "fetched"))
+
+    def failed_days_since(self, feed_id: UUID, since: datetime) -> int:
+        """The UTC dates with a source_down fetch of this feed after `since`. Two failures on one day
+        count as one (phase 3 plan, assumption 51)."""
+        day = func.date(func.timezone("UTC", Row.created_at))
+        query = select(func.count(func.distinct(day))).where(
+            Row.feed_id == feed_id, Row.outcome == "source_down", Row.created_at > since)
+        return self._session.scalar(query) or 0
 
     def _first(self, query) -> SourceFetch | None:
         row = self._session.scalars(query.order_by(Row.created_at.desc(), Row.id).limit(1)).first()

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterable, Literal, get_args
 
 from dotenv import dotenv_values
-from pydantic import ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # connector may reach (comma-separated). This machine only until the Azure move.
     source_catalogue: Path = REPO_ROOT / "fixtures" / "sources" / "catalogue.json"
     source_http_allowed_hosts: str = "127.0.0.1,localhost"
+    # Phase 3b: a selected source that did not answer on this many UTC days in a row is released.
+    source_down_release_days: int = Field(default=3, ge=1)
 
     @field_validator("source_catalogue")
     @classmethod

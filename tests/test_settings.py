@@ -58,3 +58,21 @@ def test_unknown_selector_value_names_variable_and_allowed_values(tmp_path, monk
     assert key in message
     assert "not_a_real_adapter" in message
     assert SELECTORS[key] in message  # the local value is always among the allowed values
+
+
+# ---- phase 3b: release after N failed days (assumption 51)
+
+
+@pytest.mark.parametrize("value, expected", [(None, 3), ("1", 1), ("7", 7)])
+def test_source_down_release_days_is_a_whole_number_of_at_least_one(tmp_path, monkeypatch, value, expected):
+    monkeypatch.delenv("SOURCE_DOWN_RELEASE_DAYS", raising=False)
+    if value is not None:
+        monkeypatch.setenv("SOURCE_DOWN_RELEASE_DAYS", value)
+    assert load_settings(tmp_path / "missing.env").source_down_release_days == expected
+
+
+@pytest.mark.parametrize("bad", ["0", "-2", "2.5", "three"])
+def test_a_bad_source_down_release_days_is_refused_by_name(tmp_path, monkeypatch, bad):
+    monkeypatch.setenv("SOURCE_DOWN_RELEASE_DAYS", bad)
+    with pytest.raises(ConfigError, match="SOURCE_DOWN_RELEASE_DAYS"):
+        load_settings(tmp_path / "missing.env")
