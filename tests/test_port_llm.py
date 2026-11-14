@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from ports.llm.base import LLMResult, Message
-from ports.llm.mock import MockFixtureMissing, MockProvider
+from ports.llm.mock import MockFixtureMissing, MockInputMissing, MockProvider
 
 
 class SmokeOutput(BaseModel):
@@ -75,3 +75,47 @@ def test_prompt_id_and_version_cannot_leave_fixture_folder(bad):
 def test_result_serialises_the_real_output_fields():
     dumped = json.loads(_complete(MockProvider()).model_dump_json())
     assert set(dumped["output"]) == {"summary", "confidence"}
+
+
+# ---------------------------------------------------------------- phase 3b: rules (assumption 25)
+
+
+class Suggestions(BaseModel):
+    suggestions: list[dict]
+
+
+def _assist_messages(term):
+    data = {"query": term, "unmatched_terms": [term],
+            "glossary": [{"key": "close_price", "name": "Close price", "aliases": ["closing_price"]}]}
+    return [Message(role="system", content="s"),
+            Message(role="user", content="Suggest.\n\n```json\n" + json.dumps(data) + "\n```\n")]
+
+
+def test_a_prompt_with_a_rule_is_answered_from_the_input_block(tmp_path):
+    provider = MockProvider(fixtures_root=tmp_path)  # no fixture exists: the rule answers
+    result = _complete(provider, schema=Suggestions, prompt_id="discovery_assistant",
+                       messages=_assist_messages("closing prices"))
+    assert [s["element_key"] for s in result.output.suggestions] == ["close_price"]
+    assert (result.provider, result.prompt_id, result.prompt_version) == ("mock", "discovery_assistant", "v1")
+
+
+def test_a_rule_depends_on_the_input_and_on_nothing_else():
+    provider = MockProvider()
+    first = _complete(provider, schema=Suggestions, prompt_id="discovery_assistant",
+                      messages=_assist_messages("closing prices"))
+    assert first == _complete(MockProvider(), schema=Suggestions, prompt_id="discovery_assistant",
+                              messages=_assist_messages("closing prices"))
+    other = _complete(provider, schema=Suggestions, prompt_id="discovery_assistant",
+                      messages=_assist_messages("weather"))
+    assert other.output.suggestions == []
+
+
+def test_a_rule_prompt_without_an_input_block_is_an_error():
+    with pytest.raises(MockInputMissing):
+        _complete(MockProvider(), schema=Suggestions, prompt_id="discovery_assistant", messages=MESSAGES)
+
+
+def test_a_rule_output_is_validated_against_the_response_schema():
+    with pytest.raises(ValidationError):
+        _complete(MockProvider(), schema=NeedsAnotherField, prompt_id="discovery_assistant",
+                  messages=_assist_messages("closing prices"))
