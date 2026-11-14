@@ -625,4 +625,30 @@ Notes only; nothing here is built in phase 3.
 
 ## 17. Results and deviations (recorded during implementation)
 
-Nothing yet.
+### Tasks 1 to 3 (checkpoint 1)
+
+Tests: 632 at the start, 738 at checkpoint 1. All pass, none skipped, no warnings.
+
+**A bug the tests caught in `0008` before it was applied.** The first `source_fetches` checks let a `source_down` row with no reason and a `fetched` row with no size through. `length(btrim(NULL)) > 0` and `NULL > 0` are NULL, and a check that evaluates to NULL passes. Both checks now spell out `IS NOT NULL`, and a raw-SQL test covers the NULL size. Phase 2's `btrim` checks were reviewed: all are on NOT NULL columns.
+
+**Two test mistakes, fixed:**
+- a row with only a connector breaks two feed checks, and PostgreSQL reports one of them;
+- a `rollback()` inside a test undid the test's own setup.
+
+**Deviations from the plan:**
+
+1. **`set_status()` was removed in task 1**, with its tests rewritten against the transition table (change 4). `test_every_move_not_in_the_table_is_refused` runs 34 moves; `test_every_move_in_the_table_is_allowed` runs the 2 moves.
+2. **`UnknownSource` lives in `ports/connectors/catalogue.py`**, next to the catalogue, not in `core/repositories/errors.py`: `ports` does not import `core`. `SourceConditions` is there too; `core/domain/sourcing.py` imports it.
+3. **Source codes must start with `syn_`.** The loader refuses any other, as the demo seed does with `demo_` (rule 6).
+4. **Two named errors beyond the plan:** `DuplicateFeedSource` (one feed per source) and `RequirementAlreadyHasSource` (one choice per requirement).
+5. **`find_known_source()` checks for status `defined` itself**, so a `no_known_source` on a requirement that has moved on is refused too, not only a move that `advance()` would refuse.
+
+**Application database:**
+
+```
+alembic upgrade head     Running upgrade 0007 -> 0008     exit 0
+alembic current          0008 (head)
+python -m core.seed      glossary seed: 0 inserted, 33 already present
+```
+
+The 4 new triggers are present: `source_choices` and `source_fetches` each have `append_only` and `no_truncate`. `feeds` has its 3 new checks and `uq_feeds_source_code`. The 4 requirements are still `defined`. No constraint name repeats its prefix.

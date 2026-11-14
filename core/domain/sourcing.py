@@ -14,6 +14,24 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.domain.common import NonBlank
+from ports.connectors.catalogue import SourceConditions, SourceEntry
+
+
+class SourceSummary(BaseModel):
+    """A catalogue source as shown to the requester: who provides it and its conditions of use."""
+
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    name: str
+    provider: str
+    visibility: str
+    conditions: SourceConditions
+
+    @classmethod
+    def of(cls, entry: SourceEntry) -> SourceSummary:
+        return cls(code=entry.code, name=entry.name, provider=entry.provider, visibility=entry.visibility,
+                   conditions=entry.conditions)
 
 ChoiceBasis = Literal["known_source"]
 CHOICE_BASES: tuple[str, ...] = get_args(ChoiceBasis)

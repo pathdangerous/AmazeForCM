@@ -107,6 +107,26 @@ def test_step_01_results_round_trip():
                 ElementNotInGlossary(requirement=requirement, terms=["esg score"], notified=[]))
 
 
+# ---- phase 3a: Known source? (task 3)
+
+
+def test_known_source_outcomes_are_claude_mds():
+    from core.steps.known_source import KnownSourceResult
+
+    assert union_outcomes(KnownSourceResult) == claude_md_outcomes("Known source?")
+
+
+def test_known_source_results_round_trip():
+    from core.domain.sourcing import SourceSummary
+    from core.steps.known_source import KnownSource, KnownSourceResult, NoKnownSource
+    from ports.connectors.catalogue import SourceConditions
+
+    source = SourceSummary(code="syn_x", name="X", provider="Synthetic", visibility="public",
+                           conditions=SourceConditions(licence="L", permitted_use="U", redistribution="R"))
+    round_trips(KnownSourceResult, KnownSource(source=source))
+    round_trips(KnownSourceResult, NoKnownSource(reason="terms_ticked"))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str
