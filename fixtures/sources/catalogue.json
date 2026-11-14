@@ -1,0 +1,46 @@
+{
+  "description": "Synthetic source catalogue for the Amaze for CM PoC custom data product (phase 3). Every source, provider and file is invented. Codes start with syn_. No real vendor, exchange or client.",
+  "sources": [
+    {"code": "syn_exchange_volumes", "name": "Exchange daily volumes", "provider": "Synthetic Exchange Group",
+     "description": "Daily traded volume per instrument, published by a synthetic exchange.",
+     "visibility": "public", "channel": "exchanges", "known": true,
+     "conditions": {"licence": "Synthetic exchange data licence", "permitted_use": "Internal analysis and reporting",
+                    "redistribution": "Not allowed outside the firm", "external_approvals": []},
+     "elements": ["instrument_id", "price_date", "volume"], "other_fields": [],
+     "connector": "local_file", "source_ref": "files/exchange_volumes.csv"},
+
+    {"code": "syn_offline_accruals", "name": "Accrued interest feed", "provider": "Synthetic Settlement House",
+     "description": "Daily accrued interest per debt instrument. Its sample file is missing on purpose, so a fetch gives source_down.",
+     "visibility": "public", "channel": "exchanges", "known": true,
+     "conditions": {"licence": "Synthetic settlement data licence", "permitted_use": "Internal valuation",
+                    "redistribution": "Not allowed", "external_approvals": []},
+     "elements": ["instrument_id", "price_date", "accrued_interest"], "other_fields": [],
+     "connector": "local_file", "source_ref": "files/offline_accruals.csv"},
+
+    {"code": "syn_vendor_eod_prices", "name": "Vendor end-of-day prices", "provider": "Synthetic Market Data Ltd",
+     "description": "Open, high, low and close prices and volume per instrument and business day.",
+     "visibility": "public", "channel": "market_data_vendors", "known": false,
+     "conditions": {"licence": "Synthetic vendor licence, per user", "permitted_use": "Internal analysis only; no client reporting",
+                    "redistribution": "Not allowed",
+                    "external_approvals": ["A signed data agreement with the vendor, held by your desk"]},
+     "elements": ["instrument_id", "price_date", "open_price", "high_price", "low_price", "close_price", "volume"],
+     "other_fields": [],
+     "connector": "local_file", "source_ref": "files/vendor_eod_prices.csv"},
+
+    {"code": "syn_open_esg_scores", "name": "Open ESG scores", "provider": "Synthetic Open Data Foundation",
+     "description": "A yearly sustainability score per instrument, published as open data.",
+     "visibility": "public", "channel": "public_websites", "known": false,
+     "conditions": {"licence": "Synthetic open data licence", "permitted_use": "Any use, with attribution",
+                    "redistribution": "Allowed with attribution", "external_approvals": []},
+     "elements": ["instrument_id"], "other_fields": ["esg score"],
+     "connector": "local_file", "source_ref": "files/open_esg_scores.csv"},
+
+    {"code": "syn_internal_desk_marks", "name": "Desk end-of-day marks", "provider": "Synthetic trading desk",
+     "description": "Mid prices the desk marks each evening, from an internal system.",
+     "visibility": "private", "channel": "internal_systems", "known": false,
+     "conditions": {"licence": "Internal data, no licence", "permitted_use": "Internal risk and valuation",
+                    "redistribution": "Not allowed", "external_approvals": []},
+     "elements": ["instrument_id", "price_date", "mid_price"], "other_fields": [],
+     "connector": "local_file", "source_ref": "files/internal_desk_marks.csv"}
+  ]
+}

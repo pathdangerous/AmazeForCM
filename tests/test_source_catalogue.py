@@ -1,0 +1,109 @@
+"""The synthetic source catalogue (fixtures/sources/catalogue.json) and its loader
+(ports/connectors/catalogue.py). Phase 3 plan, assumptions 6, 7, 15, 16 and 46; section 8.
+
+Synthetic data only (rule 6): codes start with syn_, providers are invented, and the catalogue and
+every sample file pass the glossary seed's real-data checks.
+"""
+
+import json
+
+import pytest
+from pydantic import ValidationError
+
+from core.seed import load_seed_elements
+from ports.config import REPO_ROOT, Settings
+from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue, UnknownSource
+from tests.test_glossary_seed import _strings, find_real_data
+
+SOURCES = REPO_ROOT / "fixtures" / "sources"
+ENTRY = {
+    "code": "syn_x", "name": "X", "provider": "Synthetic provider", "description": "Synthetic.",
+    "visibility": "public", "channel": "exchanges", "known": False,
+    "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal analysis",
+                   "redistribution": "Not allowed", "external_approvals": []},
+    "elements": ["volume"], "other_fields": [], "connector": "local_file", "source_ref": "files/x.csv",
+}
+
+
+def write(tmp_path, *entries):
+    path = tmp_path / "catalogue.json"
+    path.write_text(json.dumps({"sources": list(entries)}), encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def catalogue():
+    return SourceCatalogue.load(DEFAULT_CATALOGUE)
+
+
+def test_the_five_synthetic_sources(catalogue):
+    assert [s.code for s in catalogue.entries] == [
+        "syn_exchange_volumes", "syn_offline_accruals", "syn_vendor_eod_prices", "syn_open_esg_scores",
+        "syn_internal_desk_marks",
+    ]
+    assert [s.code for s in catalogue.known()] == ["syn_exchange_volumes", "syn_offline_accruals"]
+    assert catalogue.get("syn_vendor_eod_prices").conditions.external_approvals == [
+        "A signed data agreement with the vendor, held by your desk",
+    ]
+    assert all(s.connector == "local_file" for s in catalogue.entries)  # assumption 16
+
+
+def test_every_element_is_in_the_glossary_seed(catalogue):
+    keys = {e["key"] for e in load_seed_elements()}
+    for source in catalogue.entries:
+        assert set(source.elements) <= keys, source.code
+
+
+def test_every_file_exists_except_the_one_missing_on_purpose(catalogue):
+    missing = [s.code for s in catalogue.entries if not (SOURCES / s.source_ref).is_file()]
+    assert missing == ["syn_offline_accruals"]  # row B of the plan: source_down
+
+
+def test_catalogue_and_files_have_no_real_data(catalogue):
+    raw = json.loads(DEFAULT_CATALOGUE.read_text(encoding="utf-8"))
+    assert {s: find_real_data(s) for s in _strings(raw) if find_real_data(s)} == {}
+    for source in catalogue.entries:
+        path = SOURCES / source.source_ref
+        if path.is_file():
+            text = path.read_text(encoding="utf-8")
+            assert find_real_data(text) == [], source.code
+
+
+def test_unknown_source(catalogue):
+    with pytest.raises(UnknownSource, match="syn_nothing"):
+        catalogue.get("syn_nothing")
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"code": "vendor_prices"}, "syn_"),
+        ({"known": True, "conditions": {**ENTRY["conditions"], "external_approvals": ["Sign it"]}},
+         "known source"),
+        ({"connector": "http", "source_ref": "https://example.test/x.csv"}, "not allowed"),
+        ({"connector": "ftp"}, "connector"),
+        ({"visibility": "secret"}, "visibility"),
+        ({"elements": ["Volume"]}, "elements"),
+        ({"elements": [], "other_fields": []}, "at least one"),
+    ],
+)
+def test_the_loader_refuses(tmp_path, change, message):
+    with pytest.raises((ValueError, ValidationError), match=message):
+        SourceCatalogue.load(write(tmp_path, {**ENTRY, **change}))
+
+
+def test_the_loader_refuses_a_code_twice(tmp_path):
+    with pytest.raises(ValueError, match="syn_x"):
+        SourceCatalogue.load(write(tmp_path, ENTRY, ENTRY))
+
+
+def test_an_http_source_on_this_machine_is_accepted(tmp_path):
+    entry = {**ENTRY, "connector": "http", "source_ref": "http://127.0.0.1:8765/x.csv"}
+    assert SourceCatalogue.load(write(tmp_path, entry)).get("syn_x").connector == "http"
+
+
+def test_settings_defaults():
+    settings = Settings(_env_file=None)
+    assert settings.source_catalogue == DEFAULT_CATALOGUE
+    assert settings.allowed_source_hosts() == ("127.0.0.1", "localhost")
+    assert Settings(_env_file=None, source_http_allowed_hosts=" 127.0.0.1 ").allowed_source_hosts() == ("127.0.0.1",)

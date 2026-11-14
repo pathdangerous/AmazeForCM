@@ -1,5 +1,6 @@
-"""Adapter selection. Reads the six *_PROVIDER selectors and LOCAL_BLOB_ROOT from the
-process environment, then from .env in the repository root. The local adapters are the defaults.
+"""Adapter selection. Reads the six *_PROVIDER selectors, LOCAL_BLOB_ROOT, SOURCE_CATALOGUE and
+SOURCE_HTTP_ALLOWED_HOSTS from the process environment, then from .env in the repository root. The
+local adapters are the defaults.
 
 Secrets such as DATABASE_URL are not read here; they go through the Secrets port.
 """
@@ -35,6 +36,13 @@ class Settings(BaseSettings):
     secrets_provider: Literal["env", "key_vault"] = "env"
     notify_provider: Literal["inapp", "email"] = "inapp"
     local_blob_root: Path = Path("./data/blob")
+    # Custom data product (phase 3): the synthetic source catalogue, and the only hosts the HTTP
+    # connector may reach (comma-separated). This machine only until the Azure move.
+    source_catalogue: Path = REPO_ROOT / "fixtures" / "sources" / "catalogue.json"
+    source_http_allowed_hosts: str = "127.0.0.1,localhost"
+
+    def allowed_source_hosts(self) -> tuple[str, ...]:
+        return tuple(h.strip().lower() for h in self.source_http_allowed_hosts.split(",") if h.strip())
 
 
 def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
