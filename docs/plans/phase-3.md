@@ -1,6 +1,6 @@
 # Phase 3 plan — Custom data product ingestion (Known source?, S1–S4, DiscoveryAssistant)
 
-**Status:** approved on 2026-11-14 with four changes: source approval option A (the requester's acceptance is the only approval), a fetch id in the blob key, notifications only on a change, and one transition table for requirement statuses. Those changes are applied below. **3a is built and approved** (checkpoint 3, 2026-11-14; section 17). **The 3b part was updated on 2026-11-14 and awaits your approval:** versioned source choices and release (assumptions 49 to 55), an acceptance that names the conditions (56), commit-visibility tests (57), and a re-check against option A (section 5.6).
+**Status:** approved on 2026-11-14 with four changes: source approval option A (the requester's acceptance is the only approval), a fetch id in the blob key, notifications only on a change, and one transition table for requirement statuses. Those changes are applied below. **3a is built and approved** (checkpoint 3, 2026-11-14; section 17). **The 3b part was approved on 2026-11-14** (versioned source choices and release, assumptions 49 to 55; the acceptance that names the conditions, 56; commit-visibility tests, 57; the option A re-check, section 5.6), with the open questions answered as recommended except Q4, which changed: registered feeds are always fetched (assumption 54).
 **Date:** 2026-11-14. **Branch:** `phase-3`, created from `main` at `cab1a01`. **Scope:** phase 3 of `BUILD_PLAN.md` and its carried items. Local only; nothing is pushed.
 
 **Phase 3 is too big for one build.** This plan covers all of it, so the design is decided once, and splits the work into **3a** (no agent: known source, fetch, scheduler) and **3b** (agents: scope, source list, pick, DiscoveryAssistant). I stop for your approval between them.
@@ -275,7 +275,8 @@
     - This keeps one rule true: a requirement that is `awaiting_source_choice` always has a source to pick. If you want a released requirement to go to `awaiting_source_choice` even with nothing to pick, see open question 1.
 54. **The feed and the daily job after a release.**
     - The feed and its fetch history stay. Nothing is deleted or changed; a release is one new `source_choices` row.
-    - The daily job fetches a feed only while some requirement currently selects it (its highest version is a selection of that feed). A feed that every requirement has released is idle: the job skips it, so it produces no more failures and no more notifications.
+    - **(changed on approval, Q4.)** The daily job always fetches a **registered** feed that has a connector and is not rejected. It fetches a **candidate** feed only while some requirement currently selects it (its highest version is a selection of that feed). A candidate feed that every requirement has released is idle: the job skips it, so it produces no more failures and no more notifications. No feed is registered in phase 3 (registration is phase 4), so in phase 3 the registered case is proved by a test that inserts a registered feed directly.
+    - Tests, one per case: `test_jobs.py::test_the_job_always_fetches_a_registered_feed` (a registered feed with no requirement selecting it is fetched) and `test_jobs.py::test_the_job_skips_a_candidate_feed_that_no_requirement_selects`.
     - A new selection of that source wakes the feed: the same feed is linked again, and the first fetch runs as for any selection.
     - A fetch moves to `onboarding` only the requirements that currently select the feed. A requirement that released it and now waits on another source is not touched.
     - The backend team is told once per release, in-app: "Source released: <feed>", with the requirement and the reason.
@@ -317,11 +318,11 @@
 
 **Open questions on this update (2026-11-14), recommendation first**
 
-1. **Where a released requirement goes when no listed source is left.** Recommended: `no_source_found`, so that `awaiting_source_choice` always has a source to pick (assumption 53). Alternative: always `awaiting_source_choice`, with an empty list and the note box to ask for a new scope.
-2. **N, and how the failed days are counted.** Recommended: default 3, counted per requirement since it selected the source (assumption 51). Alternative: counted per feed, whoever selected it and whenever.
-3. **Known sources and option A.** Recommended: keep 3a as you approved it: a known source is fetched with no acceptance by the requester, because Amaze already holds the agreement (assumption 7). Alternative: the requester accepts a known source's conditions before its first fetch; that changes 3a's flow and adds a wait.
-4. **An idle feed.** Recommended: the daily job skips a feed that no requirement selects (assumption 54). Alternative: keep fetching every feed that has a connector.
-5. **The commit-visibility tests' schema.** Recommended: one schema per test, as today, about 7 to 10 s more (assumption 57). Alternative: one schema per test file, about 2 to 3 s more, with tests that share committed rows.
+1. **Where a released requirement goes when no listed source is left.** Recommended: `no_source_found`, so that `awaiting_source_choice` always has a source to pick (assumption 53). Alternative: always `awaiting_source_choice`, with an empty list and the note box to ask for a new scope. **Answer: as recommended, `no_source_found`.**
+2. **N, and how the failed days are counted.** Recommended: default 3, counted per requirement since it selected the source (assumption 51). Alternative: counted per feed, whoever selected it and whenever. **Answer: as recommended; `SOURCE_DOWN_RELEASE_DAYS` defaults to 3.**
+3. **Known sources and option A.** Recommended: keep 3a as you approved it: a known source is fetched with no acceptance by the requester, because Amaze already holds the agreement (assumption 7). Alternative: the requester accepts a known source's conditions before its first fetch; that changes 3a's flow and adds a wait. **Answer: as recommended; 3a stays.**
+4. **An idle feed.** Recommended: the daily job skips a feed that no requirement selects (assumption 54). Alternative: keep fetching every feed that has a connector. **Answer: changed.** Registered feeds are always fetched; candidate feeds only while a requirement currently selects them (assumption 54).
+5. **The commit-visibility tests' schema.** Recommended: one schema per test, as today, about 7 to 10 s more (assumption 57). Alternative: one schema per test file, about 2 to 3 s more, with tests that share committed rows. **Answer: as recommended, one schema per test.**
 
 ## 5. Steps and typed results
 
@@ -478,7 +479,7 @@ The names are `CLAUDE.md`'s, letter for letter. `test_step_results.py` reads the
 | Versioned choices: the repository | `test_repo_source_choices.py`: `test_current_is_the_highest_version`, `test_history_lists_every_version`, `test_requirements_selecting_a_feed_leaves_out_those_that_released_it` |
 | Release on request | `test_release.py`: `test_the_requester_releases_a_source_that_did_not_answer`, `test_release_goes_to_awaiting_source_choice_when_a_listed_source_is_left`, `test_release_goes_to_no_source_found_when_none_is_left`, `test_only_a_source_selected_requirement_can_be_released`, `test_a_released_source_is_not_listed_or_picked_again`, `test_picking_again_adds_the_next_version`, `test_the_backend_team_is_told_once_per_release` |
 | Release by rule | `test_s4_fetch.py`: `test_released_after_n_failed_days_in_a_row`, `test_two_failures_on_one_day_count_as_one_day`, `test_a_fetched_day_starts_the_count_again`, `test_days_before_the_selection_do_not_count`, `test_n_is_the_setting`, `test_an_onboarding_requirement_is_never_released` |
-| The feed after a release | `test_s4_fetch.py::test_a_fetch_moves_only_requirements_that_currently_select_the_feed`; `test_jobs.py`: `test_the_job_skips_a_feed_that_no_requirement_selects`, `test_a_new_selection_wakes_the_feed` |
+| The feed after a release | `test_s4_fetch.py::test_a_fetch_moves_only_requirements_that_currently_select_the_feed`; `test_jobs.py`: `test_the_job_always_fetches_a_registered_feed`, `test_the_job_skips_a_candidate_feed_that_no_requirement_selects`, `test_a_new_selection_wakes_the_feed` |
 | The acceptance names the conditions (assumption 56) | `test_s3_pick.py`: `test_approval_missing_when_the_conditions_changed_since_the_list`, `test_the_accepted_conditions_are_stored_on_the_choice`, `test_picking_again_needs_a_new_acceptance` |
 | Commit visibility | the seven tests of assumption 57 |
 | The setting | `test_settings.py::test_source_down_release_days_is_a_whole_number_of_at_least_one` |
@@ -559,7 +560,7 @@ No backend role appears in any `required_approver_roles` in 3b, and no Amaze end
 | `FeedRepository` | `create_candidate` takes the source fields; `list_with_source()` | 3a |
 | `SourceChoiceRepository` (new) | `record_known(...)`, `for_requirement(id)`, `requirements_for_feed(feed_id)` | 3a |
 | `SourceChoiceRepository` (3b) | every write takes the next version. `record_pick(...)`, `record_release(...)`; `current(requirement_id)` replaces `for_requirement`; `history(requirement_id)`; `requirements_selecting(feed_id)` replaces `requirements_for_feed`; `released_sources(requirement_id)` | 3b |
-| `FeedRepository` (3b) | `list_to_fetch()` replaces `list_with_source()` in the daily job: feeds with a connector, not rejected, that some requirement currently selects | 3b |
+| `FeedRepository` (3b) | `list_to_fetch()` replaces `list_with_source()` in the daily job: feeds with a connector, not rejected, that are registered or that some requirement currently selects (Q4) | 3b |
 | 3a code that changes in 3b | `select_source` (next version), `fetch_source` (current selections only; the N-day rule), `requirement_page` (current choice; the release messages), `DailyFetch` (`list_to_fetch`, the setting) | 3b |
 | `ports/config.py` (3b) | `SOURCE_DOWN_RELEASE_DAYS` (whole number, at least 1, default 3) | 3b |
 | `SourceFetchRepository` (new) | `record(...)`, `latest(feed_id)`, `latest_fetched(feed_id)` | 3a |
@@ -796,7 +797,7 @@ Then in the browser, signed in as Riley Requester:
 15. **The N-day count reads the dates of the fetch rows.** A day on which the daily job did not run at all (the laptop was off) is not a failed day, so N failed days can take longer than N calendar days.
 16. **With N set to 1, a pick of a source that is down is released in the same request** as its first fetch. The requester sees the release message at once. That is what the setting asks for.
 17. **A released source is closed to that requirement for good**, even if it answers again later. Another requirement can still select it. Reopening it would need a new rule.
-18. **An idle feed is not fetched.** If the backend team wants its data anyway, nothing fetches it until a requirement selects it again.
+18. **An idle candidate feed is not fetched.** If the backend team wants its data anyway, nothing fetches it until a requirement selects it again or it is registered (phase 4). A registered feed is always fetched (Q4).
 19. **"Known source?" is not run again after a release.** A second known source that also declares the data is found only through S1 and S2.
 20. **The accepted conditions are compared as a whole.** A change to a source's wording in the catalogue makes every open list of that source ask for acceptance again. That is intended, but it can surprise.
 21. **Seven more commit-visibility tests add about 7 to 10 seconds** to every test run. If that hurts, the schema can be built once per test file: about 2 to 3 seconds, at the price of tests that share committed rows.
@@ -819,6 +820,7 @@ Notes only; nothing here is built in phase 3.
 2. When a candidate feed is rejected, the known-source check and S2 must skip its source, and the requester must be told. The requirements that select it should be released with a third reason; `0009`'s reason list has only the two of phase 3.
 3. Registration copies the licence from the catalogue entry; `duplicate_linked` meets the "one feed per source" rule of assumption 11.
 4. The backend team's review of the data is where access is restricted (your decision 1). It should show the conditions the requester accepted (`source_choices.accepted_conditions`, on the requirement's current choice).
+4a. **Registered feeds are regular feeds from phase 4 on** (Q4, assumption 54). The daily job already fetches a registered feed whether or not a requirement selects it; registration (step 04) is the moment a candidate feed stops depending on a requirement's selection. Phase 4 must keep `FeedRepository.list_to_fetch()`'s two cases and test registration against it.
 **Phase 5**
 
 5. The glossary builder runs in the background. Phase 3 deliberately has no background runner, so phase 5 must choose one.
