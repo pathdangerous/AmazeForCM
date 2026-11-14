@@ -9,7 +9,10 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from agents.intent import IntentAgent
+from agents.source_discovery import SourceDiscoveryAgent
 from ports.config import Settings, get_settings
+from ports.llm import LLMProvider, get_llm_provider
 from ports.connectors import SourceConnector, get_connector
 from ports.connectors.catalogue import SourceCatalogue
 from ports.db import get_engine
@@ -86,3 +89,20 @@ def get_blob_store_port(settings: Annotated[Settings, Depends(get_app_settings)]
 
 def get_connector_factory(settings: Annotated[Settings, Depends(get_app_settings)]) -> Callable[[str], SourceConnector]:
     return lambda name: get_connector(name, settings)
+
+
+# ---- phase 3b: the agents. The API builds each agent and passes it to its step (assumption 22).
+
+
+def get_llm_provider_port(settings: Annotated[Settings, Depends(get_app_settings)]) -> LLMProvider:
+    return get_llm_provider(settings)
+
+
+def get_intent_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                     blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> IntentAgent:
+    return IntentAgent(provider=provider, blob_store=blob_store)
+
+
+def get_source_discovery_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                               blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> SourceDiscoveryAgent:
+    return SourceDiscoveryAgent(provider=provider, blob_store=blob_store)

@@ -100,6 +100,16 @@ def pending_scope(session: Session, requirement_id: UUID):
     return pending[-1] if pending else None
 
 
+def proposed_scope(session: Session, requirement_id: UUID) -> ScopeProposed | None:
+    """The pending scope as the requester sees it."""
+    proposal = pending_scope(session, requirement_id)
+    if proposal is None:
+        return None
+    p = proposal.payload
+    return ScopeProposed(proposal_id=proposal.id, log_id=proposal.proposal_log_id, visibility=p["visibility"],
+                         provider=p["provider"], where_to_search=p["where_to_search"], reason=p["reason"])
+
+
 def decide_scope(session: Session, *, requirement_id: UUID, user: User, decision: Decision,
                  note: str | None = None) -> Scoped | ScopeNotConfirmed:
     requirements = RequirementRepository(session)

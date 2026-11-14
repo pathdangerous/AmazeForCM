@@ -8,39 +8,53 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.orm import Session
 
+from agents.intent import IntentAgent
+from agents.source_discovery import SourceDiscoveryAgent
 from apps.api.deps import (
+    get_app_settings,
     get_blob_store_port,
     get_connector_factory,
     get_db_session,
     get_identity_port,
+    get_intent_agent,
     get_request_notifier,
     get_source_catalogue,
+    get_source_discovery_agent,
     requester_user,
 )
 from core.domain.requirement import Requirement
 from core.repositories.consumer_requests import ConsumerRequestRepository
 from core.repositories.errors import (
     ConsumerRequestNotFound,
+    ProposalAlreadyDecided,
+    ProposalForAnotherRequirement,
+    ProposalNotFound,
     RequirementNotFound,
     RequirementNotInStatus,
     UnknownGlossaryElement,
 )
+from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
-from core.steps.errors import StepInputError
+from core.steps.errors import NotTheRequester, StepInputError
 from core.steps.known_source import KnownSourceResult, find_known_source
+from core.steps.release import Released, release_source
 from core.steps.request_data import RequestResult, request_data
-from core.steps.requirement_page import NO_KNOWN_SOURCE, RequirementPage, requirement_page
+from core.steps.requirement_page import RequirementPage, approval_missing_message, requirement_page
+from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, propose_scope
+from core.steps.s2_sources import SourcesResult, list_sources
+from core.steps.s3_pick import ApprovalMissing, Declined, PickResult, SourcePicked, decline_source, pick_source
 from core.steps.s4_fetch import FetchResult, fetch_source
 from core.steps.s17_discover import Discovery, discover
+from ports.config import Settings
 from ports.connectors import SourceConnector
-from ports.connectors.catalogue import SourceCatalogue
+from ports.connectors.catalogue import SourceCatalogue, SourceConditions
 from ports.identity import Identity, User
 from ports.notify import Notifier
 from ports.storage import BlobStore
@@ -159,9 +173,20 @@ def my_request(request_id: UUID, session: DbSession, user: Requester) -> Request
 Catalogue = Annotated[SourceCatalogue, Depends(get_source_catalogue)]
 
 
+AppSettings = Annotated[Settings, Depends(get_app_settings)]
+RequestNotifier = Annotated[Notifier, Depends(get_request_notifier)]
+Blobs = Annotated[BlobStore, Depends(get_blob_store_port)]
+Connectors = Annotated[Callable[[str], SourceConnector], Depends(get_connector_factory)]
+ScopeAgent = Annotated[IntentAgent, Depends(get_intent_agent)]
+ListAgent = Annotated[SourceDiscoveryAgent, Depends(get_source_discovery_agent)]
+
+T = TypeVar("T")
+
+
 class FindSourceResponse(BaseModel):
     check: KnownSourceResult
     fetch: FetchResult | None
+    scope: ScopeProposed | None  # 3b: with no known source, S1's proposal
     message: str
     requirement: RequirementPage
 
@@ -177,40 +202,206 @@ def _own_requirement(session: Session, user: User, requirement_id: UUID) -> Requ
     return requirement
 
 
+def _in_transaction(session: Session, work: Callable[[], T]) -> T:
+    """Run one step and commit it, or roll it back whole. Named errors become 409, 404 or 422; anything
+    else (a failed model call, a stub adapter) is rolled back and raised, never turned into an outcome."""
+    try:
+        result = work()
+        session.commit()
+        return result
+    except (RequirementNotInStatus, ProposalAlreadyDecided) as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound):
+        session.rollback()
+        raise HTTPException(status_code=404, detail="Not found") from None
+    except StepInputError as exc:
+        session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except BaseException:
+        session.rollback()
+        raise
+
+
+def _first_fetch(session: Session, feed_id: UUID, *, identity: Identity, catalogue: SourceCatalogue,
+                 notifier: Notifier, blob_store: BlobStore, connector_factory: Callable[[str], SourceConnector],
+                 settings: Settings):
+    """The first fetch after a selection, in its own transaction: the selection is committed first and
+    stands if the fetch gives source_down (assumption 13)."""
+    return _in_transaction(session, lambda: fetch_source(
+        session, feed_id=feed_id, connector_factory=connector_factory, blob_store=blob_store, notifier=notifier,
+        backend_team=_recipients(identity)["backend_team"], catalogue=catalogue,
+        release_after_days=settings.source_down_release_days))
+
+
+def _page(session: Session, requirement_id: UUID, catalogue: SourceCatalogue, settings: Settings) -> RequirementPage:
+    return requirement_page(session, RequirementRepository(session).get(requirement_id), catalogue,
+                            settings.source_down_release_days)
+
+
 @router.get("/requirements/{requirement_id}", response_model=RequirementPage)
-def requirement_detail(requirement_id: UUID, session: DbSession, user: Requester,
-                       catalogue: Catalogue) -> RequirementPage:
-    return requirement_page(session, _own_requirement(session, user, requirement_id), catalogue)
+def requirement_detail(requirement_id: UUID, session: DbSession, user: Requester, catalogue: Catalogue,
+                       settings: AppSettings) -> RequirementPage:
+    _own_requirement(session, user, requirement_id)
+    return _page(session, requirement_id, catalogue, settings)
 
 
 @router.post("/requirements/{requirement_id}/find-source", response_model=FindSourceResponse)
 def find_source(requirement_id: UUID, session: DbSession, user: Requester, identity: IdentityPort,
-                catalogue: Catalogue, notifier: Annotated[Notifier, Depends(get_request_notifier)],
-                blob_store: Annotated[BlobStore, Depends(get_blob_store_port)],
-                connector_factory: Annotated[Callable[[str], SourceConnector], Depends(get_connector_factory)],
-                ) -> FindSourceResponse:
-    """Known source?, then for a known source the first fetch. Two transactions: the selection is
-    committed first and stands if the fetch gives source_down (plan, assumption 13)."""
+                catalogue: Catalogue, notifier: RequestNotifier, blob_store: Blobs, connector_factory: Connectors,
+                settings: AppSettings, intent_agent: ScopeAgent) -> FindSourceResponse:
+    """Known source?: a known source is selected, then fetched in its own transaction. With no known
+    source, S1 proposes a scope in the same transaction (one commit, whichever branch ran)."""
     _own_requirement(session, user, requirement_id)
-    try:
+
+    def work():
         found = find_known_source(session, requirement_id=requirement_id, catalogue=catalogue)
-        session.commit()
-    except RequirementNotInStatus as exc:
-        session.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    except BaseException:
-        session.rollback()
-        raise
+        scope = None
+        if found.feed is None:
+            scope = propose_scope(session, requirement_id=requirement_id, agent=intent_agent, catalogue=catalogue)
+        return found, scope
+
+    found, scope = _in_transaction(session, work)
     fetch = None
     if found.feed is not None:
-        try:
-            fetch = fetch_source(session, feed_id=found.feed.id, connector_factory=connector_factory,
-                                 blob_store=blob_store, notifier=notifier,
-                                 backend_team=_recipients(identity)["backend_team"])
-            session.commit()
-        except BaseException:
-            session.rollback()
-            raise
-    page = requirement_page(session, RequirementRepository(session).get(requirement_id), catalogue)
-    message = page.message if found.feed is not None else NO_KNOWN_SOURCE
-    return FindSourceResponse(check=found.check, fetch=fetch, message=message, requirement=page)
+        fetch = _first_fetch(session, found.feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
+                             blob_store=blob_store, connector_factory=connector_factory, settings=settings)
+    page = _page(session, requirement_id, catalogue, settings)
+    return FindSourceResponse(check=found.check, fetch=fetch, scope=scope, message=page.message, requirement=page)
+
+
+# ---- phase 3b: scope (S1), sources (S2), pick and decline (S3), release
+
+
+class NoteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: Annotated[str, StringConstraints(max_length=PURPOSE_LENGTH)] = ""
+
+
+class DecisionBody(NoteBody):
+    decision: Literal["approved", "rejected"]
+
+
+class PickBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: UUID
+    accepted_conditions: SourceConditions | None = None  # exactly the conditions shown (assumption 56)
+
+
+class DeclineBody(NoteBody):
+    proposal_id: UUID
+
+
+class ScopeResponse(BaseModel):
+    scope: ScopeProposed
+    message: str
+    requirement: RequirementPage
+
+
+class ScopeDecisionResponse(BaseModel):
+    result: ScopeResult
+    message: str
+    requirement: RequirementPage
+
+
+class SourcesResponse(BaseModel):
+    result: SourcesResult
+    message: str
+    requirement: RequirementPage
+
+
+class PickResponse(BaseModel):
+    result: PickResult
+    fetch: FetchResult | None
+    message: str
+    requirement: RequirementPage
+
+
+class DeclineResponse(BaseModel):
+    result: Declined
+    message: str
+    requirement: RequirementPage
+
+
+class ReleaseResponse(BaseModel):
+    result: Released
+    message: str
+    requirement: RequirementPage
+
+
+@router.post("/requirements/{requirement_id}/scope", response_model=ScopeResponse)
+def ask_for_scope(requirement_id: UUID, body: NoteBody, session: DbSession, user: Requester, catalogue: Catalogue,
+                  settings: AppSettings, intent_agent: ScopeAgent) -> ScopeResponse:
+    """S1 again, with the requester's note, after scope_not_confirmed or no_source_found."""
+    _own_requirement(session, user, requirement_id)
+    scope = _in_transaction(session, lambda: propose_scope(
+        session, requirement_id=requirement_id, agent=intent_agent, catalogue=catalogue, note=body.note, again=True))
+    page = _page(session, requirement_id, catalogue, settings)
+    return ScopeResponse(scope=scope, message=page.message, requirement=page)
+
+
+@router.post("/requirements/{requirement_id}/scope/decision", response_model=ScopeDecisionResponse)
+def decide_on_scope(requirement_id: UUID, body: DecisionBody, session: DbSession, user: Requester,
+                    catalogue: Catalogue, settings: AppSettings) -> ScopeDecisionResponse:
+    _own_requirement(session, user, requirement_id)
+    result = _in_transaction(session, lambda: decide_scope(
+        session, requirement_id=requirement_id, user=user, decision=body.decision, note=body.note))
+    page = _page(session, requirement_id, catalogue, settings)
+    return ScopeDecisionResponse(result=result, message=page.message, requirement=page)
+
+
+@router.post("/requirements/{requirement_id}/sources", response_model=SourcesResponse)
+def find_sources(requirement_id: UUID, session: DbSession, user: Requester, identity: IdentityPort,
+                 catalogue: Catalogue, settings: AppSettings, notifier: RequestNotifier,
+                 list_agent: ListAgent) -> SourcesResponse:
+    _own_requirement(session, user, requirement_id)
+    result = _in_transaction(session, lambda: list_sources(
+        session, requirement_id=requirement_id, agent=list_agent, catalogue=catalogue, notifier=notifier,
+        backend_team=_recipients(identity)["backend_team"]))
+    page = _page(session, requirement_id, catalogue, settings)
+    return SourcesResponse(result=result, message=page.message, requirement=page)
+
+
+@router.post("/requirements/{requirement_id}/pick", response_model=PickResponse)
+def pick(requirement_id: UUID, body: PickBody, session: DbSession, user: Requester, identity: IdentityPort,
+         catalogue: Catalogue, settings: AppSettings, notifier: RequestNotifier, blob_store: Blobs,
+         connector_factory: Connectors) -> PickResponse:
+    """S3. source_picked is committed, then the first fetch runs in its own transaction. approval_missing
+    writes nothing."""
+    _own_requirement(session, user, requirement_id)
+    result = _in_transaction(session, lambda: pick_source(
+        session, requirement_id=requirement_id, user=user, proposal_id=body.proposal_id,
+        accepted_conditions=body.accepted_conditions, catalogue=catalogue))
+    fetch = None
+    if isinstance(result, SourcePicked):
+        feed = FeedRepository(session).get_by_code(result.feed_code)
+        fetch = _first_fetch(session, feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
+                             blob_store=blob_store, connector_factory=connector_factory, settings=settings)
+    page = _page(session, requirement_id, catalogue, settings)
+    message = approval_missing_message(result.source.name) if isinstance(result, ApprovalMissing) else page.message
+    return PickResponse(result=result, fetch=fetch, message=message, requirement=page)
+
+
+@router.post("/requirements/{requirement_id}/decline", response_model=DeclineResponse)
+def decline(requirement_id: UUID, body: DeclineBody, session: DbSession, user: Requester, catalogue: Catalogue,
+            settings: AppSettings) -> DeclineResponse:
+    _own_requirement(session, user, requirement_id)
+    result = _in_transaction(session, lambda: decline_source(
+        session, requirement_id=requirement_id, user=user, proposal_id=body.proposal_id, note=body.note,
+        catalogue=catalogue))
+    page = _page(session, requirement_id, catalogue, settings)
+    return DeclineResponse(result=result, message=page.message, requirement=page)
+
+
+@router.post("/requirements/{requirement_id}/release", response_model=ReleaseResponse)
+def release(requirement_id: UUID, session: DbSession, user: Requester, identity: IdentityPort, catalogue: Catalogue,
+            settings: AppSettings, notifier: RequestNotifier) -> ReleaseResponse:
+    """The requester releases the selected source (assumption 52); 409 unless source_selected."""
+    _own_requirement(session, user, requirement_id)
+    result = _in_transaction(session, lambda: release_source(
+        session, requirement_id=requirement_id, reason="requester_asked", user=user, catalogue=catalogue,
+        notifier=notifier, backend_team=_recipients(identity)["backend_team"]))
+    page = _page(session, requirement_id, catalogue, settings)
+    return ReleaseResponse(result=result, message=page.message, requirement=page)

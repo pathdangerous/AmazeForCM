@@ -93,6 +93,140 @@ async def test_find_source_commits_the_selection_and_the_fetch(own_schema, tmp_p
     ]
 
 
+# ---------------------------------------------------------------- 3b: one test per endpoint (assumption 57)
+
+RILEY = {"X-Dev-User": "dev-requester"}
+
+
+class Flow:
+    """Drives the consumer API on the app's real session factory, one step at a time."""
+
+    def __init__(self, client):
+        self.client = client
+
+    async def post(self, path, body=None):
+        response = await self.client.post(path, headers=RILEY, json=body if body is not None else {})
+        assert response.status_code in (200, 201), response.text
+        return response.json()
+
+    async def raised(self, query="open price", keys=("open_price",)):
+        body = await self.post("/api/consumer/requests", {"query": query, "element_keys": list(keys)})
+        self.id = body["requirement"]["requirement"]["id"]
+        return self.id
+
+    async def step(self, action, body=None):
+        return await self.post(f"/api/consumer/requirements/{self.id}/{action}", body)
+
+    async def listed(self):
+        await self.raised()
+        await self.step("find-source")
+        await self.step("scope/decision", {"decision": "approved"})
+        listed = await self.step("sources")
+        return {c["source"]["code"]: c for c in listed["result"]["candidates"]}
+
+
+@pytest.fixture
+def flow(own_schema, tmp_path):
+    from contextlib import asynccontextmanager
+
+    from apps.api.deps import get_blob_store_port
+    from apps.api.main import app
+
+    blobs = LocalBlobStore(tmp_path / "blob")
+
+    @asynccontextmanager
+    async def _flow():
+        async with running_app(engine=own_schema, settings=Settings(_env_file=None)) as client:  # no session override
+            app.dependency_overrides[get_blob_store_port] = lambda: blobs
+            yield Flow(client)
+
+    return _flow
+
+
+def _status(engine, requirement_id):
+    return committed(engine, "SELECT status FROM requirements WHERE id = :id", id=requirement_id)
+
+
+@pytest.mark.anyio
+async def test_scope_commits_the_proposal(own_schema, flow):
+    async with flow() as f:
+        await f.raised("yield to maturity", ("yield_to_maturity",))
+        await f.step("find-source")
+        await f.step("scope/decision", {"decision": "rejected", "note": "internal"})
+        before = committed(own_schema, "SELECT count(*) FROM proposal_log")[0][0]
+        await f.step("scope", {"note": "internal desk data"})
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log")[0][0] == before + 1
+    assert committed(own_schema, "SELECT kind, status, payload->>'visibility' FROM proposals "
+                                 "WHERE requirement_id = :id ORDER BY created_at", id=f.id) == [
+        ("scope", "rejected", "public"), ("scope", "pending", "private")]
+    assert _status(own_schema, f.id) == [("awaiting_scope_confirmation",)]
+
+
+@pytest.mark.anyio
+async def test_scope_decision_commits_the_scope(own_schema, flow):
+    async with flow() as f:
+        await f.raised()
+        await f.step("find-source")
+        await f.step("scope/decision", {"decision": "approved"})
+    assert committed(own_schema, "SELECT a.decision, a.decided_by FROM approvals a JOIN proposals p "
+                                 "ON p.id = a.proposal_id WHERE p.requirement_id = :id", id=f.id) == [
+        ("approved", "dev-requester")]
+    assert committed(own_schema, "SELECT version, visibility FROM requirement_scopes WHERE requirement_id = :id",
+                     id=f.id) == [(1, "public")]
+    assert _status(own_schema, f.id) == [("scope_confirmed",)]
+
+
+@pytest.mark.anyio
+async def test_sources_commits_one_proposal_per_source(own_schema, flow):
+    async with flow() as f:
+        listed = await f.listed()
+    assert sorted(listed) == ["syn_backup_eod_prices", "syn_vendor_eod_prices"]
+    assert committed(own_schema, "SELECT count(*), count(DISTINCT proposal_log_id) FROM proposals "
+                                 "WHERE requirement_id = :id AND kind = 'source_list'", id=f.id) == [(2, 1)]
+    assert committed(own_schema, "SELECT agent_name FROM proposal_log ORDER BY created_at") == [
+        ("IntentAgent",), ("SourceDiscoveryAgent",)]
+    assert _status(own_schema, f.id) == [("awaiting_source_choice",)]
+
+
+@pytest.mark.anyio
+async def test_pick_commits_the_choice_and_the_fetch(own_schema, flow):
+    async with flow() as f:
+        vendor = (await f.listed())["syn_vendor_eod_prices"]
+        picked = await f.step("pick", {"proposal_id": vendor["proposal_id"],
+                                       "accepted_conditions": vendor["source"]["conditions"]})
+        assert picked["fetch"]["outcome"] == "fetched"
+    assert committed(own_schema, "SELECT a.decision FROM approvals a WHERE a.proposal_id = :p",
+                     p=vendor["proposal_id"]) == [("approved",)]
+    assert committed(own_schema, "SELECT version, basis, accepted_conditions->>'licence' FROM source_choices "
+                                 "WHERE requirement_id = :id", id=f.id) == [
+        (1, "requester_pick", vendor["source"]["conditions"]["licence"])]
+    assert committed(own_schema, "SELECT f.code, s.outcome FROM source_fetches s JOIN feeds f ON f.id = s.feed_id") \
+        == [("syn_vendor_eod_prices", "fetched")]
+    assert _status(own_schema, f.id) == [("onboarding",)]
+
+
+@pytest.mark.anyio
+async def test_decline_commits_the_rejection(own_schema, flow):
+    async with flow() as f:
+        vendor = (await f.listed())["syn_vendor_eod_prices"]
+        await f.step("decline", {"proposal_id": vendor["proposal_id"], "note": "No vendor agreement"})
+    assert committed(own_schema, "SELECT p.status, a.decision, a.note FROM proposals p JOIN approvals a "
+                                 "ON a.proposal_id = p.id WHERE p.id = :p", p=vendor["proposal_id"]) == [
+        ("rejected", "rejected", "No vendor agreement")]
+
+
+@pytest.mark.anyio
+async def test_release_commits_the_released_row(own_schema, flow):
+    async with flow() as f:
+        await f.raised("accrued interest", ("accrued_interest",))
+        await f.step("find-source")  # known source, source_down
+        await f.step("release")
+    assert committed(own_schema, "SELECT version, action, reason, decided_by FROM source_choices "
+                                 "WHERE requirement_id = :id ORDER BY version", id=f.id) == [
+        (1, "selected", None, None), (2, "released", "requester_asked", "dev-requester")]
+    assert _status(own_schema, f.id) == [("no_source_found",)]
+
+
 def test_the_daily_job_commits_each_fetch(own_schema, tmp_path):
     sessions = get_sessionmaker(own_schema)  # the app's real session factory, on amaze_test
     with sessions() as session:
