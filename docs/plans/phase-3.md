@@ -1,6 +1,6 @@
 # Phase 3 plan — Custom data product ingestion (Known source?, S1–S4, DiscoveryAssistant)
 
-**Status:** approved on 2026-11-14 with four changes: source approval option A (the requester's acceptance is the only approval), a fetch id in the blob key, notifications only on a change, and one transition table for requirement statuses. Those changes are applied below. 3a is being built; 3b waits for your approval after checkpoint 3.
+**Status:** approved on 2026-11-14 with four changes: source approval option A (the requester's acceptance is the only approval), a fetch id in the blob key, notifications only on a change, and one transition table for requirement statuses. Those changes are applied below. **3a is built and approved** (checkpoint 3, 2026-11-14; section 17). **The 3b part was updated on 2026-11-14 and awaits your approval:** versioned source choices and release (assumptions 49 to 55), an acceptance that names the conditions (56), commit-visibility tests (57), and a re-check against option A (section 5.6).
 **Date:** 2026-11-14. **Branch:** `phase-3`, created from `main` at `cab1a01`. **Scope:** phase 3 of `BUILD_PLAN.md` and its carried items. Local only; nothing is pushed.
 
 **Phase 3 is too big for one build.** This plan covers all of it, so the design is decided once, and splits the work into **3a** (no agent: known source, fetch, scheduler) and **3b** (agents: scope, source list, pick, DiscoveryAssistant). I stop for your approval between them.
@@ -15,14 +15,15 @@
 4. The daily fetch still runs for that feed after the API is restarted.
 5. `pytest` passes with nothing skipped and no warnings.
 
-**Part 3b is done when all six are true:**
+**Part 3b is done when all seven are true:**
 
 1. Every model call goes through `Agent.run()`: it is logged in `proposal_log` first, and every proposal points at its log row. A subclass that defines `run()` is refused when the class is created.
 2. With no known source, the requester gets a scope to confirm (S1), then a list of sources with coverage and the conditions of use: licence, permitted use, redistribution and any external approval (S2).
 3. **Picking a source produces a fetched file handed to step 02** (S3, S4). This is `BUILD_PLAN.md`'s done-when, proved by `test_api_consumer_sourcing.py::test_done_when_picking_a_source_hands_a_fetched_file_to_step_02` and in the browser. A pick without an explicit acceptance of the source's stated conditions gives `approval_missing`, and nothing is fetched until the requester accepts.
-4. The DiscoveryAssistant suggests glossary elements beside the deterministic search, and changes nothing.
-5. Each of the ten outcome names has a named test (section 5.4).
-6. `pytest` passes with nothing skipped and no warnings.
+4. **A selected source that stays down is released**, after N failed days in a row or when the requester asks, and the requester can pick again. Every choice and release is one versioned row; the highest version is current. Proved by `test_release.py::test_picking_again_adds_the_next_version` and in the browser (row J).
+5. The DiscoveryAssistant suggests glossary elements beside the deterministic search, and changes nothing.
+6. Each of the ten outcome names has a named test (section 5.4), and every 3b endpoint that commits has a commit-visibility test (assumption 57).
+7. `pytest` passes with nothing skipped and no warnings.
 
 ## 2. State at the start (checked on 2026-11-14)
 
@@ -39,6 +40,17 @@
 | PyYAML | 6.0.3 is installed (it comes with `uvicorn[standard]`) but is not pinned in `requirements.txt` |
 | Import-boundary test | `core.steps` is inside the boundary: no step may import `agents` or `ports.llm` |
 | Plugins | Superpowers, Karpathy, i-have-adhd and Octopus are still not loaded. I follow the same flow by hand |
+
+**State at the start of 3b (checked on 2026-11-14):**
+
+| Item | Found |
+|---|---|
+| Git | `phase-3` = `4986c0e`; `main` = `phase-2` = `cab1a01`. Working tree clean |
+| Tests | 781 collected |
+| Database | `alembic current`: `0008 (head)`. `source_choices` holds 3 rows, all `known_source`, one per requirement |
+| `source_choices` | One row per requirement (`uq_source_choices_requirement_id`); `basis` is `known_source` only. No version, no release |
+| A requirement that is `source_selected` | Has no move except to `onboarding`. It waits for good if the source stays down |
+| Commit-visibility tests | Two: Find a source, and the daily job. Each builds and drops its own schema; 1.0 to 1.5 s each |
 
 ## 3. What you fixed, and where this plan answers it
 
@@ -59,6 +71,9 @@
 1. **Source approval, option A: the requester's pick is the only approval.** The backend team reviews the data during onboarding (phase 4) and can restrict access there. No backend role approves a source in phase 3: no backend-ui Approvals view and no `/api/amaze/approvals`.
 2. **`approval_missing` means the requester has not accepted the source's stated conditions:** its licence, permitted use, redistribution, and any external approval it needs. The conditions are shown, an explicit accept is required, and nothing is fetched until then.
 3. **One plan, a stop after checkpoint 3** (Q1); **one daily job** (Q2); **one proposal per listed source** (Q3); **the read-only assistant's call is logged** (Q4); **any ticked term gives `no_known_source`** (Q6); **the raise message stays** (Q7).
+4. **`source_choices` is versioned per requirement; the highest version is current** (checkpoint 2). Releasing a source is a new row with action `released` and a reason, `source_down_n_days` or `requester_asked`. Picking again adds the next version. Planned in assumptions 49 to 55.
+5. **A way back from a source that stays down** (checkpoint 1): from `source_selected` to `awaiting_source_choice`, after N failed days in a row (N is a setting) or when the requester asks. Assumptions 51 to 53.
+6. **Commit-visibility tests: one per endpoint that commits, happy path only** (after 3a). Negative outcomes stay in the shared-session tests. Assumption 57.
 
 **Questions you asked me to decide:**
 
@@ -93,7 +108,7 @@
    - `RequirementRepository.advance(id, to)` locks the row and raises `RequirementNotInStatus` for any move not in the table. The API returns 409, so a double click cannot run a step twice.
    - Phase 1's `set_status()`, which allowed any move, is removed. Its tests are rewritten against the table.
    - `test_repo_requirements.py::test_every_move_not_in_the_table_is_refused` tries every pair of statuses that the table does not allow and expects `RequirementNotInStatus`.
-   - 3a's table has two moves; 3b adds its own.
+   - 3a's table has two moves; 3b adds eleven, 13 in all (section 5.1). With 11 statuses, the test then refuses 108 moves.
 5. **The raise message does not change:** "Requirement raised; the backend team will look for a source." The result of "Find a source" appears under it.
 
 **Known source? (3a)**
@@ -111,7 +126,7 @@
 10. **"Handed to step 02" is three things:**
     - a **candidate feed** carrying the source: `source_code`, `connector`, `source_ref`;
     - a **stored file**: the latest `fetched` row in `source_fetches`, with the `BlobStore` key `raw/<feed code>/<date>/<fetch id>/<file name>`. The fetch id is the row's id, made before the file is stored, so two fetches on one day keep both files;
-    - a **link to the requirement**: one `source_choices` row (requirement, feed, how it was chosen).
+    - a **link to the requirement**: one `source_choices` row (requirement, feed, how it was chosen). From 3b, the requirement's current row: the highest version, which must be a selection (assumption 49).
 
     The requirement becomes `onboarding`. Phase 4 starts from candidate feeds that have a fetched file.
 11. **One feed per source.** The feed's code is the source's code. A second requirement that selects the same source is linked to the existing feed; no second feed is made.
@@ -179,24 +194,25 @@
 
 30. **Code finds, the agent ranks, the catalogue states the facts.**
     - The step takes the catalogue entries that match the confirmed scope (visibility and channel) and cover at least one requested element or term.
-    - SourceDiscoveryAgent (A2) ranks them and gives a reason for each.
+    - SourceDiscoveryAgent (A2) ranks them and gives a reason for each. Mock rule: the most requested items covered first, then the fewest other declared fields, then the code.
+    - A source this requirement has released is left out (assumption 53).
     - Coverage and conditions are copied from the catalogue. The model's text is never used for them, and a source code the model invents is dropped.
 31. **One `source_list` proposal per listed source**, all pointing at the same log row, with `required_approver_roles = ["requester"]` (your decision 1). Each proposal's payload names one source and holds its conditions as listed. Outcome `sources_listed`.
 32. **`no_fit`:** no catalogue source in scope covers any requested item, or the agent lists none. No proposal is made. The requirement becomes `no_source_found`, the backend team is notified, and the requester sees "No source fits this request. The backend team has been told." The requester may add a note and ask for a new scope.
 
 **S3 pick (3b)**
 
-33. **Rule 1 for S3: the requester's pick, with the conditions accepted, is the only approval** (your decision 1). It is one `approved` row in `approvals` for that source's proposal, which makes the proposal `approved`. Then outcome `source_picked`: the source is selected (assumption 10), the conditions accepted are stored on the `source_choices` row, and the first fetch runs. The backend team reviews the data in phase 4 and can restrict access there.
-34. **`approval_missing`: the requester has not accepted the source's stated conditions** (your decision 2).
-    - The pick request carries `accept_conditions`. Without `true`, the outcome is `approval_missing` and the result lists the conditions: licence, permitted use, redistribution and each external approval.
+33. **Rule 1 for S3: the requester's pick, with the conditions accepted, is the only approval** (your decision 1). It is one `approved` row in `approvals` for that source's proposal, which makes the proposal `approved`. Then outcome `source_picked`: the source is selected (assumption 10) as the requirement's next `source_choices` version, with the accepted conditions stored on that row, and the first fetch runs. The backend team reviews the data in phase 4 and can restrict access there.
+34. **`approval_missing`: the requester has not accepted the source's stated conditions** (your decision 2). **(changed for 3b: the acceptance names the conditions, assumption 56.)**
+    - The pick request carries `accepted_conditions`: the conditions the requester was shown. If it is missing, or is not exactly the conditions in the catalogue at that moment, the outcome is `approval_missing` and the result lists the conditions in force: licence, permitted use, redistribution and each external approval.
     - Nothing is written: no approval row, no feed, no fetch, no job. The requirement stays `awaiting_source_choice`.
     - The UI shows the conditions and an explicit "I accept these conditions" box; Pick stays disabled until it is ticked. A request sent without it still gets `approval_missing`.
     - The requester's message: "<source> can be used only under these conditions. Accept them to continue."
 35. **Declining a source.** The requester may reject a listed source instead (one `rejected` row in `approvals`; the proposal is `rejected`). It is not shown again. If no source is left, the requirement becomes `no_source_found` and the requester may ask for a new scope.
-36. **Database guards on `source_choices`.**
+36. **Database guards on `source_choices`.** **(changed for 3b: the full list is assumption 50.)**
     - A requester's pick is accepted only if its proposal is a `source_list` proposal approved by the requester and rejected by nobody (the phase 1 guard from `0005`), is for the same requirement, and names the same source.
-    - A pick must have its accepted conditions recorded (not null).
-    - A known-source row must have no proposal and no accepted conditions.
+    - A pick must have its accepted conditions and the requester recorded (not null).
+    - A known-source row must have no proposal, no accepted conditions and no requester.
     - Raw-SQL tests prove each refusal (`test_db_source_guards.py`).
 37. **The proposals of sources that were neither picked nor declined stay `pending`.** Nobody decided them, so no decision is written for them.
 
@@ -215,14 +231,97 @@
 
 **Data, API, UI, documents**
 
-41. **Two migrations.** `0008_sourcing.py` (3a) reaches the application database at checkpoint 1; `0009_scope_and_pick.py` (3b) at checkpoint 4. An applied migration is never edited. Explicit constraint names use `op.f()`.
-42. **Requirement statuses** grow from 5 to 11 (section 5.1). 3a adds `source_selected`; 3b adds `awaiting_scope_confirmation`, `scope_not_confirmed`, `scope_confirmed`, `awaiting_source_choice` and `no_source_found`. No `awaiting_approval`: under option A nobody else is waited for.
-43. **API.** The consumer endpoints are for the requester and only for their own requirement: another's gives 404, a move the transition table does not allow gives 409. No Amaze endpoint is added in phase 3.
+41. **Two migrations.** `0008_sourcing.py` (3a) reached the application database at checkpoint 1; `0009_scope_and_pick.py` (3b) reaches it at checkpoint 4. `0009` also makes `source_choices` versioned (assumption 49). An applied migration is never edited. Explicit constraint names use `op.f()`.
+42. **Requirement statuses** grow from 5 to 11 (section 5.1). 3a adds `source_selected`; 3b adds `awaiting_scope_confirmation`, `scope_not_confirmed`, `scope_confirmed`, `awaiting_source_choice` and `no_source_found`. No `awaiting_approval`: under option A nobody else is waited for. Release adds two moves and no status.
+43. **API.** The consumer endpoints are for the requester and only for their own requirement: another's gives 404, a move the transition table does not allow gives 409. 3b adds seven that commit (section 9), release among them. No Amaze endpoint is added in phase 3.
 44. **consumer-ui** gets a third hash view, `#/requirement/<id>`: status, message, source, last fetch, and the next action. My requests links to it. No new npm package.
 45. **backend-ui does not change in phase 3** (your decision 1). The feed registry already shows candidate feeds, which is where the backend team sees what to profile in phase 4.
 46. **Synthetic data only.** The catalogue and every sample file pass the real-data checks from `test_glossary_seed.py`. Providers have invented names. Sample identifiers are lower-case with hyphens (`syn-0001`), so they have no real identifier's shape.
 47. **Documents** (tasks 9 and 20): `CLAUDE.md` layout lines, `BUILD_PLAN.md` (phase 3 is built as 3a and 3b), `README.md`, `.env.example` (the two new settings).
 48. **I check the UI** by building it and by a scripted browser run with screenshots. The committed Playwright test stays in phase 7.
+
+**Versioned source choices and release (3b; added 2026-11-14)**
+
+49. **`source_choices` is versioned per requirement; the highest version is current** (your decision 4).
+    - Each row has a `version` (1, 2, 3, ...) and an `action`: `selected` or `released`.
+    - A `selected` row is a known-source selection or a requester's pick, as before.
+    - A `released` row names the feed and source it releases, with a `reason`: `source_down_n_days` or `requester_asked`.
+    - Picking again adds the next version. So a requirement's history reads: version 1 selected X, version 2 released X, version 3 selected Y.
+    - The table stays append-only. 3a's three rows become version 1, `selected`.
+50. **What the database enforces on `source_choices`.** Each line has a raw-SQL test that bypasses the repository (`test_db_source_guards.py`).
+    1. A new row's version is the requirement's highest version plus one; the first is 1. Two rows cannot share a version.
+    2. The first row is a selection. A release follows a selection and names that selection's feed and source. A selection never follows a selection.
+    3. A source is selected at most once per requirement, so a released source cannot be picked again for it.
+    4. A selection has a basis and no reason; a release has a reason and no basis.
+    5. A pick (`requester_pick`) has its proposal, the accepted conditions and the requester; the proposal is a `source_list` proposal approved by the requester and rejected by nobody (the `0005` function), for the same requirement and the same source.
+    6. A known-source selection has no proposal, no accepted conditions and no requester.
+    7. A `requester_asked` release names the requester; a `source_down_n_days` release names nobody.
+    8. UPDATE, DELETE and TRUNCATE are refused, as today.
+
+    **Every check on a nullable column is written so that NULL cannot pass by accident** (`IS NULL`, `IS NOT NULL` or `COALESCE`, never a bare comparison), has a test with the NULL case, and is added to `REVIEWED_NULLABLE_CHECKS` with its reason. That is the lesson of checkpoint 1.
+51. **Release by rule: N failed days in a row.**
+    - N is the setting `SOURCE_DOWN_RELEASE_DAYS`: a whole number, at least 1, default 3.
+    - A failed day is a UTC date on which the feed has a `source_down` fetch. Two failures on one day count as one day.
+    - The count is per requirement: the failed days since the later of two moments, the requirement's selection of the source and the feed's last `fetched`. Days before the selection do not count, so a requirement that selects a source that is already down gets its own N days.
+    - The rule runs in the fetch step, right after a `source_down` is recorded, in the same transaction. Every requirement that is `source_selected` on the feed and has reached N days is released with reason `source_down_n_days`.
+    - The outcome stays `source_down`; the result also lists the requirements it released.
+    - A requirement that is `onboarding` is never released by this rule: its file is already with step 02. A feed that stops answering later is a late delivery, which is phase 7.
+52. **Release on the requester's request.** `POST .../release`, from `source_selected` only, with reason `requester_asked`. The requester need not wait N days. An `onboarding` requirement cannot be released: 409.
+53. **Where a released requirement goes.**
+    - `awaiting_source_choice`, if at least one listed source can still be picked (a `pending` `source_list` proposal of this requirement).
+    - `no_source_found`, if none is left. This is always the case for a known source, because S1 and S2 never ran. From there the requester adds a note and asks for a scope (S1), as after `no_fit`.
+    - A released source is not listed and not offered again for that requirement: S2 leaves it out, and the database refuses a second selection (assumption 50, line 3).
+    - "Known source?" is not run again after a release. It runs once, from `defined`.
+    - This keeps one rule true: a requirement that is `awaiting_source_choice` always has a source to pick. If you want a released requirement to go to `awaiting_source_choice` even with nothing to pick, see open question 1.
+54. **The feed and the daily job after a release.**
+    - The feed and its fetch history stay. Nothing is deleted or changed; a release is one new `source_choices` row.
+    - The daily job fetches a feed only while some requirement currently selects it (its highest version is a selection of that feed). A feed that every requirement has released is idle: the job skips it, so it produces no more failures and no more notifications.
+    - A new selection of that source wakes the feed: the same feed is linked again, and the first fetch runs as for any selection.
+    - A fetch moves to `onboarding` only the requirements that currently select the feed. A requirement that released it and now waits on another source is not touched.
+    - The backend team is told once per release, in-app: "Source released: <feed>", with the requirement and the reason.
+55. **The requester's messages after a release, exact text:**
+    - by the rule, a source left to pick: "<source> did not answer for <N> days in a row. Pick another source."
+    - by the rule, none left: "<source> did not answer for <N> days in a row. No other source is listed. Add a note and ask for a new scope."
+    - on request, a source left to pick: "You released <source>. Pick another source."
+    - on request, none left: "You released <source>. No other source is listed. Add a note and ask for a new scope."
+
+**Option A, re-checked for 3b (added 2026-11-14)**
+
+56. **The acceptance names the conditions.** Section 5.6 lists the re-check; this is the one gap it found.
+    - Until now the pick carried a yes or no. That does not say what was accepted, and under option A the requester's acceptance is the only approval.
+    - The pick now sends back the conditions the requester was shown. The server compares them with the catalogue's conditions at that moment. Equal: they are stored on the `source_choices` row as accepted. Missing or different: `approval_missing`, with the conditions in force, and nothing is written.
+    - So the conditions cannot change between the list and the pick without the requester seeing the new ones and accepting again.
+    - Picking again after a release needs a new acceptance, for the newly picked source.
+
+**Commit-visibility tests (added 2026-11-14)**
+
+57. **One per 3b endpoint that commits, happy path only** (your decision 6). Seven new tests in `tests/test_commit_visibility.py`, each using the app's real session factory on `amaze_test`, reading on a separate connection, and shown failing with its commit removed:
+
+    | Endpoint | Test | What the separate connection sees |
+    |---|---|---|
+    | `POST .../scope` | `test_scope_commits_the_proposal` | the `proposal_log` row, the `scope` proposal, the status |
+    | `POST .../scope/decision` | `test_scope_decision_commits_the_scope` | the approval, the `requirement_scopes` row, the status |
+    | `POST .../sources` | `test_sources_commits_one_proposal_per_source` | the `proposal_log` row, the `source_list` proposals, the status |
+    | `POST .../pick` | `test_pick_commits_the_choice_and_the_fetch` | the approval, the `source_choices` row, the `fetched` row, `onboarding` |
+    | `POST .../decline` | `test_decline_commits_the_rejection` | the `rejected` approval and proposal |
+    | `POST .../release` | `test_release_commits_the_released_row` | the `released` row and the new status |
+    | `POST /api/consumer/search/assist` | `test_assist_commits_the_log_row` | the `proposal_log` row, and no proposal |
+
+    - **Find a source keeps its one test.** In 3b it also commits S1's proposal when there is no known source. The endpoint is written with one commit for its first transaction, whichever branch ran, so removing that line still fails the existing test.
+    - **Negative outcomes stay in the shared-session tests:** `approval_missing`, `no_fit`, `scope_not_confirmed`, `source_down`, the release by the N-day rule, 404 and 409.
+    - **Expected added test time: about 7 to 10 seconds.** Measured cost is 1.0 to 1.5 s per test, mostly building and dropping the test's own schema. The suite takes about 24 s today, before 3b's other tests.
+
+**Demo data (added 2026-11-14)**
+
+58. **A sixth synthetic source, so release and picking again can be shown in the browser.** `syn_backup_eod_prices`: public, market data vendors, not known, declares `instrument_id`, `price_date`, `open_price` and `close_price`, no external approval, and **no file, on purpose**. A request for `open price` then lists two sources; picking this one gives `source_down`, and the requester can release it and pick the other (row J).
+
+**Open questions on this update (2026-11-14), recommendation first**
+
+1. **Where a released requirement goes when no listed source is left.** Recommended: `no_source_found`, so that `awaiting_source_choice` always has a source to pick (assumption 53). Alternative: always `awaiting_source_choice`, with an empty list and the note box to ask for a new scope.
+2. **N, and how the failed days are counted.** Recommended: default 3, counted per requirement since it selected the source (assumption 51). Alternative: counted per feed, whoever selected it and whenever.
+3. **Known sources and option A.** Recommended: keep 3a as you approved it: a known source is fetched with no acceptance by the requester, because Amaze already holds the agreement (assumption 7). Alternative: the requester accepts a known source's conditions before its first fetch; that changes 3a's flow and adds a wait.
+4. **An idle feed.** Recommended: the daily job skips a feed that no requirement selects (assumption 54). Alternative: keep fetching every feed that has a connector.
+5. **The commit-visibility tests' schema.** Recommended: one schema per test, as today, about 7 to 10 s more (assumption 57). Alternative: one schema per test file, about 2 to 3 s more, with tests that share committed rows.
 
 ## 5. Steps and typed results
 
@@ -243,8 +342,20 @@
 | `awaiting_source_choice` | Requester declines the last remaining source | | `no_source_found` | 3b |
 | `source_selected` | Fetch (first, or daily) | `fetched` | `onboarding` | 3a |
 | `source_selected` | Fetch (first, or daily) | `source_down` | stays `source_selected` | 3a |
+| `source_selected` | Fetch: the Nth failed day in a row (rule) | `source_down` | `awaiting_source_choice`, or `no_source_found` if no listed source is left | 3b |
+| `source_selected` | Requester releases the source | | `awaiting_source_choice`, or `no_source_found` if no listed source is left | 3b |
 
-`ready`, `access_restricted` and `rejected` exist since phase 1 and are not used before phases 4 and 7. The rows that change the status are exactly `REQUIREMENT_TRANSITIONS` (assumption 4): in 3a, `defined → source_selected` and `source_selected → onboarding`.
+`ready`, `access_restricted` and `rejected` exist since phase 1 and are not used before phases 4 and 7. Release has no outcome name of its own: `CLAUDE.md` names none, so none is invented.
+
+The rows that change the status are exactly `REQUIREMENT_TRANSITIONS` (assumption 4), 13 moves after 3b:
+
+| Part | Moves |
+|---|---|
+| 3a | `defined → source_selected`; `source_selected → onboarding` |
+| 3b, S1 | `defined → awaiting_scope_confirmation`; `awaiting_scope_confirmation → scope_confirmed`; `awaiting_scope_confirmation → scope_not_confirmed`; `scope_not_confirmed → awaiting_scope_confirmation`; `no_source_found → awaiting_scope_confirmation` |
+| 3b, S2 | `scope_confirmed → awaiting_source_choice`; `scope_confirmed → no_source_found` |
+| 3b, S3 | `awaiting_source_choice → source_selected`; `awaiting_source_choice → no_source_found` |
+| 3b, release | `source_selected → awaiting_source_choice`; `source_selected → no_source_found` |
 
 ### 5.2 The shapes
 
@@ -264,6 +375,7 @@ class Fetched(StepResult):             # outcome "fetched"
 class SourceDown(StepResult):          # outcome "source_down"
     feed_code: str
     detail: str
+    released: list[UUID]               # 3b: requirements the N-day rule released (usually none)
 
 # core/steps/s1_scope.py
 class Scoped(StepResult):              # outcome "scoped"
@@ -283,7 +395,15 @@ class SourcePicked(StepResult):        # outcome "source_picked"
     feed_code: str
 class ApprovalMissing(StepResult):     # outcome "approval_missing"
     source: SourceSummary
-    conditions: SourceConditions       # licence, permitted use, redistribution, external approvals
+    conditions: SourceConditions       # the conditions in force: licence, permitted use, redistribution, external approvals
+    reason: Literal["not_accepted", "conditions_changed"]
+
+# core/steps/release.py  (no outcome name: a plain model, like phase 2's request result)
+class Released(BaseModel):
+    source: SourceSummary
+    reason: Literal["source_down_n_days", "requester_asked"]
+    version: int                       # the released row's version
+    status: Literal["awaiting_source_choice", "no_source_found"]
 ```
 
 Each step's results form a union discriminated on `outcome`, as in phase 2.
@@ -298,8 +418,10 @@ The functions. Steps flush and never commit; the API owns each transaction.
 | `s1_scope.py` | `propose_scope(requirement, agent, note)` | through `Agent.run()`: the log row and the proposal; status | 3b |
 | `s1_scope.py` | `decide_scope(requirement, user, decision, note)` | the approval; for `scoped`, the `requirement_scopes` row; status | 3b |
 | `s2_sources.py` | `list_sources(requirement, agent, catalogue)` | through `Agent.run()`: the log row and one proposal per source; status; for `no_fit`, a notification | 3b |
-| `s3_pick.py` | `pick_source(requirement, user, proposal_id, accept_conditions)` | with acceptance: the approval, then `select_source` with the conditions; without: nothing | 3b |
+| `s3_pick.py` | `pick_source(requirement, user, proposal_id, accepted_conditions)` | with the conditions in force accepted: the approval, then `select_source` with them, as the next version; otherwise nothing | 3b |
 | `s3_pick.py` | `decline_source(requirement, user, proposal_id, note)` | the rejection; status `no_source_found` if no source is left | 3b |
+| `release.py` | `release_source(requirement, reason, user)` | the `released` row (next version); the status; one notification to the backend team | 3b |
+| `s4_fetch.py` | `fetch_source(feed_id, ..., release_after_days)` | as in 3a; after a `source_down`, `release_source` for each requirement that reached N days | 3b |
 | `s17_discover.py` | `assist(query, agent, ...)` | through `Agent.run()`: the log row only | 3b |
 
 ### 5.3 Rule 1: who decides what
@@ -310,6 +432,8 @@ The functions. Steps flush and never commit; the API owns each transaction.
 | S1 | The requester | one `scope` proposal per run; roles `[requester]` | the requester's approval or rejection | A `requirement_scopes` row: needs a `scope` proposal approved by the requester, for the same requirement |
 | S2, S3 | The requester alone: the pick with the conditions accepted (your decision 1). The backend team reviews the data in phase 4 | one `source_list` proposal per source; roles `[requester]` | the pick is the approval; declining is the rejection | A `source_choices` row with basis `requester_pick`: needs a `source_list` proposal approved by the requester and rejected by nobody, for the same requirement and source, with the accepted conditions recorded |
 | S4 | Nobody: rules execute | none | none | none |
+| Release, on request | The requester | none | none | A `released` row with reason `requester_asked`, naming the requester; it must follow a selection of the same source |
+| Release, N failed days | Nobody: a rule over the recorded fetches | none | none | A `released` row with reason `source_down_n_days`, naming nobody |
 | Step 17 assistant | The requester ticks or ignores each suggestion | none (read only) | none | Nothing is written except the log row |
 
 Phase 1's rules still apply: roles decide in order, one person cannot decide two steps, and the first rejection ends the proposal.
@@ -345,6 +469,42 @@ The names are `CLAUDE.md`'s, letter for letter. `test_step_results.py` reads the
 | Blob key per fetch | `test_s4_fetch.py::test_two_fetches_on_one_day_keep_both_files` |
 | Notifications on a change | `test_s4_fetch.py`: `test_file_ready_is_sent_on_the_first_fetched_only`, `test_source_down_is_sent_once_per_run_of_failures` |
 
+**3b additions of 2026-11-14 and their tests:**
+
+| Item | Named test |
+|---|---|
+| Versioned choices: the migration | `test_migrations.py`: `test_0009_makes_existing_choices_version_1_selected`, `test_0009_downgrade_refuses_when_3b_rows_exist` |
+| Versioned choices: the guards (assumption 50, raw SQL) | `test_db_source_guards.py`: `test_a_version_must_be_the_next_one`, `test_the_first_row_must_be_a_selection`, `test_a_release_must_follow_a_selection_of_the_same_source`, `test_a_selection_cannot_follow_a_selection`, `test_a_released_source_cannot_be_selected_again`, `test_a_selection_has_a_basis_and_a_release_has_a_reason`, `test_a_pick_needs_an_approved_source_list_proposal_of_the_same_requirement_and_source`, `test_a_pick_needs_the_accepted_conditions_and_the_requester`, `test_a_known_source_row_has_no_proposal`, `test_a_release_names_the_requester_only_when_asked`, `test_null_never_passes_a_source_choice_check` (one case per nullable column) |
+| Versioned choices: the repository | `test_repo_source_choices.py`: `test_current_is_the_highest_version`, `test_history_lists_every_version`, `test_requirements_selecting_a_feed_leaves_out_those_that_released_it` |
+| Release on request | `test_release.py`: `test_the_requester_releases_a_source_that_did_not_answer`, `test_release_goes_to_awaiting_source_choice_when_a_listed_source_is_left`, `test_release_goes_to_no_source_found_when_none_is_left`, `test_only_a_source_selected_requirement_can_be_released`, `test_a_released_source_is_not_listed_or_picked_again`, `test_picking_again_adds_the_next_version`, `test_the_backend_team_is_told_once_per_release` |
+| Release by rule | `test_s4_fetch.py`: `test_released_after_n_failed_days_in_a_row`, `test_two_failures_on_one_day_count_as_one_day`, `test_a_fetched_day_starts_the_count_again`, `test_days_before_the_selection_do_not_count`, `test_n_is_the_setting`, `test_an_onboarding_requirement_is_never_released` |
+| The feed after a release | `test_s4_fetch.py::test_a_fetch_moves_only_requirements_that_currently_select_the_feed`; `test_jobs.py`: `test_the_job_skips_a_feed_that_no_requirement_selects`, `test_a_new_selection_wakes_the_feed` |
+| The acceptance names the conditions (assumption 56) | `test_s3_pick.py`: `test_approval_missing_when_the_conditions_changed_since_the_list`, `test_the_accepted_conditions_are_stored_on_the_choice`, `test_picking_again_needs_a_new_acceptance` |
+| Commit visibility | the seven tests of assumption 57 |
+| The setting | `test_settings.py::test_source_down_release_days_is_a_whole_number_of_at_least_one` |
+
+The earlier failed days in the rule's tests are written as `source_fetches` rows with a `created_at` in the past. Inserting is allowed on an append-only table; nothing is updated.
+
+### 5.6 Option A, re-checked for 3b
+
+Option A (section 3, decisions 1 and 2): the requester's acceptance is the only approval, and nothing is fetched before it.
+
+| 3b step | Who approves | Fetched before the requester accepts | Result |
+|---|---|---|---|
+| S1 scope | the requester | nothing | consistent |
+| S2 list | nobody approves a list; each source waits for the requester | nothing: listing reads the catalogue only; no sample is fetched | consistent |
+| S3 pick | the requester, by accepting the conditions in force | nothing; the first fetch runs only after the choice is committed | **one gap, fixed:** the acceptance was a yes or no; it now names the conditions (assumption 56) |
+| S3 decline | the requester | nothing | consistent |
+| Release on request | the requester | not applicable | consistent |
+| Release after N failed days | nobody: a rule (rules execute) | not applicable | consistent |
+| Picking again after a release | the requester, with a new acceptance for the newly picked source | nothing until then | consistent |
+| A second requirement picks a source that already has a feed | that requirement's own requester | the feed's daily fetch may already run for the first requirement; nothing is selected or fetched for the second before its acceptance | consistent |
+| DiscoveryAssistant | nobody: read only | nothing | consistent |
+| Backend roles | none approves anything; they are only told (`no_fit`, file ready, source down, source released) | | consistent |
+| Known source (3a, assumption 7) | nobody at request time: Amaze already holds the agreement | **the first fetch runs with no acceptance by the requester** | outside S3 and unchanged, as approved with 3a. Open question 3 |
+
+No backend role appears in any `required_approver_roles` in 3b, and no Amaze endpoint is added.
+
 ## 6. Data model
 
 ### Migration `0008_sourcing.py` (3a)
@@ -362,11 +522,30 @@ The names are `CLAUDE.md`'s, letter for letter. `test_step_results.py` reads the
 |---|---|---|
 | `requirements` | status list + the five 3b statuses | as above |
 | `requirement_scopes` (new) | requirement_id, version, visibility, provider, where_to_search (text[]), proposal_id, confirmed_by | **Append-only.** Unique (requirement, version). Trigger: an approved `scope` proposal (the `0005` function). Trigger: the proposal is for the same requirement |
-| `source_choices` | + proposal_id, chosen_by, accepted_conditions (jsonb); basis may also be `requester_pick` | a known-source row has none of the three; a pick has all three. Trigger for a pick: an approved `source_list` proposal (the `0005` function). Trigger: same requirement and same source code as the proposal |
+| `source_choices` (versioned) | + version, action, reason, proposal_id, accepted_conditions (jsonb), decided_by; basis becomes optional and may also be `requester_pick`; the "one row per requirement" constraint is replaced | see below |
 
-One new trigger function, `amaze_require_proposal_of_requirement()`, serves both tables.
+**`source_choices` after `0009`** (assumptions 49 and 50):
 
-**PostgreSQL 14 or older only:** check constraints, arrays, `jsonb ->>` (9.4), triggers with a `WHEN` clause (9.0), plpgsql. Nothing from 15 or later.
+| Column | `selected`, known source | `selected`, requester's pick | `released` |
+|---|---|---|---|
+| requirement_id, version | set; unique together | set | set |
+| action | `selected` | `selected` | `released` |
+| feed_id, source_code | the source | the source | the source being released |
+| basis | `known_source` | `requester_pick` | empty |
+| proposal_id | empty | the approved `source_list` proposal | empty |
+| accepted_conditions | empty | the conditions the requester accepted | empty |
+| reason | empty | empty | `source_down_n_days` or `requester_asked` |
+| decided_by | empty | the requester | the requester, for `requester_asked`; empty for the rule |
+
+- **Existing rows:** `version` and `action` are added with defaults 1 and `selected`, then the defaults are dropped. Adding a column does not fire the append-only triggers, and no row is updated by hand.
+- **Constraints:** unique (requirement, version) replaces unique (requirement); a partial unique index on (requirement, source) for `selected` rows; the checks of assumption 50, lines 4 to 7.
+- **Triggers on insert:**
+  - `amaze_guard_source_choice_version()` (new): lines 1 and 2 of assumption 50;
+  - the `0005` function with argument `source_list`, only for a pick;
+  - `amaze_require_proposal_of_requirement()` (new, shared with `requirement_scopes`): same requirement; for `source_choices` also the same source code.
+- **Downgrade:** stops if any `source_choices` row is a release, a pick or a version above 1, or if a requirement has a 3b status. `0008` cannot hold those.
+
+**PostgreSQL 14 or older only:** check constraints, arrays, `jsonb ->>` (9.4), triggers with a `WHEN` clause (9.0), partial unique indexes, `ADD COLUMN` with a default (no table rewrite since 11), plpgsql. Nothing from 15 or later.
 
 ## 7. Domain models and repositories
 
@@ -378,12 +557,16 @@ One new trigger function, `amaze_require_proposal_of_requirement()`, serves both
 | `ports/connectors/catalogue.py` (new) | `SourceEntry`, `SourceCatalogue` | 3a |
 | `RequirementRepository` | `advance(id, to)` checked against the table; `set_status()` removed | 3a |
 | `FeedRepository` | `create_candidate` takes the source fields; `list_with_source()` | 3a |
-| `SourceChoiceRepository` (new) | `record_known(...)`, `for_requirement(id)`, `requirements_for_feed(feed_id)`; in 3b `record_pick(...)` | 3a, 3b |
+| `SourceChoiceRepository` (new) | `record_known(...)`, `for_requirement(id)`, `requirements_for_feed(feed_id)` | 3a |
+| `SourceChoiceRepository` (3b) | every write takes the next version. `record_pick(...)`, `record_release(...)`; `current(requirement_id)` replaces `for_requirement`; `history(requirement_id)`; `requirements_selecting(feed_id)` replaces `requirements_for_feed`; `released_sources(requirement_id)` | 3b |
+| `FeedRepository` (3b) | `list_to_fetch()` replaces `list_with_source()` in the daily job: feeds with a connector, not rejected, that some requirement currently selects | 3b |
+| 3a code that changes in 3b | `select_source` (next version), `fetch_source` (current selections only; the N-day rule), `requirement_page` (current choice; the release messages), `DailyFetch` (`list_to_fetch`, the setting) | 3b |
+| `ports/config.py` (3b) | `SOURCE_DOWN_RELEASE_DAYS` (whole number, at least 1, default 3) | 3b |
 | `SourceFetchRepository` (new) | `record(...)`, `latest(feed_id)`, `latest_fetched(feed_id)` | 3a |
 | `RequirementScopeRepository` (new) | `add_version(...)`, `current(requirement_id)` | 3b |
 | `ProposalRepository` | `list_for_requirement(id, kind)` | 3b |
 
-New named errors: `RequirementNotInStatus`, `FeedHasNoSource`, `UnknownSource` (3a); `ProposalForAnotherRequirement`, `SourceNotInProposal` (3b).
+New named errors: `RequirementNotInStatus`, `FeedHasNoSource`, `UnknownSource` (3a); `ProposalForAnotherRequirement`, `SourceNotInProposal`, `SourceAlreadyReleased` (a released source picked again), `NothingToRelease` (the current choice is not a selection) (3b). 3a's `RequirementAlreadyHasSource` now means: the current choice is already a selection.
 
 ## 8. Synthetic sources and the demo paths
 
@@ -396,10 +579,11 @@ New named errors: `RequirementNotInStatus`, `FeedHasNoSource`, `UnknownSource` (
 | `syn_vendor_eod_prices` | public, market data vendors | no | instrument_id, price_date, open_price, high_price, low_price, close_price, volume | "A signed data agreement with the vendor, held by your desk" |
 | `syn_open_esg_scores` | public, public websites | no | instrument_id; other field `esg score` | none |
 | `syn_internal_desk_marks` | private, internal systems | no | instrument_id, price_date, mid_price | none |
+| `syn_backup_eod_prices` (3b, assumption 58) | public, market data vendors | no | instrument_id, price_date, open_price, close_price. **Its file is missing on purpose** | none |
 
 Every source states a licence, permitted use and redistribution.
 
-All five are file sources (assumption 16).
+All six are file sources (assumption 16). 3a's tests that name five sources and one missing file are updated in 3b.
 
 Signed in as Riley Requester:
 
@@ -409,11 +593,15 @@ Signed in as Riley Requester:
 | B | `accrued interest` | `known_source` (`syn_offline_accruals`), `source_down`; the requirement waits as `source_selected` | 3a |
 | C | `open price` | `no_known_source`: the only source that declares it is not known | 3a |
 | D | `esg score`, ticked | `no_known_source`: a term was ticked | 3a |
-| E | `open price` | scope `public`; confirm; `syn_vendor_eod_prices` listed with its conditions; pick without accepting (sent by the API test; the UI keeps Pick disabled): `approval_missing`, nothing fetched; tick "I accept these conditions" and pick: `source_picked`, `fetched`, onboarding | 3b |
+| E | `open price` | scope `public`; confirm; two sources listed with their conditions; pick `syn_vendor_eod_prices` without accepting (sent by the API test; the UI keeps Pick disabled): `approval_missing`, nothing fetched; tick "I accept these conditions" and pick: `source_picked`, `fetched`, onboarding | 3b |
 | F | `esg score`, ticked | scope `public`; confirm; `syn_open_esg_scores` listed; pick: `source_picked`, `fetched`, onboarding | 3b |
 | G | `yield to maturity`, purpose "internal desk data" | scope `private`; confirm; `no_fit` | 3b |
 | H | any of E to G | reject the scope: `scope_not_confirmed`; add a note and ask again | 3b |
 | I | search `closing prices` | no match by the search; "Ask the assistant" suggests Close price, unticked | 3b |
+| J | `open price` again | scope `public`; confirm; accept and pick `syn_backup_eod_prices`: `source_picked`, then `source_down`. "Choose another source": released (`requester_asked`), back to `awaiting_source_choice` with `syn_vendor_eod_prices` still listed. Accept and pick it: `source_picked`, `fetched`, onboarding. The requirement's choices: version 1 selected, version 2 released, version 3 selected | 3b |
+| K | row B's requirement (`accrued interest`, waiting on `syn_offline_accruals`) | "Choose another source": released; no source is listed, so `no_source_found`. Add a note and ask for a scope; confirm; `no_fit`, because the only source that declares it was released | 3b |
+
+The release after N failed days cannot be shown in the browser in one sitting; its tests are in section 5.5.
 
 ## 9. API
 
@@ -432,11 +620,14 @@ Signed in as Riley Requester:
 | `POST .../scope` `{note}` | S1 again, after `scope_not_confirmed` or `no_source_found` |
 | `POST .../scope/decision` `{decision, note}` | `scoped` or `scope_not_confirmed` |
 | `POST .../sources` | S2: `sources_listed` or `no_fit` |
-| `POST .../pick` `{proposal_id, accept_conditions}` | S3: `source_picked` (then the first fetch) or `approval_missing` |
+| `POST .../pick` `{proposal_id, accepted_conditions}` | S3: `source_picked` (then the first fetch) or `approval_missing`. `accepted_conditions` is the conditions object the requester was shown (assumption 56) |
 | `POST .../decline` `{proposal_id, note}` | the requester declines a listed source |
+| `POST .../release` | the requester releases the selected source (assumption 52); 409 unless the requirement is `source_selected` |
 | `POST /api/consumer/search/assist` `{q}` | the DiscoveryAssistant's suggestions; logs the call |
 
-No Amaze endpoint is added (your decision 1).
+`GET .../requirements/{id}` also returns, in 3b: the proposed scope, the listed sources with their proposals and conditions, the history of choices (version, action, source, reason), and whether the source can be released.
+
+No Amaze endpoint is added (your decision 1). Each of the seven `POST` endpoints above commits and has one commit-visibility test (assumption 57).
 
 - 401 if not signed in; 403 for a backend role; 404 for another requester's requirement; 409 for a wrong status; 422 for refused input.
 - The catalogue, the blob store, the connector factory, the agents and the notifier are FastAPI dependencies, so tests replace them.
@@ -451,11 +642,12 @@ No Amaze endpoint is added (your decision 1).
 3. **Requirement** (`#/requirement/<id>`):
    - 3a: status, message, elements and terms, the source and its licence, the last fetch.
    - 3b: the proposed scope with Confirm and Reject (and a note); the listed sources, each with its coverage and its conditions in full, an "I accept these conditions" box, Pick (disabled until the box is ticked) and Decline.
+   - 3b, release: while the requirement is `source_selected`, a "Choose another source" button, with a confirmation. After a release, the message of assumption 55, then the remaining sources to pick, or the note box to ask for a new scope. A short history lists each choice and release.
 4. **Search** (3b): "Ask the assistant" appears when a search leaves unmatched terms. Its suggestions are unticked and marked "suggested".
 
 **backend-ui:** no change in phase 3 (your decision 1).
 
-Checked by `npm run build` in both projects and a scripted browser run. Screenshots in `.playwright-mcp/`: `phase3a-A.png` to `phase3a-D.png` and `phase3a-requirement.png`; `phase3b-E.png` to `phase3b-I.png`. The run also checks the browser console.
+Checked by `npm run build` in both projects and a scripted browser run. Screenshots in `.playwright-mcp/`: `phase3a-A.png` to `phase3a-D.png` and `phase3a-requirement.png`; `phase3b-E.png` to `phase3b-K.png`. The run also checks the browser console.
 
 ## 11. Files
 
@@ -471,7 +663,7 @@ agents/
   intent.py  source_discovery.py  discovery_assistant.py         new    3b
   prompts/intent.v1.yaml  source_discovery.v1.yaml  discovery_assistant.v1.yaml   new    3b
 ports/
-  config.py                                   edit   SOURCE_CATALOGUE, SOURCE_HTTP_ALLOWED_HOSTS
+  config.py                                   edit   SOURCE_CATALOGUE, SOURCE_HTTP_ALLOWED_HOSTS; 3b: SOURCE_DOWN_RELEASE_DAYS
   connectors/ base.py  http.py  local_file.py  __init__.py       edit   close(), allowed hosts, factory
   connectors/catalogue.py                     new    3a
   llm/mock.py                                 edit   3b
@@ -483,8 +675,9 @@ core/
                 source_choices.py  source_fetches.py             new    3a
                 requirement_scopes.py                            new    3b
   steps/       known_source.py  s4_fetch.py                      new    3a
-               s1_scope.py  s2_sources.py  s3_pick.py            new    3b
+               s1_scope.py  s2_sources.py  s3_pick.py  release.py   new    3b
                s17_discover.py                                   edit   3b (assist)
+               known_source.py  s4_fetch.py  requirement_page.py edit   3b (versions, release)
 apps/api/
   main.py  deps.py  routers/consumer.py       edit
   jobs.py                                     new    3a
@@ -501,7 +694,12 @@ tests/
   test_agent_base.py  test_prompts.py  test_no_direct_llm_calls.py  test_mock_rules.py
   test_agent_intent.py  test_agent_source_discovery.py  test_agent_discovery_assistant.py
   test_repo_requirement_scopes.py  test_db_source_guards.py
-  test_s1_scope.py  test_s2_sources.py  test_s3_pick.py                    new    3b
+  test_s1_scope.py  test_s2_sources.py  test_s3_pick.py  test_release.py   new    3b
+  test_commit_visibility.py  test_repo_source_choices.py  test_s4_fetch.py
+  test_jobs.py  test_known_source.py  test_source_catalogue.py  test_settings.py
+  test_api_consumer_sourcing.py                                            edit   3b
+fixtures/sources/catalogue.json               edit   3b: syn_backup_eod_prices
+.env.example                                  edit   3b: SOURCE_DOWN_RELEASE_DAYS
 ```
 
 ## 12. Tasks, in order
@@ -528,15 +726,16 @@ Each task: tests first and shown failing, then code, then its check, then one co
 |---|---|---|---|
 | 10 | `Agent` base, `AgentRun`, registry, prompt files and loader; the two static tests | `test_agent_base.py`, `test_prompts.py`, `test_no_direct_llm_calls.py` | pytest |
 | 11 | MockProvider rules | `test_port_llm.py`, `test_mock_rules.py` | pytest |
-| 12 | Migration `0009`: statuses, `requirement_scopes`, the pick columns and guards; repositories | `test_migrations.py`, `test_append_only.py`, `test_repo_requirement_scopes.py`, `test_repo_source_choices.py`, `test_db_source_guards.py` | pytest |
-| 13 | IntentAgent and S1 | `test_agent_intent.py`, `test_s1_scope.py`, `test_step_results.py` | pytest; `alembic upgrade head`; `0009 (head)`. **CHECKPOINT 4:** pytest summary, `alembic current`, the carried item 1 tests by name |
-| 14 | SourceDiscoveryAgent and S2 | `test_agent_source_discovery.py`, `test_s2_sources.py` | pytest |
-| 15 | S3 pick: accept the conditions, decline | `test_s3_pick.py` | pytest |
-| 16 | Consumer API: the scope, sources, pick and decline flow | `test_api_consumer_sourcing.py` | pytest. **CHECKPOINT 5:** pytest summary, the ten outcome tests by name, the `BUILD_PLAN.md` done-when test's output |
-| 17 | DiscoveryAssistant: agent, step, endpoint | `test_agent_discovery_assistant.py`, `test_api_consumer.py` | pytest |
-| 18 | consumer-ui: scope, sources, conditions, pick, the assistant | none | build; browser run, rows E to I |
-| 19 | Documents | none | documents read back |
-| 20 | Review against `CLAUDE.md`'s seven rules, the PostgreSQL 14 list and this plan | none | findings in section 17. **CHECKPOINT 6:** section 13 results and the screenshots. Phase 4 is not started |
+| 12 | Migration `0009`: the five statuses and the 13 moves; `requirement_scopes`; versioned `source_choices` with its guards; repositories; 3a's code moved to "the current choice" | `test_migrations.py`, `test_append_only.py`, `test_repo_requirements.py`, `test_repo_requirement_scopes.py`, `test_repo_source_choices.py`, `test_db_source_guards.py`; 3a's `test_known_source.py`, `test_s4_fetch.py`, `test_jobs.py` still pass | pytest; a trigger proof: with the new guard triggers removed, the guard tests fail |
+| 13 | IntentAgent and S1 | `test_agent_intent.py`, `test_s1_scope.py`, `test_step_results.py` | pytest; `alembic upgrade head`; `0009 (head)`. **CHECKPOINT 4:** pytest summary, `alembic current`, the triggers on `source_choices` and `requirement_scopes`, the three existing choices read back as version 1 `selected`, the carried item 1 tests by name |
+| 14 | SourceDiscoveryAgent and S2; the sixth synthetic source | `test_agent_source_discovery.py`, `test_s2_sources.py`, `test_source_catalogue.py` | pytest |
+| 15 | S3 pick: the acceptance names the conditions; decline | `test_s3_pick.py` | pytest |
+| 16 | Release: on request, and by the N-day rule in the fetch; the setting; the daily job skips a feed nobody selects | `test_release.py`, `test_s4_fetch.py`, `test_jobs.py`, `test_settings.py` | pytest |
+| 17 | Consumer API: the scope, sources, pick, decline and release flow, with one commit-visibility test for each of the six endpoints | `test_api_consumer_sourcing.py`, `test_commit_visibility.py` | pytest; each commit-visibility test shown failing with its commit removed. **CHECKPOINT 5:** pytest summary and its time, the ten outcome tests by name, the `BUILD_PLAN.md` done-when test's output, the release tests by name |
+| 18 | DiscoveryAssistant: agent, step, endpoint, its commit-visibility test | `test_agent_discovery_assistant.py`, `test_api_consumer.py`, `test_commit_visibility.py` | pytest; the commit-visibility test shown failing with its commit removed |
+| 19 | consumer-ui: scope, sources, conditions, pick, release and the history, the assistant | none | build; browser run, rows E to K |
+| 20 | Documents: `CLAUDE.md`, `BUILD_PLAN.md`, `README.md`, `.env.example` | none | documents read back |
+| 21 | Review against `CLAUDE.md`'s seven rules, option A (section 5.6), the PostgreSQL 14 list and this plan | none | findings in section 17. **CHECKPOINT 6:** section 13 results and the screenshots. Phase 4 is not started |
 
 ## 13. Commands that prove each part is done
 
@@ -563,7 +762,7 @@ npm --prefix apps\consumer-ui run build
 Then in the browser, signed in as Riley Requester:
 
 - **3a:** rows A to D of section 8. For row A: the requirement page shows "Your data is getting onboarded; we will notify you once it is ready.", and `http://localhost:5173/#/feeds` shows the candidate feed `syn_exchange_volumes`. Then close the API window, start it again, and check that the health line is `ok`; the restart test in `test_jobs.py` proves the fetch itself.
-- **3b:** rows E to I. For row E, check that Pick stays disabled until "I accept these conditions" is ticked.
+- **3b:** rows E to K. For row E, check that Pick stays disabled until "I accept these conditions" is ticked. For row J, check that the history shows version 1 selected, version 2 released and version 3 selected.
 
 ## 14. Not in phase 3
 
@@ -594,32 +793,32 @@ Then in the browser, signed in as Riley Requester:
 12. **"Find a source" is started by the requester's browser.** If the page is closed first, the requirement stays `defined` until they press the button.
 13. **Under option A nobody checks an external approval.** The requester states they hold it by accepting the conditions; Amaze records the acceptance but does not verify it. The backend team's review in phase 4 is the control.
 14. **A scope can hide a fitting source.** A `private` scope never lists a public source. The way out is a note and a new scope.
+15. **The N-day count reads the dates of the fetch rows.** A day on which the daily job did not run at all (the laptop was off) is not a failed day, so N failed days can take longer than N calendar days.
+16. **With N set to 1, a pick of a source that is down is released in the same request** as its first fetch. The requester sees the release message at once. That is what the setting asks for.
+17. **A released source is closed to that requirement for good**, even if it answers again later. Another requirement can still select it. Reopening it would need a new rule.
+18. **An idle feed is not fetched.** If the backend team wants its data anyway, nothing fetches it until a requirement selects it again.
+19. **"Known source?" is not run again after a release.** A second known source that also declares the data is found only through S1 and S2.
+20. **The accepted conditions are compared as a whole.** A change to a source's wording in the catalogue makes every open list of that source ask for acceptance again. That is intended, but it can surprise.
+21. **Seven more commit-visibility tests add about 7 to 10 seconds** to every test run. If that hurts, the schema can be built once per test file: about 2 to 3 seconds, at the price of tests that share committed rows.
 
 ## 16. Carried forward
 
-Notes only; nothing here is built in 3a.
+Notes only; nothing here is built in phase 3.
 
-**Part 3b (your note at checkpoint 1, 2026-11-14)**
+**Part 3b: the three notes recorded during 3a are now planned, not carried.**
 
-0. **A selected source that stays `source_down` has no route back.** In 3a the requirement waits as `source_selected` for good, and the daily job tries again each day. When 3b starts, I propose one route back to `awaiting_source_choice` (so the requester can pick another listed source, or ask for a new scope), with its own move in the transition table and a test:
-   - after N failed days in a row (N to be decided; for example 3), and
-   - on the requester's request ("Choose another source").
-
-   The feed and its fetch history stay; only the requirement moves.
-
-   **Commit-visibility tests (your rule, after 3a, 2026-11-14):** one per endpoint that commits, happy path only. Negative outcomes stay in the shared-session tests. In 3b that is 6 new tests: `.../scope`, `.../scope/decision`, `.../sources`, `.../pick`, `.../decline` and `/search/assist` (the assistant's commit is its `proposal_log` row). Find a source and the daily job already have theirs.
-
-   **Expected added time:** measured at 1.0 to 1.5 s per test, of which 0.6 to 0.9 s is migrating and dropping the test's own schema. 6 tests add about 6 to 9 s, so the suite goes from about 24 s to about 30 to 33 s. If that is too much, the schema can be made once per test module instead of once per test: about 0.2 to 0.5 s per test, about 2 to 3 s for the six. The tests stay independent because each one uses its own requirement.
-
-   **Your decision (checkpoint 2, 2026-11-14): `source_choices` becomes versioned per requirement; the highest version is current.** Releasing a source is a new row with action `released` and a reason (`source_down_n_days` or `requester_asked`). Picking again adds the next version. The details go in the 3b plan. This replaces 3a's "one row per requirement" (`uq_source_choices_requirement_id`) by a migration in 3b.
+| Note (2026-11-14) | Now in |
+|---|---|
+| A selected source that stays `source_down` had no route back (checkpoint 1) | assumptions 51 to 55; section 5.1 |
+| `source_choices` becomes versioned per requirement (your decision at checkpoint 2) | assumptions 49 and 50; section 6 |
+| Commit-visibility tests, one per endpoint that commits, and their added time (after 3a) | assumption 57; risk 21 |
 
 **Phase 4**
 
 1. Step 02 starts from a candidate feed's latest `fetched` row in `source_fetches`.
-2. When a candidate feed is rejected, the known-source check and S2 must skip its source, and the requester must be told.
+2. When a candidate feed is rejected, the known-source check and S2 must skip its source, and the requester must be told. The requirements that select it should be released with a third reason; `0009`'s reason list has only the two of phase 3.
 3. Registration copies the licence from the catalogue entry; `duplicate_linked` meets the "one feed per source" rule of assumption 11.
-4. The backend team's review of the data is where access is restricted (your decision 1). It should show the conditions the requester accepted (`source_choices.accepted_conditions`).
-
+4. The backend team's review of the data is where access is restricted (your decision 1). It should show the conditions the requester accepted (`source_choices.accepted_conditions`, on the requirement's current choice).
 **Phase 5**
 
 5. The glossary builder runs in the background. Phase 3 deliberately has no background runner, so phase 5 must choose one.
@@ -635,7 +834,7 @@ Notes only; nothing here is built in 3a.
 9. Model calls and the first fetch through a queue (risks 1 and 2).
 10. The Azure Functions timer runs the same single daily job.
 11. `SOURCE_HTTP_ALLOWED_HOSTS` is widened only for approved sources.
-12. `AzureOpenAIProvider` uses the same prompt files; compare its answers with the mock's on rows E to I.
+12. `AzureOpenAIProvider` uses the same prompt files; compare its answers with the mock's on rows E to K.
 
 ## 17. Results and deviations (recorded during implementation)
 
