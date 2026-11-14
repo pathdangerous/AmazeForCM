@@ -992,3 +992,49 @@ dev.ps1                     three OK lines; health {"status":"ok", ..., "unavail
 | `session.commit()` per feed in `DailyFetch.run` | failed: `[('source_selected',)] == [('onboarding',)]` | all 5 in `test_jobs.py` still passed |
 
 The second column is the gap risk 11 described; the new tests close it. Both lines were restored with the Edit tool; `git diff` of `apps/` is empty. Tests: 781 pass, run twice.
+
+### Tasks 10 to 13 (checkpoint 4)
+
+Tests: 781 at the start of 3b, 995 at checkpoint 4. All pass, none skipped, no warnings (about 38 s).
+
+**A bug the tests caught in `0009` before it was applied.** `ck_source_choices_pick_has_its_acceptance` was first written `(pick) = (proposal_id IS NOT NULL AND accepted_conditions IS NOT NULL)`. A known-source row or a release with a proposal but no conditions gives `false = false` and passed. Now each column is tied to "pick" on its own. `test_a_known_source_row_has_no_proposal` and `test_a_release_names_the_requester_only_when_asked` caught it.
+
+**Two test mistakes, fixed:** a row that broke two checks (PostgreSQL names only one), and a JSON list that the test helper did not encode.
+
+**Proofs that guards can fail** (each removed with the Edit tool, the tests run, then restored; `grep PROOF` finds nothing):
+
+| Guard removed | Tests that failed |
+|---|---|
+| `Agent.__init_subclass__` refusing `run()` | `test_a_subclass_that_defines_run_is_refused_at_class_creation` |
+| the four new `source_choices` triggers | 11: every version, order, pick-proposal and requester test in `test_db_source_guards.py`, the `proposal_id` NULL case, and `test_database_refuses_a_second_row_with_the_same_version` |
+| the three new `requirement_scopes` triggers | 5: the approved-proposal test, the three "holds exactly what was proposed" cases, the own-requester test |
+| `decide_scope`'s own-requester check | `test_only_the_requirements_own_requester_decides` |
+
+The tests that still passed without the `source_choices` triggers are the ones the check constraints and the partial unique index decide, as designed.
+
+**Deviations from the plan:**
+
+1. **The prompt loader is `agents/prompt_loader.py`, not `agents/prompts.py`:** a module named like the `prompts/` folder beside it is confusing to import.
+2. **`Agent.run()` stores the input after the model call**, not before: render, call, store, log, propose. A failed call then writes nothing at all, not even a blob (`test_a_failed_model_call_writes_nothing` checks the blob store too).
+3. **A subclass returns `AgentProposal`s (kind, payload, links); the base class adds the agent's autonomy and approver role**, so a subclass cannot state them differently from its declaration.
+4. **The registry holds a sha256 of every prompt file** (line endings read as LF). An edited prompt file fails `test_every_prompt_file_is_hashed_in_the_registry_and_unchanged` until it is saved as a new version.
+5. **Mock rules are keyed by prompt id, for any version.** A new prompt version that changes the input's shape needs its rule changed with it.
+6. **Guards beyond assumption 50, all with tests:** a fourth trigger function, `amaze_require_requirement_requester()`, checks that `source_choices.decided_by` and `requirement_scopes.confirmed_by` are the requirement's own requester (assumption 29, in the database too). The scope trigger also checks that the scope row holds exactly the proposal's visibility, provider and channels (the requester confirms, never edits). Two more checks: `ck_source_choices_conditions_are_an_object` and `ck_source_choices_version`.
+7. **Trigger names carry a letter** (`trg_source_choices_a_version` ... `_d_requester`): PostgreSQL runs triggers of one event in name order, so the order is fixed and the error messages are predictable.
+8. **`propose_scope(..., again=True)`** is the "ask again with a note" path (from `scope_not_confirmed` or `no_source_found`); without it, only from `defined`. The status is checked before the agent is called.
+9. **`POST .../scope/decision` needs no proposal id:** `decide_scope` decides the newest pending scope proposal. Only one can be pending, because the status moves on with it.
+10. **Two named errors beyond the plan:** `NotTheRequester` (the API will answer 404) and `NothingToDecide` (422).
+11. **The 0009 migration tests run in a scratch schema** that is dropped afterwards, because their rows sit in append-only tables and cannot be deleted.
+12. **Until task 17, the requirement page shows no source when the current choice is a release.** Task 17 adds the release messages.
+
+**Carried item 1, by name:** `test_a_subclass_that_defines_run_is_refused_at_class_creation`, `test_run_logs_the_call_before_it_creates_proposals`, `test_every_proposal_points_at_the_log_row`, `test_a_failed_model_call_writes_nothing`, `test_a_read_only_agent_cannot_create_proposals`, `test_no_direct_llm_calls.py::test_complete_is_called_only_in_agents_base`: all pass.
+
+**Application database:**
+
+```
+alembic current          0008
+alembic upgrade head     Running upgrade 0008 -> 0009     exit 0
+alembic current          0009 (head)
+```
+
+Triggers on `source_choices`: `trg_source_choices_a_version`, `_b_approved_pick`, `_c_proposal_match`, `_d_requester`, `_append_only`, `_no_truncate`. On `requirement_scopes`: `_b_approved_proposal`, `_c_proposal_match`, `_d_requester`, `_append_only`, `_no_truncate`. The three existing choices read back as version 1, `selected`, `known_source`, with no reason, proposal, conditions or decider. Requirements: 5 `defined`, 2 `onboarding`, 1 `source_selected`, as before.
