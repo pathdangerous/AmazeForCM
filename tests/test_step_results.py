@@ -127,6 +127,25 @@ def test_known_source_results_round_trip():
     round_trips(KnownSourceResult, NoKnownSource(reason="terms_ticked"))
 
 
+# ---- phase 3a: S4 fetch (task 5)
+
+
+def test_s4_outcomes_are_the_last_two_of_claude_mds_s1_to_s4():
+    from core.steps.s4_fetch import FetchResult
+
+    assert union_outcomes(FetchResult) == claude_md_outcomes("S1–S4")[-2:] == ["fetched", "source_down"]
+
+
+def test_s4_results_round_trip():
+    import uuid
+
+    from core.steps.s4_fetch import Fetched, FetchResult, SourceDown
+
+    round_trips(FetchResult, Fetched(feed_code="f", fetch_id=uuid.uuid4(), blob_ref="raw/f/x", size_bytes=3,
+                                     requirements_onboarding=[uuid.uuid4()]))
+    round_trips(FetchResult, SourceDown(feed_code="f", fetch_id=uuid.uuid4(), detail="not answering"))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str
