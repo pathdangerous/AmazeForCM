@@ -605,7 +605,9 @@ Notes only; nothing here is built in 3a.
    - after N failed days in a row (N to be decided; for example 3), and
    - on the requester's request ("Choose another source").
 
-   The feed and its fetch history stay; only the requirement moves. This needs a decision on what the `source_choices` row (one per requirement, append-only) becomes: a second row with a version, or a separate "released" row.
+   The feed and its fetch history stay; only the requirement moves.
+
+   **Your decision (checkpoint 2, 2026-11-14): `source_choices` becomes versioned per requirement; the highest version is current.** Releasing a source is a new row with action `released` and a reason (`source_down_n_days` or `requester_asked`). Picking again adds the next version. The details go in the 3b plan. This replaces 3a's "one row per requirement" (`uq_source_choices_requirement_id`) by a migration in 3b.
 
 **Phase 4**
 

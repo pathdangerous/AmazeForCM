@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
@@ -10,10 +10,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from ports.config import Settings, get_settings
+from ports.connectors import SourceConnector, get_connector
+from ports.connectors.catalogue import SourceCatalogue
 from ports.db import get_engine
 from ports.identity import Identity, User
 from ports.notify import Notifier, get_notifier
 from ports.secrets import SecretNotFound
+from ports.storage import BlobStore, get_blob_store
 
 
 def get_app_settings() -> Settings:
@@ -68,3 +71,18 @@ def get_request_notifier(
     """The Notifier selected by NOTIFY_PROVIDER, on the request's session, so in-app notifications are
     committed or rolled back with the rest of the request."""
     return get_notifier(settings, session=session)
+
+
+# ---- phase 3: the custom data product. Each is a dependency so tests can replace it.
+
+
+def get_source_catalogue(settings: Annotated[Settings, Depends(get_app_settings)]) -> SourceCatalogue:
+    return SourceCatalogue.load(settings.source_catalogue, allowed_hosts=settings.allowed_source_hosts())
+
+
+def get_blob_store_port(settings: Annotated[Settings, Depends(get_app_settings)]) -> BlobStore:
+    return get_blob_store(settings)
+
+
+def get_connector_factory(settings: Annotated[Settings, Depends(get_app_settings)]) -> Callable[[str], SourceConnector]:
+    return lambda name: get_connector(name, settings)

@@ -15,15 +15,35 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.orm import Session
 
-from apps.api.deps import get_db_session, get_identity_port, get_request_notifier, requester_user
+from apps.api.deps import (
+    get_blob_store_port,
+    get_connector_factory,
+    get_db_session,
+    get_identity_port,
+    get_request_notifier,
+    get_source_catalogue,
+    requester_user,
+)
+from core.domain.requirement import Requirement
 from core.repositories.consumer_requests import ConsumerRequestRepository
-from core.repositories.errors import ConsumerRequestNotFound, RequirementNotFound, UnknownGlossaryElement
+from core.repositories.errors import (
+    ConsumerRequestNotFound,
+    RequirementNotFound,
+    RequirementNotInStatus,
+    UnknownGlossaryElement,
+)
 from core.repositories.requirements import RequirementRepository
 from core.steps.errors import StepInputError
+from core.steps.known_source import KnownSourceResult, find_known_source
 from core.steps.request_data import RequestResult, request_data
+from core.steps.requirement_page import NO_KNOWN_SOURCE, RequirementPage, requirement_page
+from core.steps.s4_fetch import FetchResult, fetch_source
 from core.steps.s17_discover import Discovery, discover
+from ports.connectors import SourceConnector
+from ports.connectors.catalogue import SourceCatalogue
 from ports.identity import Identity, User
 from ports.notify import Notifier
+from ports.storage import BlobStore
 
 router = APIRouter(prefix="/api/consumer", tags=["consumer"])
 
@@ -132,3 +152,65 @@ def my_request(request_id: UUID, session: DbSession, user: Requester) -> Request
     except ConsumerRequestNotFound:
         raise HTTPException(status_code=404, detail="Request not found") from None
     return _summaries(session, [request])[0]
+
+
+# ---- phase 3a: the custom data product (requirement page, Find a source)
+
+Catalogue = Annotated[SourceCatalogue, Depends(get_source_catalogue)]
+
+
+class FindSourceResponse(BaseModel):
+    check: KnownSourceResult
+    fetch: FetchResult | None
+    message: str
+    requirement: RequirementPage
+
+
+def _own_requirement(session: Session, user: User, requirement_id: UUID) -> Requirement:
+    """The caller's own requirement. Another requester's is "not found" too, so its existence is hidden."""
+    try:
+        requirement = RequirementRepository(session).get(requirement_id)
+    except RequirementNotFound:
+        requirement = None
+    if requirement is None or requirement.requester_id != user.id:
+        raise HTTPException(status_code=404, detail="Requirement not found")
+    return requirement
+
+
+@router.get("/requirements/{requirement_id}", response_model=RequirementPage)
+def requirement_detail(requirement_id: UUID, session: DbSession, user: Requester,
+                       catalogue: Catalogue) -> RequirementPage:
+    return requirement_page(session, _own_requirement(session, user, requirement_id), catalogue)
+
+
+@router.post("/requirements/{requirement_id}/find-source", response_model=FindSourceResponse)
+def find_source(requirement_id: UUID, session: DbSession, user: Requester, identity: IdentityPort,
+                catalogue: Catalogue, notifier: Annotated[Notifier, Depends(get_request_notifier)],
+                blob_store: Annotated[BlobStore, Depends(get_blob_store_port)],
+                connector_factory: Annotated[Callable[[str], SourceConnector], Depends(get_connector_factory)],
+                ) -> FindSourceResponse:
+    """Known source?, then for a known source the first fetch. Two transactions: the selection is
+    committed first and stands if the fetch gives source_down (plan, assumption 13)."""
+    _own_requirement(session, user, requirement_id)
+    try:
+        found = find_known_source(session, requirement_id=requirement_id, catalogue=catalogue)
+        session.commit()
+    except RequirementNotInStatus as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except BaseException:
+        session.rollback()
+        raise
+    fetch = None
+    if found.feed is not None:
+        try:
+            fetch = fetch_source(session, feed_id=found.feed.id, connector_factory=connector_factory,
+                                 blob_store=blob_store, notifier=notifier,
+                                 backend_team=_recipients(identity)["backend_team"])
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+    page = requirement_page(session, RequirementRepository(session).get(requirement_id), catalogue)
+    message = page.message if found.feed is not None else NO_KNOWN_SOURCE
+    return FindSourceResponse(check=found.check, fetch=fetch, message=message, requirement=page)
