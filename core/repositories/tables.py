@@ -29,12 +29,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.domain.consumer_request import ROUTING_OUTCOMES
-from core.domain.feed import FEED_STAGES
+from core.domain.feed import CONNECTORS, FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.load import LOAD_STATUSES
 from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
+from core.domain.sourcing import CHOICE_BASES, FETCH_OUTCOMES
 from ports.db import Base
 from ports.identity.base import ROLES
 
@@ -204,6 +205,11 @@ class FeedRow(Base):
         # Step 04 outcome no_owner: a registered feed must have an owner.
         CheckConstraint("stage <> 'registered' OR owner_id IS NOT NULL", name="registered_has_owner"),
         CheckConstraint("(stage = 'registered') = (registered_at IS NOT NULL)", name="registered_at_matches_stage"),
+        # migration 0008: the source a feed reads; one feed per source
+        UniqueConstraint("source_code"),
+        CheckConstraint(_in("connector", CONNECTORS), name="connector"),
+        CheckConstraint("(source_code IS NULL) = (connector IS NULL)", name="source_and_connector_together"),
+        CheckConstraint("connector IS NULL OR source_ref IS NOT NULL", name="connector_has_source_ref"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -215,6 +221,57 @@ class FeedRow(Base):
     owner_id: Mapped[str | None] = mapped_column(Text)
     source_ref: Mapped[str | None] = mapped_column(Text)
     registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_code: Mapped[str | None] = mapped_column(Text)
+    connector: Mapped[str | None] = mapped_column(Text)
+
+
+class SourceChoiceRow(Base):
+    """Which source, and so which candidate feed, a requirement was handed to. One per requirement.
+    Append-only (migration 0008)."""
+
+    __tablename__ = "source_choices"
+    __table_args__ = (
+        UniqueConstraint("requirement_id"),
+        CheckConstraint(_in("basis", CHOICE_BASES), name="basis"),
+        Index("ix_source_choices_feed_id", "feed_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    requirement_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("requirements.id"))
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    source_code: Mapped[str] = mapped_column(Text)
+    basis: Mapped[str] = mapped_column(Text)
+
+
+class SourceFetchRow(Base):
+    """One fetch of a feed's source: the stored file, or why the source did not answer.
+    Append-only (migration 0008)."""
+
+    __tablename__ = "source_fetches"
+    __table_args__ = (
+        CheckConstraint(_in("outcome", FETCH_OUTCOMES), name="outcome"),
+        CheckConstraint(
+            # IS NOT NULL is spelt out: a check that evaluates to NULL passes.
+            "outcome <> 'fetched' OR (blob_ref IS NOT NULL AND size_bytes IS NOT NULL AND size_bytes > 0 "
+            "AND detail IS NULL)",
+            name="fetched_has_a_file",
+        ),
+        CheckConstraint(
+            "outcome <> 'source_down' OR (detail IS NOT NULL AND length(btrim(detail)) > 0 "
+            "AND blob_ref IS NULL AND size_bytes IS NULL)",
+            name="down_has_a_reason",
+        ),
+        Index("ix_source_fetches_feed_id", "feed_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    outcome: Mapped[str] = mapped_column(Text)
+    blob_ref: Mapped[str | None] = mapped_column(Text)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    detail: Mapped[str | None] = mapped_column(Text)
 
 
 class MappingRow(Base):

@@ -82,7 +82,8 @@ from core.domain.requirement import REQUIREMENT_STATUSES, RequirementDraft  # no
 
 
 def test_status_lists_are_the_names_in_claude_md():
-    assert REQUIREMENT_STATUSES == ("defined", "onboarding", "ready", "access_restricted", "rejected")
+    # phase 3 (migration 0008) adds source_selected
+    assert REQUIREMENT_STATUSES == ("defined", "onboarding", "ready", "access_restricted", "rejected", "source_selected")
     assert FEED_STAGES == ("candidate", "registered", "rejected")
     assert LOAD_STATUSES == ("received", "held", "failed_rolled_back", "released")
 
@@ -210,3 +211,56 @@ def test_consumer_request_draft_accepts_valid_input():
 def test_consumer_request_draft_rejects(bad):
     with pytest.raises(ValidationError):
         ConsumerRequestDraft(**{**REQUEST, **bad})
+
+
+# ---- phase 3a, task 1: transitions, feed sources, fetches
+
+from core.domain.requirement import REQUIREMENT_TRANSITIONS  # noqa: E402
+from core.domain.sourcing import SourceFetchDraft  # noqa: E402
+
+
+def test_requirement_statuses_and_transitions_are_the_plans():
+    """Phase 3 plan, section 5.1: the 3a moves that change a status, and nothing else."""
+    assert REQUIREMENT_TRANSITIONS == frozenset({("defined", "source_selected"), ("source_selected", "onboarding")})
+    assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
+
+
+FEED = {"code": "syn_exchange_volumes", "name": "Exchange volumes", "source_code": "syn_exchange_volumes",
+        "connector": "local_file", "source_ref": "files/exchange_volumes.csv"}
+
+
+def test_feed_draft_takes_a_source():
+    assert FeedDraft(**FEED).connector == "local_file"
+    assert FeedDraft(code="feed_a", name="Feed A").source_code is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"connector": "ftp"},
+        {"connector": None},  # source code without a connector
+        {"source_code": None},  # connector without a source code
+        {"source_ref": None},  # a connector needs a reference
+        {"source_code": "Syn Exchange"},
+    ],
+)
+def test_feed_draft_rejects_an_incomplete_source(bad):
+    with pytest.raises(ValidationError):
+        FeedDraft(**{**FEED, **bad})
+
+
+@pytest.mark.parametrize(
+    ("valid", "bad"),
+    [
+        ({"outcome": "fetched", "blob_ref": "raw/f/2026-11-14/x/f.csv", "size_bytes": 10}, {"size_bytes": 0}),
+        ({"outcome": "fetched", "blob_ref": "raw/f/2026-11-14/x/f.csv", "size_bytes": 10}, {"blob_ref": None}),
+        ({"outcome": "fetched", "blob_ref": "raw/f/2026-11-14/x/f.csv", "size_bytes": 10}, {"detail": "why"}),
+        ({"outcome": "source_down", "detail": "not found"}, {"detail": " "}),
+        ({"outcome": "source_down", "detail": "not found"}, {"blob_ref": "raw/x"}),
+        ({"outcome": "source_down", "detail": "not found"}, {"outcome": "lost"}),
+    ],
+)
+def test_source_fetch_draft_validates(valid, bad):
+    SourceFetchDraft(**valid)
+    with pytest.raises(ValidationError):
+        SourceFetchDraft(**{**valid, **bad})

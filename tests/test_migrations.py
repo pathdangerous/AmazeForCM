@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0007"
+HEAD = "0008"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -20,7 +20,8 @@ TABLES = {
 PHASE_2_TABLES = {  # migration 0006
     "product_elements", "product_grants", "requirement_elements", "requirement_terms", "consumer_requests",
 }
-TABLES |= PHASE_2_TABLES
+PHASE_3_TABLES = {"source_choices", "source_fetches"}  # migration 0008
+TABLES |= PHASE_2_TABLES | PHASE_3_TABLES
 
 
 def _tables(url: str) -> set[str]:
@@ -161,3 +162,44 @@ def test_0006_check_constraints_have_the_convention_names(migrated_engine):
     for table in sorted(PHASE_2_TABLES):
         doubled = {name for name in _check_constraints(migrated_engine, table) if f"ck_{table}_ck_" in name}
         assert doubled == set(), table
+
+
+# ---------------------------------------------------------------- phase 3a: migration 0008
+
+
+def test_0008_downgrade_refuses_while_a_requirement_is_source_selected(migrated_engine, test_database_url):
+    """0007's status list has no source_selected: the downgrade stops instead of failing half-way."""
+    config = alembic_config(test_database_url)
+    row_id = uuid.uuid4()
+    try:
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO requirements (id, requester_id, title, status) "
+                     "VALUES (:id, 'dev-requester', 'T', 'source_selected')"),
+                {"id": row_id},
+            )
+        with pytest.raises(DBAPIError, match="migration 0008"):
+            command.downgrade(config, "0007")
+    finally:
+        with migrated_engine.begin() as connection:
+            connection.execute(text("DELETE FROM requirements WHERE id = :id"), {"id": row_id})
+        command.upgrade(config, "head")
+
+
+def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):
+    """The status constraint is replaced, not the table: a defined requirement survives 0007 -> 0008."""
+    config = alembic_config(test_database_url)
+    row_id = uuid.uuid4()
+    try:
+        command.downgrade(config, "0007")
+        with migrated_engine.begin() as connection:
+            connection.execute(text("INSERT INTO requirements (id, requester_id, title) VALUES (:id, 'dev-requester', 'T')"),
+                               {"id": row_id})
+        command.upgrade(config, "0008")
+        with migrated_engine.connect() as connection:
+            status = connection.execute(text("SELECT status FROM requirements WHERE id = :id"), {"id": row_id}).scalar()
+        assert status == "defined"
+    finally:
+        with migrated_engine.begin() as connection:
+            connection.execute(text("DELETE FROM requirements WHERE id = :id"), {"id": row_id})
+        command.upgrade(config, "head")

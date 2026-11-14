@@ -14,8 +14,8 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.domain.requirement import Requirement, RequirementDraft, RequirementStatus
-from core.repositories.errors import RequirementNotFound
+from core.domain.requirement import REQUIREMENT_TRANSITIONS, Requirement, RequirementDraft, RequirementStatus
+from core.repositories.errors import RequirementNotFound, RequirementNotInStatus
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.tables import RequirementElementRow, RequirementTermRow
 from core.repositories.tables import RequirementRow as Row
@@ -47,15 +47,24 @@ class RequirementRepository:
             query = query.where(Row.requester_id == requester_id)
         return self._models(self._session.scalars(query).all())
 
-    def set_status(self, requirement_id: UUID, status: RequirementStatus) -> Requirement:
-        status = _STATUS.validate_python(status)
-        row = self._row(requirement_id)
-        row.status = status
+    def advance(self, requirement_id: UUID, to: RequirementStatus) -> Requirement:
+        """Move the requirement to `to`, only along REQUIREMENT_TRANSITIONS. The row is locked, so two
+        requests cannot both make the same move."""
+        to = _STATUS.validate_python(to)
+        row = self._row(requirement_id, lock=True)
+        if (row.status, to) not in REQUIREMENT_TRANSITIONS:
+            raise RequirementNotInStatus(
+                f"Requirement {requirement_id} cannot move from {row.status} to {to}"
+            )
+        row.status = to
         self._session.flush()
         return self._models([row])[0]
 
-    def _row(self, requirement_id: UUID) -> Row:
-        row = self._session.get(Row, requirement_id)
+    def _row(self, requirement_id: UUID, *, lock: bool = False) -> Row:
+        query = select(Row).where(Row.id == requirement_id)
+        if lock:
+            query = query.with_for_update()
+        row = self._session.scalars(query).one_or_none()
         if row is None:
             raise RequirementNotFound(f"No requirement with id {requirement_id}")
         return row

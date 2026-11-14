@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from core.domain.feed import Feed, FeedDraft, FeedStage
 from core.repositories.errors import (
     DuplicateFeedCode,
+    DuplicateFeedSource,
     FeedHasNoOwner,
     FeedNotACandidate,
     FeedNotFound,
@@ -29,6 +30,8 @@ class FeedRepository:
         draft = FeedDraft(**fields)
         if self._session.scalar(select(Row.id).where(Row.code == draft.code)) is not None:
             raise DuplicateFeedCode(f"A feed with code {draft.code!r} already exists")
+        if draft.source_code is not None and self.get_by_source(draft.source_code) is not None:
+            raise DuplicateFeedSource(f"A feed already reads source {draft.source_code!r}")
         if draft.requirement_id is not None and self._session.get(RequirementRow, draft.requirement_id) is None:
             raise RequirementNotFound(f"No requirement with id {draft.requirement_id}")
         row = Row(**draft.model_dump(), stage="candidate")
@@ -38,6 +41,20 @@ class FeedRepository:
 
     def get(self, feed_id: UUID) -> Feed:
         return Feed.model_validate(self._row(feed_id))
+
+    def get_by_source(self, source_code: str) -> Feed | None:
+        """The feed that reads this catalogue source, if one exists (one feed per source)."""
+        row = self._session.scalars(select(Row).where(Row.source_code == source_code)).one_or_none()
+        return None if row is None else Feed.model_validate(row)
+
+    def list_with_source(self) -> list[Feed]:
+        """Feeds the daily job fetches: they have a connector and are not rejected. Oldest first."""
+        query = (
+            select(Row)
+            .where(Row.connector.is_not(None), Row.stage != "rejected")
+            .order_by(Row.created_at, Row.id)
+        )
+        return [Feed.model_validate(r) for r in self._session.scalars(query)]
 
     def get_by_code(self, code: str) -> Feed:
         row = self._session.scalars(select(Row).where(Row.code == code)).one_or_none()

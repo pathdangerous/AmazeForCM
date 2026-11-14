@@ -7,7 +7,8 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from core.repositories.errors import RequirementNotFound, UnknownGlossaryElement
+from core.domain.requirement import REQUIREMENT_STATUSES, REQUIREMENT_TRANSITIONS
+from core.repositories.errors import RequirementNotFound, RequirementNotInStatus, UnknownGlossaryElement
 from core.repositories.requirements import RequirementRepository
 
 
@@ -31,21 +32,49 @@ def test_list_by_requester_newest_first(repo):
     assert {r.id for r in repo.list()} == {first.id, second.id, other.id}
 
 
-@pytest.mark.parametrize("status", ["onboarding", "ready", "access_restricted", "rejected"])
-def test_set_status(repo, status):
+# ---- status moves: one transition table in code (phase 3 plan, assumption 4)
+
+
+def _at(db_session, repo, status):
+    """A requirement put in `status` by hand (requirements is not append-only), to test a move from it."""
     req = repo.create(requester_id="dev-requester", title="T")
-    assert repo.set_status(req.id, status).status == status
-    assert repo.get(req.id).status == status
+    db_session.execute(text("UPDATE requirements SET status = :s WHERE id = :id"), {"s": status, "id": req.id})
+    db_session.expire_all()
+    return req
+
+
+@pytest.mark.parametrize(("source", "target"), sorted(REQUIREMENT_TRANSITIONS))
+def test_every_move_in_the_table_is_allowed(repo, db_session, source, target):
+    req = _at(db_session, repo, source)
+    assert repo.advance(req.id, target).status == target
+    assert repo.get(req.id).status == target
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    sorted((a, b) for a in REQUIREMENT_STATUSES for b in REQUIREMENT_STATUSES
+           if (a, b) not in REQUIREMENT_TRANSITIONS),
+)
+def test_every_move_not_in_the_table_is_refused(repo, db_session, source, target):
+    req = _at(db_session, repo, source)
+    with pytest.raises(RequirementNotInStatus, match=f"{source} to {target}"):
+        repo.advance(req.id, target)
+    assert repo.get(req.id).status == source
 
 
 def test_unknown_status_and_unknown_requirement(repo):
     req = repo.create(requester_id="dev-requester", title="T")
     with pytest.raises(ValidationError):
-        repo.set_status(req.id, "lost")
+        repo.advance(req.id, "lost")
     with pytest.raises(RequirementNotFound):
         repo.get(uuid.uuid4())
     with pytest.raises(RequirementNotFound):
-        repo.set_status(uuid.uuid4(), "ready")
+        repo.advance(uuid.uuid4(), "source_selected")
+
+
+def test_set_status_is_gone(repo):
+    """Phase 1's set_status() allowed any move; every change now goes through advance()."""
+    assert not hasattr(repo, "set_status")
 
 
 @pytest.mark.parametrize("bad", [{"title": " "}, {"requester_id": ""}])
@@ -87,10 +116,10 @@ def test_list_returns_each_requirements_own_elements(repo, glossary):
     ]
 
 
-def test_set_status_keeps_elements_and_terms(repo, glossary):
+def test_advance_keeps_elements_and_terms(repo, glossary):
     req = repo.create(requester_id="dev-requester", title="T", element_keys=["volume"], terms=["esg score"])
-    changed = repo.set_status(req.id, "onboarding")
-    assert (changed.status, changed.elements, changed.terms) == ("onboarding", ["volume"], ["esg score"])
+    changed = repo.advance(req.id, "source_selected")
+    assert (changed.status, changed.elements, changed.terms) == ("source_selected", ["volume"], ["esg score"])
 
 
 def test_unknown_element_is_refused_and_nothing_is_created(repo, glossary):

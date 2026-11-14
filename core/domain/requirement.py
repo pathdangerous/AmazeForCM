@@ -4,8 +4,8 @@ A requirement lists the glossary elements it asks for, and the terms the request
 in the glossary yet (the element_not_in_glossary outcome). Both lists are written once, with the
 requirement.
 
-Statuses are the names in CLAUDE.md. Phase 3 will add more by migration (for example
-awaiting_source_choice).
+Statuses are the names in CLAUDE.md, plus the custom data product's (phase 3, by migration).
+A status changes only along REQUIREMENT_TRANSITIONS.
 """
 
 from __future__ import annotations
@@ -18,8 +18,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.domain.common import NonBlank, SnakeName
 
-RequirementStatus = Literal["defined", "onboarding", "ready", "access_restricted", "rejected"]
+RequirementStatus = Literal["defined", "onboarding", "ready", "access_restricted", "rejected", "source_selected"]
 REQUIREMENT_STATUSES: tuple[str, ...] = get_args(RequirementStatus)
+
+# Every allowed status change (from, to), and nothing else (phase 3 plan, assumption 4 and section 5.1).
+# RequirementRepository.advance() refuses any other move with RequirementNotInStatus.
+REQUIREMENT_TRANSITIONS: frozenset[tuple[str, str]] = frozenset({
+    ("defined", "source_selected"),  # Known source? -> known_source: the source is selected
+    ("source_selected", "onboarding"),  # S4 -> fetched: the file is handed to step 02
+})
 
 
 class RequirementDraft(BaseModel):

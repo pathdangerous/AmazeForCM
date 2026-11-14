@@ -11,12 +11,16 @@ from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from core.domain.common import NonBlank, SnakeName
 
 FeedStage = Literal["candidate", "registered", "rejected"]
 FEED_STAGES: tuple[str, ...] = get_args(FeedStage)
+
+# How a feed's source is read (phase 3): one of the source connectors in ports/connectors.
+Connector = Literal["local_file", "http"]
+CONNECTORS: tuple[str, ...] = get_args(Connector)
 
 
 class FeedDraft(BaseModel):
@@ -27,6 +31,16 @@ class FeedDraft(BaseModel):
     requirement_id: UUID | None = None
     source_ref: NonBlank | None = None
     owner_id: NonBlank | None = None
+    source_code: SnakeName | None = None  # the catalogue source this feed reads; one feed per source
+    connector: Connector | None = None
+
+    @model_validator(mode="after")
+    def _source_complete(self) -> FeedDraft:
+        if (self.source_code is None) != (self.connector is None):
+            raise ValueError("source_code and connector are set together")
+        if self.connector is not None and self.source_ref is None:
+            raise ValueError("a feed with a connector needs a source_ref")
+        return self
 
 
 class Feed(BaseModel):
@@ -41,3 +55,5 @@ class Feed(BaseModel):
     owner_id: str | None
     source_ref: str | None
     registered_at: datetime | None
+    source_code: str | None
+    connector: Connector | None

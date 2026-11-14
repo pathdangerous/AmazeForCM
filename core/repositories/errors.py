@@ -74,6 +74,22 @@ class FeedNotRegistered(RepositoryError):
     """Loads arrive only for registered feeds."""
 
 
+class DuplicateFeedSource(RepositoryError):
+    """Another feed already reads this source: one feed per source (phase 3 plan, assumption 11)."""
+
+
+class FeedHasNoSource(RepositoryError):
+    """The feed has no connector, so its source cannot be fetched."""
+
+
+class RequirementNotInStatus(RepositoryError):
+    """The requirement's status cannot move to the one asked for (REQUIREMENT_TRANSITIONS)."""
+
+
+class RequirementAlreadyHasSource(RepositoryError):
+    """A requirement is handed to one source only."""
+
+
 # ---- loads and products
 
 

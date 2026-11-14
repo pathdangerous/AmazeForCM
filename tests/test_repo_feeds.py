@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from core.repositories.errors import (
     DuplicateFeedCode,
+    DuplicateFeedSource,
     FeedHasNoOwner,
     FeedNotACandidate,
     FeedNotFound,
@@ -50,6 +51,59 @@ def test_duplicate_code(repo):
 def test_unknown_requirement(repo):
     with pytest.raises(RequirementNotFound):
         repo.create_candidate(code="feed_a", name="Feed A", requirement_id=uuid.uuid4())
+
+
+# ---- phase 3: a candidate feed can carry its source (one feed per source)
+
+SOURCE = {"source_code": "syn_exchange_volumes", "connector": "local_file",
+          "source_ref": "files/exchange_volumes.csv"}
+
+
+def test_candidate_with_a_source(repo):
+    feed = repo.create_candidate(code="syn_exchange_volumes", name="Exchange volumes", **SOURCE)
+    assert (feed.source_code, feed.connector, feed.source_ref) == (
+        "syn_exchange_volumes", "local_file", "files/exchange_volumes.csv",
+    )
+    assert repo.get_by_source("syn_exchange_volumes") == feed
+    assert repo.get_by_source("syn_nothing") is None
+
+
+def test_one_feed_per_source(repo):
+    repo.create_candidate(code="feed_a", name="Feed A", **SOURCE)
+    with pytest.raises(DuplicateFeedSource, match="syn_exchange_volumes"):
+        repo.create_candidate(code="feed_b", name="Feed B", **SOURCE)
+
+
+def test_list_with_source_skips_feeds_without_a_connector_and_rejected_feeds(repo, db_session):
+    with_source = repo.create_candidate(code="feed_a", name="Feed A", **SOURCE)
+    repo.create_candidate(code="feed_b", name="Feed B")
+    rejected = repo.create_candidate(code="feed_c", name="Feed C", **{**SOURCE, "source_code": "syn_other"})
+    db_session.execute(text("UPDATE feeds SET stage = 'rejected' WHERE id = :id"), {"id": rejected.id})
+    db_session.expire_all()
+    assert [f.id for f in repo.list_with_source()] == [with_source.id]
+
+
+@pytest.mark.parametrize(
+    ("columns", "constraint"),
+    [
+        ("source_code, connector, source_ref) VALUES ('f', 'f', 's', 'ftp', 'x'",
+         "ck_feeds_connector"),
+        ("source_code, source_ref) VALUES ('f', 'f', 's', 'x'", "ck_feeds_source_and_connector_together"),
+        ("connector, source_ref) VALUES ('f', 'f', 'local_file', 'x'", "ck_feeds_source_and_connector_together"),
+        ("source_code, connector) VALUES ('f', 'f', 's', 'local_file'", "ck_feeds_connector_has_source_ref"),
+    ],
+)
+def test_database_refuses_an_incomplete_source(db_session, columns, constraint):
+    with pytest.raises(IntegrityError, match=constraint):
+        db_session.execute(text(f"INSERT INTO feeds (code, name, {columns})"))
+
+
+def test_database_refuses_a_second_feed_for_one_source(db_session):
+    db_session.execute(text("INSERT INTO feeds (code, name, source_code, connector, source_ref) "
+                            "VALUES ('a', 'A', 's', 'local_file', 'x')"))
+    with pytest.raises(IntegrityError, match="uq_feeds_source_code"):
+        db_session.execute(text("INSERT INTO feeds (code, name, source_code, connector, source_ref) "
+                                "VALUES ('b', 'B', 's', 'local_file', 'x')"))
 
 
 def test_register_with_owner(repo):

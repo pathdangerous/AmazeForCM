@@ -129,6 +129,38 @@ def _consumer_requests_row(db_session, request):
     return "consumer_requests", recorded.id
 
 
+# ---- phase 3a (migration 0008)
+
+
+def _source_feed(db_session):
+    from core.repositories.feeds import FeedRepository
+
+    return FeedRepository(db_session).create_candidate(
+        code="append_only_source", name="Append-only source", source_code="append_only_source",
+        connector="local_file", source_ref="files/append_only.csv",
+    )
+
+
+def _source_choices_row(db_session, request):
+    from core.repositories.requirements import RequirementRepository
+    from core.repositories.source_choices import SourceChoiceRepository
+
+    requirement = RequirementRepository(db_session).create(requester_id="dev-requester", title="Append-only")
+    choice = SourceChoiceRepository(db_session).record_known(
+        requirement_id=requirement.id, feed_id=_source_feed(db_session).id, source_code="append_only_source"
+    )
+    return "source_choices", choice.id
+
+
+def _source_fetches_row(db_session, request):
+    from core.repositories.source_fetches import SourceFetchRepository
+
+    row = SourceFetchRepository(db_session).record(
+        feed_id=_source_feed(db_session).id, outcome="source_down", detail="synthetic"
+    )
+    return "source_fetches", row.id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
     "approvals": _approvals_row,
@@ -140,6 +172,8 @@ ROWS = {
     "requirement_elements": _requirement_elements_row,
     "requirement_terms": _requirement_terms_row,
     "consumer_requests": _consumer_requests_row,
+    "source_choices": _source_choices_row,
+    "source_fetches": _source_fetches_row,
 }
 
 
