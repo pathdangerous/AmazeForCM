@@ -590,7 +590,7 @@ Then in the browser, signed in as Riley Requester:
 8. **Every click on "Ask the assistant" adds a `proposal_log` row.** The table is append-only; retention is a production question.
 9. **The transition table is enforced in code, not in the database.** Hand-written SQL can still set any listed status. A trigger could enforce the table too; not planned.
 10. **Tests start a local HTTP server on a thread.** Warnings are errors, so an unclosed socket fails the run. If this proves unstable, the server moves to a session fixture.
-11. **Two transactions in one request** (the selection, then the fetch) on the tests' shared session, as in phase 2 risk 10.
+11. **Two transactions in one request** (the selection, then the fetch) on the tests' shared session, as in phase 2 risk 10. **Closed after 3a** by `tests/test_commit_visibility.py` (section 17).
 12. **"Find a source" is started by the requester's browser.** If the page is closed first, the requirement stays `defined` until they press the button.
 13. **Under option A nobody checks an external approval.** The requester states they hold it by accepting the conditions; Amaze records the acceptance but does not verify it. The backend team's review in phase 4 is the control.
 14. **A scope can hide a fitting source.** A `private` scope never lists a public source. The way out is a note and a new scope.
@@ -767,5 +767,23 @@ dev.ps1                     three OK lines; health {"status":"ok", ..., "unavail
 **Findings left open (none blocks 3a):**
 
 1. **The three `dev.ps1` windows are still open.** Close them before running `dev.ps1` again.
-2. **The API tests cannot see a missing commit** (above, and risk 11).
+2. **The API tests cannot see a missing commit** (above, and risk 11). Closed after approval; see below.
 3. **A `source_down` requirement has no way back yet.** Section 16 records your decision for 3b.
+
+### After 3a approval: commit visibility (risk 11 closed)
+
+`tests/test_commit_visibility.py`, 2 tests. Each uses the app's real session factory on `amaze_test` and reads the result on a separate connection, which sees only committed rows:
+
+1. `test_find_source_commits_the_selection_and_the_fetch`: the API with no session override, so each request gets its own session from `get_db_session`. Raise `volume`, then Find a source. Then, on a separate connection: requirement `onboarding`, the `source_choices` row, a `fetched` row, and the "File ready to profile" notification.
+2. `test_the_daily_job_commits_each_fetch`: `DailyFetch` with `ports.db.get_sessionmaker` on `amaze_test`. Then, on a separate connection: requirement `onboarding`, one `fetched` row, one notification.
+
+**Each test gets its own schema** in `amaze_test`, migrated from scratch and dropped afterwards. The rows are really committed, and the append-only tables refuse DELETE, so removing them row by row would mean working around the triggers. Dropping the whole schema does not, and the test fixture already does the same to `public` on every run. No schema is left behind.
+
+**Shown failing with the commit removed, then restored:**
+
+| Commit removed | New test | The shared-session tests |
+|---|---|---|
+| `session.commit()` after the fetch in `find_source` | failed: `[('source_selected',)] == [('onboarding',)]` | all 8 in `test_api_consumer_sourcing.py` still passed |
+| `session.commit()` per feed in `DailyFetch.run` | failed: `[('source_selected',)] == [('onboarding',)]` | all 5 in `test_jobs.py` still passed |
+
+The second column is the gap risk 11 described; the new tests close it. Both lines were restored with the Edit tool; `git diff` of `apps/` is empty. Tests: 781 pass, run twice.
