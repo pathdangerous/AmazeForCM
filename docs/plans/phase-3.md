@@ -800,7 +800,8 @@ Then in the browser, signed in as Riley Requester:
 18. **An idle candidate feed is not fetched.** If the backend team wants its data anyway, nothing fetches it until a requirement selects it again or it is registered (phase 4). A registered feed is always fetched (Q4).
 19. **"Known source?" is not run again after a release.** A second known source that also declares the data is found only through S1 and S2.
 20. **The accepted conditions are compared as a whole.** A change to a source's wording in the catalogue makes every open list of that source ask for acceptance again. That is intended, but it can surprise.
-21. **Seven more commit-visibility tests add about 7 to 10 seconds** to every test run. If that hurts, the schema can be built once per test file: about 2 to 3 seconds, at the price of tests that share committed rows.
+21. **Seven more commit-visibility tests add about 7 to 10 seconds** to every test run. If that hurts, the schema can be built once per test file: about 2 to 3 seconds, at the price of tests that share committed rows. **Measured at checkpoint 5: about 14 s for the six built so far** (section 17).
+22. **An agent's input file can outlive a rolled-back transaction** (an orphan with no `proposal_log` row). Harmless in the PoC; production needs a cleanup sweep (section 17, after checkpoint 4).
 
 ## 16. Carried forward
 
@@ -1038,3 +1039,64 @@ alembic current          0009 (head)
 ```
 
 Triggers on `source_choices`: `trg_source_choices_a_version`, `_b_approved_pick`, `_c_proposal_match`, `_d_requester`, `_append_only`, `_no_truncate`. On `requirement_scopes`: `_b_approved_proposal`, `_c_proposal_match`, `_d_requester`, `_append_only`, `_no_truncate`. The three existing choices read back as version 1, `selected`, `known_source`, with no reason, proposal, conditions or decider. Requirements: 5 `defined`, 2 `onboarding`, 1 `source_selected`, as before.
+
+### Tasks 14 to 17 (checkpoint 5)
+
+Tests: 995 at checkpoint 4, 1077 at checkpoint 5. All pass, none skipped, no warnings. Full run: 64 s (47 s before task 17's API and commit-visibility tests).
+
+**Recorded after checkpoint 4 (your note): an orphan input file.** `Agent.run()` stores the input file (`agent-inputs/<agent>/<id>.json`) after the model call and before the `proposal_log` row is flushed. If the caller's transaction later rolls back (a later step fails, or the commit fails), the file stays with no log row pointing at it. Harmless in the PoC: nothing reads an input file without its log row. Production needs a cleanup, for example a sweep that removes `agent-inputs/` keys that no `proposal_log.input_ref` names, after a grace period. Risk 22.
+
+**The ten outcome tests, by name, all pass:** the four of 3a (checkpoint 2) and `test_scoped_when_the_requester_confirms`, `test_scope_not_confirmed_when_the_requester_rejects`, `test_sources_listed_one_proposal_per_source`, `test_no_fit_when_no_source_in_scope_covers_the_request`, `test_source_picked_when_the_requester_accepts_the_conditions`, `test_approval_missing_when_the_conditions_are_not_accepted_and_nothing_is_fetched` (two cases: no acceptance; another source's conditions). `test_all_eight_s1_to_s4_outcomes_have_a_union` checks the eight S1 to S4 names against `CLAUDE.md` in order.
+
+**The done-when test** `test_done_when_picking_a_source_hands_a_fetched_file_to_step_02` (row E): raise `open price`; Find a source proposes a public scope; confirm; two sources listed (backup first, then vendor, with its external approval); pick the vendor without an acceptance: `approval_missing`, the exact message, no feed, status `awaiting_source_choice`; pick with the conditions: `source_picked`, `fetched`, the stored file, "Your data is getting onboarded; we will notify you once it is ready.", status `onboarding`, and the candidate feed in `/api/amaze/feeds`. Passes.
+
+**The Q4 tests:**
+
+| Test | Passes | Made to pass by |
+|---|---|---|
+| `test_jobs.py::test_the_job_always_fetches_a_registered_feed` | yes | already true of 3a's job, which fetched every feed with a connector; written in task 16 so that `list_to_fetch()` cannot lose the case |
+| `test_jobs.py::test_the_job_skips_a_candidate_feed_that_no_requirement_selects` | yes | task 16 (`80a8704`): `FeedRepository.list_to_fetch()` |
+
+Also `test_a_new_selection_wakes_the_feed` and `test_repo_feeds.py::test_list_to_fetch_leaves_out_a_candidate_feed_no_requirement_selects`.
+
+**Proofs that guards can fail** (each removed with the Edit tool, run, restored; `grep PROOF` finds nothing in the source):
+
+| Guard removed | Tests that failed |
+|---|---|
+| S2: dropping a source the agent invents | `test_a_source_the_agent_invents_is_dropped`, `test_an_invented_or_repeated_source_is_dropped` |
+| S3: accepted conditions must equal those in force | the `conditions_changed` case, `test_approval_missing_when_the_conditions_changed_since_the_list`, `test_picking_again_needs_a_new_acceptance` |
+| `list_to_fetch()`: "currently selected" | `test_the_job_skips_a_candidate_feed_that_no_requirement_selects`, `test_a_new_selection_wakes_the_feed`, `test_list_to_fetch_leaves_out_a_candidate_feed_no_requirement_selects` |
+| N-day rule: only `source_selected` | `test_an_onboarding_requirement_is_never_released` |
+| N-day rule: counting from the selection | `test_days_before_the_selection_do_not_count` |
+
+**Commit visibility: each commit removed** (a temporary helper ran `_in_transaction` with `session.commit` made a no-op, for one endpoint at a time):
+
+| Commit removed | Its test | Others that failed | Shared-session API tests |
+|---|---|---|---|
+| `POST .../scope` | `test_scope_commits_the_proposal` failed | none | all passed |
+| `POST .../scope/decision` | `test_scope_decision_commits_the_scope` failed | the 4 whose flows pass through it | all passed |
+| `POST .../sources` | `test_sources_commits_one_proposal_per_source` failed | pick, decline | `test_a_wrong_status_is_409` failed, as an effect of the proof: the next request's 409 rolled back the uncommitted list on the shared session |
+| `POST .../pick`, its fetch commit | `test_pick_commits_the_choice_and_the_fetch` failed | the 3a Find a source test | all passed |
+| `POST .../decline` | `test_decline_commits_the_rejection` failed | none | all passed |
+| `POST .../release` | `test_release_commits_the_released_row` failed | none | all passed |
+| Find a source, first commit | the S1-branch tests (scope, decision, sources, pick, decline) failed | | all passed |
+
+**A correction to assumption 57.** It said that removing Find a source's first commit "still fails the existing test". It does not: for a known source the fetch's commit commits the selection too, so `test_find_source_commits_the_selection_and_the_fetch` passes without it. The S1-branch tests above catch it. For the same reason a pick's own commit is covered by the fetch's commit; the commit that the pick test protects is the fetch's.
+
+**Added test time: about 14 s for the six new commit-visibility tests** (1.5 to 4.3 s each, mostly building the schema), against the 7 to 10 s planned (risk 21). Q5 kept one schema per test.
+
+**Deviations from the plan:**
+
+1. **Each candidate the S2 agent sees carries its catalogue conditions and code-computed coverage;** the agent copies them from its input into each proposal. The output schema forbids extra fields, so a model cannot set them.
+2. **With no source in scope, S2 calls no model** (`no_fit`, `nothing_in_scope`, no log row).
+3. **Listed sources show the catalogue's conditions now** (the ones a pick must accept), not the copy in the proposal.
+4. **`approval_missing` with reason `conditions_changed` also covers an acceptance of other conditions**, not only a change since the list.
+5. **`Released` holds `source_code` and `source_name`** instead of a `SourceSummary`, so it survives a source leaving the catalogue; it also names the requirement.
+6. **`fetch_source` takes `release_after_days` and `catalogue`;** None means no rule, so 3a's callers are unchanged. `DailyFetch` gets both from the settings.
+7. **`FeedRepository.list_with_source()` is removed** for `list_to_fetch()`. 3a's `test_one_failing_feed_does_not_stop_the_others` now registers its broken feed, since an unselected candidate is no longer fetched.
+8. **One `_in_transaction` helper in the consumer router** commits each step or rolls it back. `NotTheRequester`, `ProposalForAnotherRequirement` and `ProposalNotFound` give 404; `RequirementNotInStatus` and `ProposalAlreadyDecided` give 409; `StepInputError` gives 422.
+9. **Find a source with no known source now answers "No known source has this data yet. Confirm where Amaze should look for it."** and returns the scope. 3a's test is now `test_no_known_source_proposes_a_scope`.
+10. **Messages the plan did not word, now fixed in `requirement_page.py`:** scope to confirm, scope not confirmed, scope confirmed, pick a source, and "No listed source is left. Add a note and ask for a new scope." (every listed source declined).
+11. **`test_n_is_the_setting` also checks that `DailyFetch.from_settings` reads the setting**, and a bad value is refused by name (`test_a_bad_source_down_release_days_is_refused_by_name`).
+
+**Application database:** no migration in tasks 14 to 17; `alembic current` is `0009 (head)`. The catalogue gained `syn_backup_eod_prices` (no file, on purpose).
