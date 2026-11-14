@@ -185,6 +185,36 @@ def test_s2_results_round_trip():
     round_trips(SourcesResult, NoFit(reason="nothing_in_scope"))
 
 
+# ---- phase 3b: S3 pick (task 15)
+
+
+def test_s3_outcomes_are_the_third_two_of_claude_mds_s1_to_s4():
+    from core.steps.s3_pick import PickResult
+
+    assert union_outcomes(PickResult) == claude_md_outcomes("S1–S4")[4:6] == ["source_picked", "approval_missing"]
+
+
+def test_all_eight_s1_to_s4_outcomes_have_a_union():
+    from core.steps.s1_scope import ScopeResult
+    from core.steps.s2_sources import SourcesResult
+    from core.steps.s3_pick import PickResult
+    from core.steps.s4_fetch import FetchResult
+
+    names = [n for union in (ScopeResult, SourcesResult, PickResult, FetchResult) for n in union_outcomes(union)]
+    assert names == claude_md_outcomes("S1–S4")
+
+
+def test_s3_results_round_trip():
+    from core.domain.sourcing import SourceSummary
+    from core.steps.s3_pick import ApprovalMissing, PickResult, SourcePicked
+    from ports.connectors.catalogue import SourceConditions
+
+    conditions = SourceConditions(licence="L", permitted_use="P", redistribution="R", external_approvals=["A"])
+    source = SourceSummary(code="syn_x", name="X", provider="P", visibility="public", conditions=conditions)
+    round_trips(PickResult, SourcePicked(source=source, feed_code="syn_x"))
+    round_trips(PickResult, ApprovalMissing(source=source, conditions=conditions, reason="conditions_changed"))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str

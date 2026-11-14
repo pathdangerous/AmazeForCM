@@ -70,14 +70,20 @@ def check_known_source(requirement: Requirement, catalogue: SourceCatalogue) -> 
     return KnownSource(source=SourceSummary.of(entry))
 
 
+def feed_for(session: Session, *, entry: SourceEntry, requirement_id: UUID) -> Feed:
+    """The candidate feed of this source: the existing one, or a new one linked to the first requirement
+    that selects it (one feed per source, assumption 11). Also used by S3."""
+    feeds = FeedRepository(session)
+    return feeds.get_by_source(entry.code) or feeds.create_candidate(
+        code=entry.code, name=entry.name, requirement_id=requirement_id, source_code=entry.code,
+        connector=entry.connector, source_ref=entry.source_ref,
+    )
+
+
 def select_source(session: Session, *, requirement: Requirement, entry: SourceEntry) -> tuple[Feed, SourceChoice]:
     """Hand the requirement to a source: its candidate feed (one per source) and the choice; the
     requirement moves to source_selected. Flushes; the caller commits."""
-    feeds = FeedRepository(session)
-    feed = feeds.get_by_source(entry.code) or feeds.create_candidate(
-        code=entry.code, name=entry.name, requirement_id=requirement.id, source_code=entry.code,
-        connector=entry.connector, source_ref=entry.source_ref,
-    )
+    feed = feed_for(session, entry=entry, requirement_id=requirement.id)
     choice = SourceChoiceRepository(session).record_known(
         requirement_id=requirement.id, feed_id=feed.id, source_code=entry.code
     )
