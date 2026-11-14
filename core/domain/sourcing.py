@@ -11,10 +11,23 @@ from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny, model_validator
 
 from core.domain.common import NonBlank
+from core.domain.proposal import Proposal
 from ports.connectors.catalogue import SourceConditions, SourceEntry
+
+
+class AgentRun(BaseModel):
+    """What agents/base.Agent.run() returns: the logged call, its validated output and the proposals
+    it created (none for a read-only agent). Steps receive this; they never call a model themselves."""
+
+    model_config = ConfigDict(frozen=True)
+
+    log_id: UUID
+    input_ref: str
+    output: SerializeAsAny[BaseModel]
+    proposals: list[Proposal]
 
 
 class SourceSummary(BaseModel):
