@@ -6,6 +6,9 @@ session, so a missing session.commit() would go unnoticed there. These tests:
   job) on amaze_test;
 - read the result from a separate connection, which sees only committed rows.
 
+Rule (2026-11-14): one test per endpoint (or job) that commits, happy path only. Negative outcomes
+stay in the shared-session tests. Cost: about 1.0 to 1.5 s per test, mostly the schema below.
+
 Each test gets its own schema in amaze_test, migrated from scratch and dropped afterwards. Rows are
 really committed, and the append-only tables refuse DELETE, so cleaning up row by row would mean
 working around the triggers; dropping the whole schema does not (the test fixture does the same to

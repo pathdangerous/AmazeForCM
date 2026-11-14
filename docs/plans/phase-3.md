@@ -607,6 +607,10 @@ Notes only; nothing here is built in 3a.
 
    The feed and its fetch history stay; only the requirement moves.
 
+   **Commit-visibility tests (your rule, after 3a, 2026-11-14):** one per endpoint that commits, happy path only. Negative outcomes stay in the shared-session tests. In 3b that is 6 new tests: `.../scope`, `.../scope/decision`, `.../sources`, `.../pick`, `.../decline` and `/search/assist` (the assistant's commit is its `proposal_log` row). Find a source and the daily job already have theirs.
+
+   **Expected added time:** measured at 1.0 to 1.5 s per test, of which 0.6 to 0.9 s is migrating and dropping the test's own schema. 6 tests add about 6 to 9 s, so the suite goes from about 24 s to about 30 to 33 s. If that is too much, the schema can be made once per test module instead of once per test: about 0.2 to 0.5 s per test, about 2 to 3 s for the six. The tests stay independent because each one uses its own requirement.
+
    **Your decision (checkpoint 2, 2026-11-14): `source_choices` becomes versioned per requirement; the highest version is current.** Releasing a source is a new row with action `released` and a reason (`source_down_n_days` or `requester_asked`). Picking again adds the next version. The details go in the 3b plan. This replaces 3a's "one row per requirement" (`uq_source_choices_requirement_id`) by a migration in 3b.
 
 **Phase 4**
