@@ -16,6 +16,19 @@ class LocalFileConnector:
     def __init__(self, base_dir: Path = DEFAULT_SOURCES_ROOT):
         self._base = Path(base_dir).resolve()
 
+    @property
+    def base_dir(self) -> Path:
+        return self._base
+
+    def __enter__(self) -> LocalFileConnector:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Nothing to close; present so every connector is used the same way."""
+
     def fetch(self, source_ref: str) -> FetchedFile:
         path = (self._base / source_ref).resolve()
         if not path.is_relative_to(self._base):

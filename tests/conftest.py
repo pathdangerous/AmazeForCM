@@ -171,6 +171,47 @@ def approved_proposal(db_session, make_proposal):
     return _approve
 
 
+# ---------------------------------------------------------------- phase 3: a local HTTP source
+
+
+@pytest.fixture
+def local_http_server():
+    """An HTTP server on 127.0.0.1 (a free port), in a thread, for the HTTP connector.
+
+    Serve a path by setting server.files[path] = bytes; any other path gives 404. Every request path is
+    appended to server.requests. Never reaches the internet (phase 3 plan, assumption 16)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    files: dict[str, bytes] = {}
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 (http.server's name)
+            requests.append(self.path)
+            body = files.get(self.path)
+            self.send_response(200 if body is not None else 404)
+            self.send_header("Content-Type", "text/csv")
+            self.send_header("Content-Length", str(len(body or b"")))
+            self.end_headers()
+            self.wfile.write(body or b"")
+
+        def log_message(self, *args):  # keep the test output clean
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.files, server.requests = files, requests
+    server.url = f"http://127.0.0.1:{server.server_address[1]}"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 # ---------------------------------------------------------------- phase 2: glossary and products
 
 
