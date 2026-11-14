@@ -14,3 +14,12 @@ class NothingToRequest(StepInputError):
 
 class TermInGlossary(StepInputError):
     """A ticked term is a glossary phrase; it must be requested as the element instead."""
+
+
+class NotTheRequester(Exception):
+    """Only the requirement's own requester decides its scope and its source (phase 3 plan, assumption 29).
+    Not a StepInputError: the API answers 404, as for another requester's requirement."""
+
+
+class NothingToDecide(StepInputError):
+    """There is no pending proposal of this kind for the requirement."""

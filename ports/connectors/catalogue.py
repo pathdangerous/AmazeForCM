@@ -101,6 +101,13 @@ class SourceCatalogue:
         except KeyError:
             raise UnknownSource(f"No source {code!r} in the catalogue") from None
 
+    def channels(self) -> list[tuple[str, str]]:
+        """Each (channel, visibility) once, in catalogue order: where S1 may say to search."""
+        seen: dict[tuple[str, str], None] = {}
+        for entry in self.entries:
+            seen.setdefault((entry.channel, entry.visibility), None)
+        return list(seen)
+
     def known(self) -> list[SourceEntry]:
         """The sources Amaze already has an agreement and a connection for, in catalogue order."""
         return [e for e in self.entries if e.known]

@@ -146,6 +146,29 @@ def test_s4_results_round_trip():
     round_trips(FetchResult, SourceDown(feed_code="f", fetch_id=uuid.uuid4(), detail="not answering"))
 
 
+# ---- phase 3b: S1 scope (task 13)
+
+
+def test_s1_outcomes_are_the_first_two_of_claude_mds_s1_to_s4():
+    from core.steps.s1_scope import ScopeResult
+
+    assert union_outcomes(ScopeResult) == claude_md_outcomes("S1–S4")[:2] == ["scoped", "scope_not_confirmed"]
+
+
+def test_s1_results_round_trip():
+    import uuid
+    from datetime import UTC, datetime
+
+    from core.domain.sourcing import RequirementScope
+    from core.steps.s1_scope import ScopeNotConfirmed, Scoped, ScopeResult
+
+    scope = RequirementScope(id=uuid.uuid4(), created_at=datetime.now(UTC), requirement_id=uuid.uuid4(), version=1,
+                             visibility="public", provider="P", where_to_search=["exchanges"],
+                             proposal_id=uuid.uuid4(), confirmed_by="dev-requester")
+    round_trips(ScopeResult, Scoped(scope=scope))
+    round_trips(ScopeResult, ScopeNotConfirmed(note=None))
+
+
 class Done(StepResult):
     outcome: Literal["done"] = "done"
     detail: str

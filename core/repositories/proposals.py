@@ -53,6 +53,16 @@ class ProposalRepository:
             query = query.where(ProposalRow.kind == kind)
         return [Proposal.model_validate(row) for row in self._session.scalars(query)]
 
+    def list_for_requirement(self, requirement_id: UUID, kind: ProposalKind,
+                             status: ProposalStatus | None = None) -> list[Proposal]:
+        """This requirement's proposals of one kind, oldest first."""
+        query = (select(ProposalRow)
+                 .where(ProposalRow.requirement_id == requirement_id, ProposalRow.kind == kind)
+                 .order_by(ProposalRow.created_at, ProposalRow.id))
+        if status is not None:
+            query = query.where(ProposalRow.status == status)
+        return [Proposal.model_validate(row) for row in self._session.scalars(query)]
+
     def approvals(self, proposal_id: UUID) -> list[Approval]:
         rows = self._session.scalars(
             select(ApprovalRow).where(ApprovalRow.proposal_id == proposal_id).order_by(ApprovalRow.step)

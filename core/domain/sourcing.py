@@ -79,6 +79,48 @@ class SourceChoice(BaseModel):
     decided_by: str | None
 
 
+# ---------------------------------------------------------------- agents' inputs and outputs (assumption 21)
+
+
+class ElementRef(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    name: str
+
+
+class ChannelRef(BaseModel):
+    """A channel of the catalogue (where sources are found) and the visibility of its sources."""
+
+    model_config = ConfigDict(frozen=True)
+
+    channel: str
+    visibility: Visibility
+
+
+class IntentInput(BaseModel):
+    """S1: what the IntentAgent sees."""
+
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: UUID
+    requirement_text: str
+    purpose: str | None
+    note: str | None
+    elements: list[ElementRef]
+    terms: list[str]
+    channels: list[ChannelRef]
+
+
+class IntentOutput(BaseModel):
+    """S1: the proposed scope. Also the scope proposal's payload."""
+
+    visibility: Visibility
+    provider: NonBlank
+    where_to_search: list[NonBlank]
+    reason: NonBlank
+
+
 class RequirementScopeDraft(BaseModel):
     """S1: what the requester confirmed, exactly as the IntentAgent proposed it."""
 
