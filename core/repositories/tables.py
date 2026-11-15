@@ -350,6 +350,101 @@ class SourceFetchRow(Base):
     detail: Mapped[str | None] = mapped_column(Text)
 
 
+class FeedProfileRow(Base):
+    """Step 02: one DuckDB profile of a feed's fetched file, versioned per feed; the highest version is
+    current. Append-only (migration 0014; triggers: the next version, a fetched file of the same feed)."""
+
+    __tablename__ = "feed_profiles"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "version"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("outcome IN ('profiled', 'spec_only_low_confidence')", name="outcome"),
+        CheckConstraint(
+            "outcome <> 'profiled' OR (row_count IS NOT NULL AND row_count >= 1 AND detail IS NULL "
+            "AND jsonb_typeof(columns) = 'array' AND jsonb_array_length(columns) >= 1)", name="profiled_has_rows"),
+        CheckConstraint(
+            "outcome <> 'spec_only_low_confidence' OR (COALESCE(row_count, 0) = 0 AND detail IS NOT NULL "
+            "AND length(btrim(detail)) > 0)", name="spec_only_has_a_reason"),
+        CheckConstraint(
+            "jsonb_typeof(columns) = 'array' AND jsonb_typeof(coverage) = 'array' AND jsonb_typeof(spec) = 'object'",
+            name="json_shapes"),
+        CheckConstraint("length(btrim(engine)) > 0 AND length(btrim(profiled_by)) > 0", name="text_present"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    fetch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("source_fetches.id"))
+    outcome: Mapped[str] = mapped_column(Text)
+    row_count: Mapped[int | None] = mapped_column(Integer)
+    columns: Mapped[list[Any]] = mapped_column(JSONB)
+    coverage: Mapped[list[Any]] = mapped_column(JSONB)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    detail: Mapped[str | None] = mapped_column(Text)
+    engine: Mapped[str] = mapped_column(Text)
+    profiled_by: Mapped[str] = mapped_column(Text)
+
+
+class FeedSignoffRow(Base):
+    """Step 03: the backend team's sign-off of a profile, versioned per feed; the gaps and reasons are kept.
+    Append-only (migration 0014; triggers: the next version; a candidate feed, its latest profile, that
+    profile's summary decided by the signer; decision D1)."""
+
+    __tablename__ = "feed_signoffs"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "version"),
+        UniqueConstraint("profile_id"),
+        UniqueConstraint("proposal_id"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("outcome IN ('meets', 'meets_with_gaps', 'rejected')", name="outcome"),
+        CheckConstraint(
+            "(outcome = 'meets' AND cardinality(gaps) = 0 AND cardinality(reasons) = 0) OR "
+            "(outcome = 'meets_with_gaps' AND cardinality(gaps) >= 1 AND cardinality(reasons) = 0) OR "
+            "(outcome = 'rejected' AND cardinality(reasons) >= 1 AND cardinality(gaps) = 0)",
+            name="gaps_and_reasons_fit"),
+        CheckConstraint("length(btrim(signed_off_by)) > 0", name="signed_off_by"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feed_profiles.id"))
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+    outcome: Mapped[str] = mapped_column(Text)
+    gaps: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    reasons: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    signed_off_by: Mapped[str] = mapped_column(Text)
+
+
+class FeedRegistrationRow(Base):
+    """Step 04: owner, licence and visibility of a registered feed, versioned per feed. Append-only
+    (migration 0014; trigger: the feed's latest sign-off, accepting, on its latest profile)."""
+
+    __tablename__ = "feed_registrations"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "version"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("visibility IN ('open', 'restricted')", name="visibility"),
+        CheckConstraint(
+            "length(btrim(owner_id)) > 0 AND length(btrim(licence)) > 0 AND length(btrim(permitted_use)) > 0 "
+            "AND length(btrim(redistribution)) > 0 AND length(btrim(registered_by)) > 0", name="text_present"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    signoff_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feed_signoffs.id"))
+    owner_id: Mapped[str] = mapped_column(Text)
+    licence: Mapped[str] = mapped_column(Text)
+    permitted_use: Mapped[str] = mapped_column(Text)
+    redistribution: Mapped[str] = mapped_column(Text)
+    visibility: Mapped[str] = mapped_column(Text)
+    registered_by: Mapped[str] = mapped_column(Text)
+
+
 class MappingRow(Base):
     """Level 1 mapping: one source field to one glossary element. Append-only.
 

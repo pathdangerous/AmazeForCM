@@ -96,6 +96,16 @@ class FeedRepository:
         self._session.flush()
         return Feed.model_validate(row)
 
+    def reject(self, feed_id: UUID) -> Feed:
+        """Step 03 rejected: the candidate becomes rejected, for good in phase 4. The database needs the
+        feed's latest sign-off to be rejected (0014)."""
+        row = self._row(feed_id, lock=True)
+        if row.stage != "candidate":
+            raise FeedNotACandidate(f"Feed {row.code!r} is {row.stage}, not a candidate")
+        row.stage = "rejected"
+        self._session.flush()
+        return Feed.model_validate(row)
+
     def _row(self, feed_id: UUID, *, lock: bool = False) -> Row:
         query = select(Row).where(Row.id == feed_id)
         if lock:

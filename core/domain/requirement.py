@@ -44,6 +44,8 @@ REQUIREMENT_TRANSITIONS: frozenset[tuple[str, str]] = frozenset({
     ("source_selected", "no_source_found"),  # released; none is left
     ("defined", "no_source_found"),  # S1 proposed no channel to search: no_fit (review fix 5)
     ("scope_not_confirmed", "no_source_found"),  # the same, when asked again
+    ("onboarding", "awaiting_source_choice"),  # 03 rejected: released (candidate_rejected); a listed source is left
+    ("onboarding", "no_source_found"),  # 03 rejected: released; none is left (phase 4 plan, assumption 24)
 })
 
 

@@ -163,7 +163,9 @@ async def test_my_requests_lists_every_outcome(client, db_session, approved_prop
     from core.repositories.loads import LoadRepository
 
     feeds = FeedRepository(db_session)
-    feed = feeds.register(feeds.create_candidate(code="synthetic_feed", name="Synthetic").id, owner_id="dev-data-owner")
+    from tests.onboarded import registered_feed
+
+    feed = registered_feed(db_session, feeds.create_candidate(code="synthetic_feed", name="Synthetic").id)
     MappingRepository(db_session).add_version(feed_id=feed.id, source_field="Vol", element_key="volume",
                                               proposal_id=approved_proposal(kind="mapping").id)
     loads = LoadRepository(db_session)

@@ -156,6 +156,20 @@ def test_a_release_names_the_requester_only_when_asked(repo, feed, requirement, 
         repo.record_release(requirement_id=req.id, reason=reason, decided_by=decided_by)
 
 
+def test_a_candidate_rejected_release_names_nobody(repo, feed, requirement, db_session):
+    """Phase 4 (0014): the backend team rejected the feed; the person is on the sign-off, not here."""
+    from tests.onboarded import rejected_feed
+
+    req = requirement()
+    repo.record_known(requirement_id=req.id, feed_id=feed.id, source_code="syn_a")
+    with pytest.raises(ValueError):
+        repo.record_release(requirement_id=req.id, reason="candidate_rejected", decided_by="dev-backend-team")
+    rejected_feed(db_session, feed.id)
+    released = repo.record_release(requirement_id=req.id, reason="candidate_rejected")
+    assert (released.version, released.action, released.reason, released.decided_by) == (
+        2, "released", "candidate_rejected", None)
+
+
 def test_unknown_requirement_or_feed_and_a_source_that_is_not_the_feeds(repo, feed, requirement):
     with pytest.raises(RequirementNotFound):
         repo.record_known(requirement_id=uuid.uuid4(), feed_id=feed.id, source_code="syn_a")

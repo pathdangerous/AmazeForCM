@@ -50,7 +50,8 @@ ChoiceBasis = Literal["known_source", "requester_pick"]
 CHOICE_BASES: tuple[str, ...] = get_args(ChoiceBasis)
 ChoiceAction = Literal["selected", "released"]
 CHOICE_ACTIONS: tuple[str, ...] = get_args(ChoiceAction)
-ReleaseReason = Literal["source_down_n_days", "requester_asked"]
+ReleaseReason = Literal["source_down_n_days", "requester_asked",
+                        "candidate_rejected"]  # phase 4 (0014): the backend team rejected the candidate feed
 RELEASE_REASONS: tuple[str, ...] = get_args(ReleaseReason)
 Visibility = Literal["public", "private"]  # a scope's; not a product's visibility
 SCOPE_VISIBILITIES: tuple[str, ...] = get_args(Visibility)

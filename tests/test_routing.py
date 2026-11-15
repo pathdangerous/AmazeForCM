@@ -172,8 +172,9 @@ def in_the_domains(db_session, approved_proposal):
 
     def _put(*keys):
         feeds = FeedRepository(db_session)
-        feed = feeds.register(feeds.create_candidate(code="synthetic_feed", name="Synthetic feed").id,
-                              owner_id="dev-data-owner")
+        from tests.onboarded import registered_feed
+
+        feed = registered_feed(db_session, feeds.create_candidate(code="synthetic_feed", name="Synthetic feed").id)
         for key in keys:
             MappingRepository(db_session).add_version(feed_id=feed.id, source_field=key.upper(), element_key=key,
                                                       proposal_id=approved_proposal(kind="mapping").id)

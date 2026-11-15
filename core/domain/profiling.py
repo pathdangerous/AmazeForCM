@@ -6,10 +6,13 @@ coverage against each requirement, and the stored profile.
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from core.domain.common import NonBlank
 
 
 class FileColumn(BaseModel):
@@ -64,3 +67,93 @@ class RequirementCoverage(BaseModel):
     requirement_id: UUID
     items: list[ItemCoverage]  # elements, then terms, each in the requirement's order
     missing: list[str]  # not declared, or declared and absent from the file
+
+
+# ---------------------------------------------------------------- stored rows (migration 0014)
+
+ProfileOutcome = Literal["profiled", "spec_only_low_confidence"]
+PROFILE_OUTCOMES: tuple[str, ...] = get_args(ProfileOutcome)
+SignoffOutcome = Literal["meets", "meets_with_gaps", "rejected"]
+SIGNOFF_OUTCOMES: tuple[str, ...] = get_args(SignoffOutcome)
+
+
+class FeedProfileDraft(BaseModel):
+    """One profile, validated before it is written: profiled has data rows and no detail; spec only has
+    no data rows and says why."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    feed_id: UUID
+    fetch_id: UUID
+    outcome: ProfileOutcome
+    row_count: int | None = Field(default=None, ge=0)
+    columns: list[FileColumn]
+    coverage: list[RequirementCoverage]
+    spec: SourceSpec
+    detail: NonBlank | None = None
+    engine: NonBlank
+    profiled_by: NonBlank
+
+    @model_validator(mode="after")
+    def _consistent(self) -> FeedProfileDraft:
+        if self.outcome == "profiled" and not (self.row_count and self.columns and self.detail is None):
+            raise ValueError("a profiled row has data rows, columns and no detail")
+        if self.outcome == "spec_only_low_confidence" and (self.row_count or self.detail is None):
+            raise ValueError("a spec-only profile has no data rows and says why")
+        return self
+
+
+class FeedProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    created_at: datetime
+    feed_id: UUID
+    version: int
+    fetch_id: UUID
+    outcome: ProfileOutcome
+    row_count: int | None
+    columns: list[FileColumn]
+    coverage: list[RequirementCoverage]
+    spec: SourceSpec
+    detail: str | None
+    engine: str
+    profiled_by: str
+
+
+class FeedSignoffDraft(BaseModel):
+    """meets: no gap, no reason; meets_with_gaps: at least one gap; rejected: at least one reason."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    feed_id: UUID
+    profile_id: UUID
+    proposal_id: UUID
+    outcome: SignoffOutcome
+    gaps: list[NonBlank] = Field(default_factory=list)
+    reasons: list[NonBlank] = Field(default_factory=list)
+    signed_off_by: NonBlank
+
+    @model_validator(mode="after")
+    def _fits(self) -> FeedSignoffDraft:
+        fits = {"meets": not self.gaps and not self.reasons,
+                "meets_with_gaps": bool(self.gaps) and not self.reasons,
+                "rejected": bool(self.reasons) and not self.gaps}[self.outcome]
+        if not fits:
+            raise ValueError("meets has no gap or reason; meets_with_gaps has gaps only; rejected has reasons only")
+        return self
+
+
+class FeedSignoff(BaseModel):
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    created_at: datetime
+    feed_id: UUID
+    version: int
+    profile_id: UUID
+    proposal_id: UUID
+    outcome: SignoffOutcome
+    gaps: list[str]
+    reasons: list[str]
+    signed_off_by: str

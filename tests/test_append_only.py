@@ -187,7 +187,37 @@ def _proposal_log_discards_row(db_session, request):
     return "proposal_log_discards", ProposalLog(db_session).discard(proposal_log_id=log_id, reason="synthetic").id
 
 
+# ---- phase 4 (migration 0014)
+
+
+def _phase_4_feed(db_session):
+    from core.repositories.feeds import FeedRepository
+
+    return FeedRepository(db_session).create_candidate(code="append_only_feed", name="Append-only feed").id
+
+
+def _feed_profiles_row(db_session, request):
+    from tests.onboarded import profiled
+
+    return "feed_profiles", profiled(db_session, _phase_4_feed(db_session)).id
+
+
+def _feed_signoffs_row(db_session, request):
+    from tests.onboarded import signed_off
+
+    return "feed_signoffs", signed_off(db_session, _phase_4_feed(db_session)).id
+
+
+def _feed_registrations_row(db_session, request):
+    from tests.onboarded import registration
+
+    return "feed_registrations", registration(db_session, _phase_4_feed(db_session)).id
+
+
 ROWS = {
+    "feed_profiles": _feed_profiles_row,
+    "feed_signoffs": _feed_signoffs_row,
+    "feed_registrations": _feed_registrations_row,
     "proposal_log": _proposal_log_row,
     "proposal_log_discards": _proposal_log_discards_row,
     "requirement_scopes": _requirement_scopes_row,

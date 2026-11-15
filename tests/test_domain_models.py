@@ -236,9 +236,40 @@ def test_requirement_statuses_and_transitions_are_the_plans():
         ("awaiting_source_choice", "source_selected"), ("awaiting_source_choice", "no_source_found"),  # S3
         ("source_selected", "awaiting_source_choice"), ("source_selected", "no_source_found"),  # release
         ("defined", "no_source_found"), ("scope_not_confirmed", "no_source_found"),  # S1: no channel (review fix 5)
+        ("onboarding", "awaiting_source_choice"), ("onboarding", "no_source_found"),  # phase 4: 03 rejected
     })
-    assert len(REQUIREMENT_TRANSITIONS) == 15
+    assert len(REQUIREMENT_TRANSITIONS) == 17
     assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
+
+
+def test_release_reasons_and_the_phase_4_outcome_lists():
+    from core.domain.profiling import PROFILE_OUTCOMES, SIGNOFF_OUTCOMES
+    from core.domain.sourcing import RELEASE_REASONS
+
+    assert RELEASE_REASONS == ("source_down_n_days", "requester_asked", "candidate_rejected")
+    assert PROFILE_OUTCOMES == ("profiled", "spec_only_low_confidence")
+    assert SIGNOFF_OUTCOMES == ("meets", "meets_with_gaps", "rejected")
+
+
+@pytest.mark.parametrize(
+    ("outcome", "gaps", "reasons", "ok"),
+    [("meets", [], [], True), ("meets", ["g"], [], False), ("meets", [], ["r"], False),
+     ("meets_with_gaps", ["g"], [], True), ("meets_with_gaps", [], [], False), ("meets_with_gaps", ["g"], ["r"], False),
+     ("rejected", [], ["r"], True), ("rejected", [], [], False), ("rejected", ["g"], ["r"], False),
+     ("rejected", [], [" "], False)],
+)
+def test_a_signoff_draft_fits_gaps_and_reasons_to_its_outcome(outcome, gaps, reasons, ok):
+    import uuid
+
+    from core.domain.profiling import FeedSignoffDraft
+
+    fields = {"feed_id": uuid.uuid4(), "profile_id": uuid.uuid4(), "proposal_id": uuid.uuid4(), "outcome": outcome,
+              "gaps": gaps, "reasons": reasons, "signed_off_by": "dev-backend-team"}
+    if ok:
+        FeedSignoffDraft(**fields)
+    else:
+        with pytest.raises(ValidationError):
+            FeedSignoffDraft(**fields)
 
 
 FEED = {"code": "syn_exchange_volumes", "name": "Exchange volumes", "source_code": "syn_exchange_volumes",

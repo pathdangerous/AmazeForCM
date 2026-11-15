@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0013"
+HEAD = "0014"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -22,7 +22,8 @@ PHASE_2_TABLES = {  # migration 0006
 }
 PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes",  # migrations 0008 and 0009
                   "proposal_log_discards"}  # 0012
-TABLES |= PHASE_2_TABLES | PHASE_3_TABLES
+PHASE_4_TABLES = {"feed_profiles", "feed_signoffs", "feed_registrations"}  # 0014
+TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES
 
 
 def _tables(url: str) -> set[str]:
@@ -199,6 +200,11 @@ REVIEWED_NULLABLE_CHECKS = {
         "COALESCE on basis and reason, IS NOT NULL on decided_by: never NULL",
     "source_choices.ck_source_choices_conditions_are_an_object":
         "accepted_conditions IS NULL OR ... spelt out before jsonb_typeof",
+    # 0014 (phase 4 plan, section 6). Each has its NULL cases in test_db_onboarding_guards.py.
+    "feed_profiles.ck_feed_profiles_profiled_has_rows":
+        "row_count IS NOT NULL and detail IS NULL spelt out; outcome is NOT NULL: never NULL",
+    "feed_profiles.ck_feed_profiles_spec_only_has_a_reason":
+        "COALESCE(row_count, 0) and detail IS NOT NULL spelt out before btrim: never NULL",
 }
 
 
@@ -342,6 +348,57 @@ def test_0012_moves_a_0011_discard_into_its_own_table(scratch_schema):
     with engine.connect() as connection:
         moved = connection.execute(text("SELECT proposal_log_id, reason FROM proposal_log_discards")).all()
     assert moved == [(log_id, "moved on")]
+
+
+def test_0014_adds_the_third_release_reason_and_keeps_existing_rows(scratch_schema):
+    """Note 4c of the phase 3 plan: the reason list grows in a new migration; 0009 is never edited."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0008")
+    with engine.begin() as connection:
+        requirement = _a_3a_choice(connection)
+    command.upgrade(config, "0013")
+    with engine.begin() as connection:  # released by its requester, as 0013 knows it
+        feed = connection.execute(text("SELECT feed_id FROM source_choices WHERE requirement_id = :r"),
+                                  {"r": requirement}).scalar_one()
+        connection.execute(text(
+            "INSERT INTO source_choices (requirement_id, version, action, feed_id, source_code, reason, decided_by) "
+            "VALUES (:r, 2, 'released', :f, 'syn_x', 'requester_asked', 'dev-requester')"), {"r": requirement, "f": feed})
+        candidate = connection.execute(text("SELECT count(*) FROM feeds WHERE stage = 'candidate'")).scalar_one()
+    command.upgrade(config, "0014")
+    with engine.connect() as connection:
+        reasons = connection.execute(text(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_source_choices_reason' "
+            "AND connamespace = current_schema()::regnamespace")).scalar_one()
+        kept = connection.execute(text("SELECT version, action, reason FROM source_choices WHERE requirement_id = :r "
+                                       "ORDER BY version"), {"r": requirement}).all()
+    assert "candidate_rejected" in reasons
+    assert kept == [(1, "selected", None), (2, "released", "requester_asked")]
+    assert candidate >= 1  # the existing feed is a candidate, which the new stage guard accepts
+
+
+def test_0014_downgrade_refuses_when_phase_4_rows_exist(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0014")
+    with engine.begin() as connection:
+        feed = connection.execute(text("INSERT INTO feeds (code, name) VALUES ('syn_a', 'A') RETURNING id")).scalar_one()
+        fetch = connection.execute(text("INSERT INTO source_fetches (feed_id, outcome, blob_ref, size_bytes) "
+                                        "VALUES (:f, 'fetched', 'raw/a.csv', 1) RETURNING id"), {"f": feed}).scalar_one()
+        connection.execute(text(
+            "INSERT INTO feed_profiles (feed_id, version, fetch_id, outcome, row_count, columns, coverage, spec, "
+            "detail, engine, profiled_by) VALUES (:f, 1, :x, 'spec_only_low_confidence', 0, '[]', '[]', '{}', "
+            "'No data rows.', 'duckdb', 'b')"), {"f": feed, "x": fetch})
+    with pytest.raises(DBAPIError, match="migration 0014"):
+        command.downgrade(config, "0013")
+
+
+def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0014")
+    command.downgrade(config, "0013")
+    assert not PHASE_4_TABLES & set(inspect(engine).get_table_names())
 
 
 def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):

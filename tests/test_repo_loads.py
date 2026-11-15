@@ -19,9 +19,10 @@ def feeds(db_session):
 
 
 @pytest.fixture
-def registered(feeds):
-    feed = feeds.create_candidate(code="synthetic_prices", name="Synthetic prices")
-    return feeds.register(feed.id, owner_id="dev-data-owner")
+def registered(feeds, db_session):
+    from tests.onboarded import registered_feed
+
+    return registered_feed(db_session, feeds.create_candidate(code="synthetic_prices", name="Synthetic prices").id)
 
 
 @pytest.fixture

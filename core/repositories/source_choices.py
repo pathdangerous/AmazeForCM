@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
-from core.domain.sourcing import ReleaseReason, SourceChoice
+from core.domain.sourcing import RELEASE_REASONS, ReleaseReason, SourceChoice
 from core.repositories.errors import (
     FeedNotFound,
     NothingToRelease,
@@ -51,10 +51,11 @@ class SourceChoiceRepository:
     def record_release(self, *, requirement_id: UUID, reason: ReleaseReason,
                        decided_by: str | None = None) -> SourceChoice:
         """Release the current selection: its feed and source, as the next version."""
-        if reason not in ("source_down_n_days", "requester_asked"):
+        if reason not in RELEASE_REASONS:
             raise ValueError(f"unknown release reason {reason!r}")
         if (reason == "requester_asked") != bool(decided_by and decided_by.strip()):
-            raise ValueError("a requester_asked release names the requester; a source_down_n_days release names nobody")
+            raise ValueError("a requester_asked release names the requester; a release by rule "
+                             "(source_down_n_days, candidate_rejected) names nobody")
         self._require_requirement(requirement_id)
         current = self.current(requirement_id)
         if current is None or current.action != "selected":

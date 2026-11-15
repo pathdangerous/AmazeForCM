@@ -17,6 +17,7 @@ from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.connectors.local_file import LocalFileConnector
 from ports.storage.local import LocalBlobStore
 from tests.conftest import running_app
+from tests.onboarded import registered_feed
 
 pytestmark = pytest.mark.anyio
 
@@ -136,7 +137,7 @@ def test_one_failing_feed_does_not_stop_the_others(db_session, daily, selected, 
         code="syn_broken", name="Broken", source_code="syn_broken", connector="http",
         source_ref="http://127.0.0.1:9/x.csv",
     )
-    feeds.register(broken.id, owner_id="dev-data-owner")  # 3b, Q4: registered, so fetched with no selection
+    registered_feed(db_session, broken.id)  # 3b, Q4: registered, so fetched with no selection
     _, feed = selected()
 
     def factory(name):
@@ -202,7 +203,7 @@ def test_the_job_always_fetches_a_registered_feed(db_session, daily):
     feed = feeds.create_candidate(code="syn_exchange_volumes", name="Exchange daily volumes",
                                   source_code="syn_exchange_volumes", connector="local_file",
                                   source_ref="files/exchange_volumes.csv")
-    feeds.register(feed.id, owner_id="dev-data-owner")
+    registered_feed(db_session, feed.id)
     db_session.commit()  # to the test's savepoint: the job ends its read transaction before the fetch
     assert daily().run() == {"syn_exchange_volumes": "fetched"}
 

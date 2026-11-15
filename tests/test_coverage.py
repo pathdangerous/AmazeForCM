@@ -29,7 +29,9 @@ def feed(db_session, glossary):
     def _feed(code="synthetic_prices", *, registered=True):
         feeds = FeedRepository(db_session)
         candidate = feeds.create_candidate(code=code, name=code.replace("_", " ").capitalize())
-        return feeds.register(candidate.id, owner_id="dev-data-owner") if registered else candidate
+        from tests.onboarded import registered_feed
+
+        return registered_feed(db_session, candidate.id) if registered else candidate
 
     return _feed
 

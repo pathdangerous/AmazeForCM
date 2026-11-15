@@ -6,7 +6,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from core.repositories.errors import (
     DuplicateFeedCode,
@@ -18,6 +18,7 @@ from core.repositories.errors import (
 )
 from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
+from tests.onboarded import registered_feed, registration, rejected_feed, signed_off
 
 
 @pytest.fixture
@@ -76,12 +77,10 @@ def test_one_feed_per_source(repo):
 
 def test_list_to_fetch_skips_feeds_without_a_connector_and_rejected_feeds(repo, db_session):
     """Registered feeds, so a requirement's selection plays no part here (test_jobs.py covers it; Q4)."""
-    with_source = repo.register(repo.create_candidate(code="feed_a", name="Feed A", **SOURCE).id,
-                                owner_id="dev-data-owner")
-    repo.register(repo.create_candidate(code="feed_b", name="Feed B").id, owner_id="dev-data-owner")
+    with_source = registered_feed(db_session, repo.create_candidate(code="feed_a", name="Feed A", **SOURCE).id)
+    registered_feed(db_session, repo.create_candidate(code="feed_b", name="Feed B").id)
     rejected = repo.create_candidate(code="feed_c", name="Feed C", **{**SOURCE, "source_code": "syn_other"})
-    db_session.execute(text("UPDATE feeds SET stage = 'rejected' WHERE id = :id"), {"id": rejected.id})
-    db_session.expire_all()
+    rejected_feed(db_session, rejected.id)  # phase 4: the stage guard refuses a bare UPDATE (0014)
     assert [f.id for f in repo.list_to_fetch()] == [with_source.id]
 
 
@@ -113,15 +112,17 @@ def test_database_refuses_a_second_feed_for_one_source(db_session):
                                 "VALUES ('b', 'B', 's', 'local_file', 'x')"))
 
 
-def test_register_with_owner(repo):
+def test_register_with_owner(repo, db_session):
     feed = repo.create_candidate(code="feed_a", name="Feed A")
+    registration(db_session, feed.id)  # phase 4: the stage guard needs the registration row first (0014)
     registered = repo.register(feed.id, owner_id="dev-data-owner")
     assert (registered.stage, registered.owner_id) == ("registered", "dev-data-owner")
     assert registered.registered_at is not None
 
 
-def test_register_uses_the_owner_already_set(repo):
+def test_register_uses_the_owner_already_set(repo, db_session):
     feed = repo.create_candidate(code="feed_a", name="Feed A", owner_id="dev-data-owner")
+    registration(db_session, feed.id)
     assert repo.register(feed.id).owner_id == "dev-data-owner"
 
 
@@ -132,17 +133,32 @@ def test_register_without_owner_is_no_owner(repo):
     assert repo.get(feed.id).stage == "candidate"
 
 
-def test_register_twice(repo):
-    feed = repo.create_candidate(code="feed_a", name="Feed A")
-    repo.register(feed.id, owner_id="dev-data-owner")
+def test_register_twice(repo, db_session):
+    feed = registered_feed(db_session, repo.create_candidate(code="feed_a", name="Feed A").id)
     with pytest.raises(FeedNotACandidate):
         repo.register(feed.id, owner_id="dev-data-owner")
 
 
-def test_list_by_stage_newest_first(repo):
+def test_reject_a_candidate_with_a_rejected_signoff(repo, db_session):
+    feed = repo.create_candidate(code="feed_a", name="Feed A")
+    signed_off(db_session, feed.id, outcome="rejected", reasons=["No data to check"])
+    assert repo.reject(feed.id).stage == "rejected"
+    with pytest.raises(FeedNotACandidate):
+        repo.reject(feed.id)
+    with pytest.raises(FeedNotFound):
+        repo.reject(uuid.uuid4())
+
+
+def test_the_database_refuses_a_rejection_without_a_rejected_signoff(repo):
+    feed = repo.create_candidate(code="feed_a", name="Feed A")
+    with pytest.raises(DBAPIError, match="needs a rejected sign-off"):
+        repo.reject(feed.id)
+
+
+def test_list_by_stage_newest_first(repo, db_session):
     a = repo.create_candidate(code="feed_a", name="Feed A")
     b = repo.create_candidate(code="feed_b", name="Feed B")
-    repo.register(a.id, owner_id="dev-data-owner")
+    registered_feed(db_session, a.id)
     assert [f.code for f in repo.list()] == ["feed_b", "feed_a"]
     assert [f.code for f in repo.list(stage="registered")] == ["feed_a"]
     assert [f.code for f in repo.list(stage="candidate")] == ["feed_b"]
