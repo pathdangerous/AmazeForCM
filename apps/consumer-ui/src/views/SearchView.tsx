@@ -1,5 +1,13 @@
 import { useState, type FormEvent } from "react";
-import { apiGet, apiPost, describeError, type Discovery, type FindSourceResponse, type RequestResult } from "../api";
+import {
+  apiGet,
+  apiPost,
+  describeError,
+  type Assistance,
+  type Discovery,
+  type FindSourceResponse,
+  type RequestResult,
+} from "../api";
 
 // Step 17 search, then "Request this data" (routing checks and step 01). Phase 2 plan, section 10.
 export default function SearchView({ devUser }: { devUser: string }) {
@@ -11,8 +19,23 @@ export default function SearchView({ devUser }: { devUser: string }) {
   const [purpose, setPurpose] = useState("");
   const [result, setResult] = useState<RequestResult | null>(null);
   const [sourceResult, setSourceResult] = useState<FindSourceResponse | null>(null);
+  const [assistance, setAssistance] = useState<Assistance | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The read-only DiscoveryAssistant beside the search (phase 3 plan, assumption 38). It changes
+  // nothing: its suggestions start unticked.
+  async function onAssist() {
+    setBusy(true);
+    setError(null);
+    try {
+      setAssistance(await apiPost<Assistance>("/api/consumer/search/assist", { q: searched }, devUser));
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function onSearch(e: FormEvent) {
     e.preventDefault();
@@ -20,6 +43,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
     setError(null);
     setResult(null);
     setSourceResult(null);
+    setAssistance(null);
     setFound(null); // never leave the previous search's results and ticks on screen
     try {
       const d = await apiGet<Discovery>(`/api/consumer/search?q=${encodeURIComponent(query)}`, devUser);
@@ -69,6 +93,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
   const candidates = found ? [...new Set(found.match.ambiguous.flatMap((a) => a.candidates))] : [];
   const elementChoices = found ? [...found.match.elements.map((m) => m.key), ...candidates.filter(
     (c) => !found.match.elements.some((m) => m.key === c))] : [];
+  const suggested = (assistance?.suggestions ?? []).filter((s) => !elementChoices.includes(s.element_key));
   const nothingTicked = elements.size === 0 && terms.size === 0;
 
   return (
@@ -127,6 +152,33 @@ export default function SearchView({ devUser }: { devUser: string }) {
                     <input type="checkbox" checked={terms.has(t)} onChange={() => toggle(terms, setTerms, t)} />
                     {t}
                   </label>
+                ))}
+                {!assistance && (
+                  <button type="button" data-testid="assist" onClick={onAssist} disabled={busy}>
+                    Ask the assistant
+                  </button>
+                )}
+              </fieldset>
+            )}
+            {assistance && (
+              <fieldset data-testid="suggestions">
+                <legend>The assistant suggests</legend>
+                {suggested.length === 0 && <p className="muted">No suggestion for these words.</p>}
+                {suggested.map((s) => (
+                  <div key={`${s.term}-${s.element_key}`}>
+                    <label className="choice">
+                      <input type="checkbox" data-testid={`suggested-${s.element_key}`}
+                             checked={elements.has(s.element_key)}
+                             onChange={() => toggle(elements, setElements, s.element_key)} />
+                      {s.element_name} <span className="badge">suggested</span> for "{s.term}"
+                    </label>
+                    <div className="muted">{s.reason}</div>
+                    {s.products.length > 0 && (
+                      <div className="muted">
+                        Held by: {s.products.map((h) => `${h.product.name}${h.outcome === "found" ? "" : " (access restricted)"}`).join(", ")}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </fieldset>
             )}

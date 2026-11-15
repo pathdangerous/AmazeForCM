@@ -68,6 +68,36 @@ export type SourceConditions = {
   external_approvals: string[];
 };
 
+export type SourceSummary = { code: string; name: string; provider: string; visibility: string; conditions: SourceConditions };
+
+// 3b: the scope S1 proposes, the sources S2 lists, and the history of choices.
+export type ScopeProposed = {
+  proposal_id: string;
+  visibility: "public" | "private";
+  provider: string;
+  where_to_search: string[];
+  reason: string;
+};
+
+export type SourceCandidate = {
+  proposal_id: string;
+  rank: number;
+  source: SourceSummary;
+  coverage: { elements: string[]; terms: string[]; missing: string[] };
+  reason: string;
+};
+
+export type ChoiceOnPage = {
+  version: number;
+  action: "selected" | "released";
+  source_code: string;
+  source_name: string;
+  reason: "source_down_n_days" | "requester_asked" | null;
+  at: string;
+};
+
+export type NextAction = "find_source" | "confirm_scope" | "ask_for_scope" | "list_sources" | "pick_source";
+
 export type RequirementPage = {
   id: string;
   created_at: string;
@@ -77,17 +107,38 @@ export type RequirementPage = {
   message: string;
   elements: string[];
   terms: string[];
-  source: { code: string; name: string; provider: string; feed_code: string; conditions: SourceConditions } | null;
+  source: (SourceSummary & { feed_code: string }) | null;
   last_fetch: { outcome: "fetched" | "source_down"; at: string; detail: string | null } | null;
-  next_action: "find_source" | null;
+  next_action: NextAction | null;
+  proposed_scope: ScopeProposed | null;
+  scope: { visibility: string; provider: string; where_to_search: string[]; version: number } | null;
+  listed: SourceCandidate[];
+  choices: ChoiceOnPage[];
+  can_release: boolean;
 };
+
+type FetchOutcome = { outcome: "fetched" | "source_down" } | null;
 
 export type FindSourceResponse = {
   check: { outcome: "known_source" | "no_known_source"; reason?: string };
-  fetch: { outcome: "fetched" | "source_down" } | null;
+  fetch: FetchOutcome;
+  scope: ScopeProposed | null;
   message: string;
   requirement: RequirementPage;
 };
+
+// Every 3b step answers with its result, the requester's message and the page after it.
+export type StepResponse = {
+  result: { outcome?: string; [key: string]: unknown };
+  fetch?: FetchOutcome;
+  message: string;
+  requirement: RequirementPage;
+};
+
+// ---- 3b: the DiscoveryAssistant beside the search
+
+export type Suggestion = { term: string; element_key: string; element_name: string; reason: string; products: Hit[] };
+export type Assistance = { log_id: string | null; suggestions: Suggestion[] };
 
 export class ApiError extends Error {
   status: number;
