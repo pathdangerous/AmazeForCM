@@ -32,6 +32,13 @@ def test_step_03_outcomes_are_claude_mds():
     assert union_outcomes(SignoffResult) == claude_md_outcomes("03 Sign off") == ["meets", "meets_with_gaps", "rejected"]
 
 
+def test_step_04_outcomes_are_claude_mds():
+    from core.steps.s04_register import RegisterResult
+
+    assert union_outcomes(RegisterResult) == claude_md_outcomes("04 Register") == [
+        "registered", "duplicate_linked", "no_owner"]
+
+
 def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("17 Discover") == ["found", "not_entitled_visible"]
     assert claude_md_outcomes("Routing checks") == ["reuse", "compose", "create_product", "raise_requirement"]

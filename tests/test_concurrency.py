@@ -464,11 +464,15 @@ def _summarised_feed(engine, tmp_path, recommended="meets"):
     return feed_id
 
 
-def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path):
+def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path, monkeypatch):
     """sign_off locks the source code, then the feed row, then reads the latest version and the summary's
     status: the second waits, then finds the summary decided (ProposalAlreadyDecided, 409). Never a unique
-    violation on (feed_id, version)."""
+    violation on (feed_id, version). The profile read is made slow, so both reach the decision together
+    when nothing keeps them apart."""
     from core.repositories.errors import ProposalAlreadyDecided
+    from core.repositories.feed_profiles import FeedProfileRepository
+
+    _slow(monkeypatch, FeedProfileRepository, "latest")
     from core.steps.s03_signoff import sign_off
     from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
     from ports.db import get_sessionmaker
@@ -489,3 +493,51 @@ def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path)
     assert results == ["meets"]
     assert [type(e) for e in errors] == [ProposalAlreadyDecided]
     assert committed(own_schema, "SELECT version, outcome FROM feed_signoffs") == [(1, "meets")]
+
+
+def _slow(monkeypatch, cls, method, seconds=0.3):
+    """Make one read slow, so two requests that are not kept apart by a lock both pass it before either writes."""
+    original = getattr(cls, method)
+
+    def slow(self, *args, **kwargs):
+        time.sleep(seconds)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, method, slow)
+
+
+def test_two_registrations_at_once_give_one_success_and_one_409(own_schema, tmp_path, monkeypatch):
+    """register_feed locks the feed row before it reads the stage, the sign-off and the next version: the
+    second waits, then finds the feed registered (FeedNotACandidate, 409). Never a unique violation. The
+    sign-off read is made slow, so without the lock both would pass it and write version 1."""
+    from core.repositories.feed_signoffs import FeedSignoffRepository
+
+    _slow(monkeypatch, FeedSignoffRepository, "latest")
+    from core.repositories.errors import FeedNotACandidate
+    from core.steps.s04_register import register_feed
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.db import get_sessionmaker
+    from ports.identity.dev import DevIdentity
+    from ports.notify.inapp import InAppNotifier
+    from tests.conftest import dev_user_for
+    from tests.onboarded import signed_off
+
+    from ports.storage.local import LocalBlobStore
+
+    feed_id = _lifecycle_with_a_file(own_schema, LocalBlobStore(tmp_path / "blob"))
+    with get_sessionmaker(own_schema)() as session:
+        signed_off(session, feed_id)
+        session.commit()
+
+    def work(i):
+        with get_sessionmaker(own_schema)() as session:
+            result = register_feed(session, feed_id=feed_id, user=dev_user_for("backend_team"), owner_id="dev-data-owner",
+                                   visibility="open", catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE),
+                                   identity=DevIdentity(), notifier=InAppNotifier(session))
+            session.commit()
+            return result.outcome
+
+    results, errors = _run_at_once(work)
+    assert results == ["registered"]
+    assert [type(e) for e in errors] == [FeedNotACandidate]
+    assert committed(own_schema, "SELECT version, owner_id FROM feed_registrations") == [(1, "dev-data-owner")]

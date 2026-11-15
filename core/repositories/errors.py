@@ -102,6 +102,10 @@ class ProfileNotSummarised(RepositoryError):
     """The feed's latest profile has no ProfilerAgent summary yet: no sign-off without one (Q3)."""
 
 
+class FeedNotSignedOff(RepositoryError):
+    """The feed's latest sign-off does not accept its latest profile, so it cannot be registered (step 04)."""
+
+
 class SourceRejected(RepositoryError):
     """The backend team rejected this source's candidate feed: it is not offered or selected again (step 03)."""
 
