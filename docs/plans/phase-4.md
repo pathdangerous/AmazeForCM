@@ -684,3 +684,12 @@ Tests: 1146 at the start, 1240 at checkpoint 1. All pass, none skipped, no warni
 ```
 
 **Application database:** not migrated yet; `alembic current` is `0013`. `0014` reaches it at checkpoint 2, as planned.
+
+### Fixes after checkpoint 1 (your review, 2026-11-15)
+
+`0014` was not applied anywhere but the test database, so it was edited, not followed by `0015`.
+
+| # | Fix | RED | GREEN | Commit |
+|---|---|---|---|---|
+| 1 | The pending-summary test split, so no test accepts two messages: `test_a_pending_summary_has_no_signer` (b_guard's message), `test_a_pending_summary_is_refused_by_the_decision_guard` (a raw `approvals` row by the signer while the proposal stays pending, so b_guard passes; c_decision's message), `test_a_summary_without_a_recommendation_cannot_be_signed_off` | a test change: with `c_decision` removed, `2 failed, 1 passed`; with `b_guard` removed, `1 failed, 2 passed` (each new test fails without its own guard) | `37 passed in 1.93s` | `750d132` |
+| 2 | `amaze_guard_feed_registration` refuses a feed that is not a candidate | `test_a_registered_feed_gets_no_second_registration`: `1 failed` | `1243 passed in 91.91s` | `a59eb2d` |
