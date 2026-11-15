@@ -60,7 +60,8 @@ def test_every_current_version_has_its_file_and_loads():
 
 
 def test_every_agent_in_the_registry_names_a_current_prompt():
-    assert set(registry.AGENT_PROMPTS) == {"IntentAgent", "SourceDiscoveryAgent", "DiscoveryAssistant"}
+    assert set(registry.AGENT_PROMPTS) == {"IntentAgent", "SourceDiscoveryAgent", "DiscoveryAssistant", "ProfilerAgent"}
+    assert (registry.AGENT_PROMPTS["ProfilerAgent"], registry.PROMPT_VERSIONS["profiler"]) == ("profiler", "v1")
     for agent_name, prompt_id in registry.AGENT_PROMPTS.items():
         assert prompt_id in registry.PROMPT_VERSIONS, agent_name
 

@@ -13,16 +13,19 @@ AGENT_PROMPTS: dict[str, str] = {
     "IntentAgent": "intent",                    # S1 scope
     "SourceDiscoveryAgent": "source_discovery",  # S2 source list
     "DiscoveryAssistant": "discovery_assistant",  # step 17, read only
+    "ProfilerAgent": "profiler",  # step 02 summary (phase 4)
 }
 
 PROMPT_VERSIONS: dict[str, str] = {
     "intent": "v1",
     "source_discovery": "v1",
     "discovery_assistant": "v1",
+    "profiler": "v1",
 }
 
 PROMPT_FILE_HASHES: dict[str, str] = {
     "discovery_assistant.v1.yaml": "ad80a7a9430302ee8b84bf1eb0aaf70806be15631dd766df4ceba794156f0af0",
     "intent.v1.yaml": "40ae53c05f86abac70d7993f22e0c78bd8456252d0aaa94f10627a949f0dbb05",
+    "profiler.v1.yaml": "9b0b2ab260def592ebe306abacab4c30420ce28aab4a71e3c66b1cdd52c66d51",
     "source_discovery.v1.yaml": "80fa3af7fdc9ba1429024fd0fe65bf6fbd40137bc9f8ddf91ee56b0103112d61",
 }

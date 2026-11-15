@@ -86,6 +86,18 @@ class FeedHasNoFile(RepositoryError):
     """The feed has no fetched file yet, so there is nothing to profile (step 02; phase 4 plan, assumption 13)."""
 
 
+class FeedNotProfiled(RepositoryError):
+    """The feed has no profile yet (the summary and the sign-off need one)."""
+
+
+class ProfileAlreadySummarised(RepositoryError):
+    """The feed's latest profile already has its ProfilerAgent summary: one per profile."""
+
+
+class ProfileSuperseded(RepositoryError):
+    """A newer profile of the feed was written while this one was summarised or signed off."""
+
+
 class RequirementNotInStatus(RepositoryError):
     """The requirement's status cannot move to the one asked for (REQUIREMENT_TRANSITIONS)."""
 

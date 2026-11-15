@@ -77,6 +77,37 @@ SignoffOutcome = Literal["meets", "meets_with_gaps", "rejected"]
 SIGNOFF_OUTCOMES: tuple[str, ...] = get_args(SignoffOutcome)
 
 
+# ---------------------------------------------------------------- the ProfilerAgent (assumptions 14 and 15)
+
+
+class ProfilerInput(BaseModel):
+    """What the ProfilerAgent sees: one stored profile, and the title of each requirement it covers."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feed_id: UUID
+    feed_code: str
+    profile_id: UUID
+    outcome: ProfileOutcome
+    row_count: int | None
+    columns: list[FileColumn]
+    detail: str | None
+    spec: SourceSpec
+    coverage: list[RequirementCoverage]
+    requirement_titles: dict[UUID, str]
+
+
+class ProfilerOutput(BaseModel):
+    """The summary and the recommended outcome. No statistics: every number shown comes from the profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: NonBlank
+    recommended_outcome: SignoffOutcome
+    gaps: list[NonBlank]
+    reasons: list[NonBlank]
+
+
 class FeedProfileDraft(BaseModel):
     """One profile, validated before it is written: profiled has data rows and no detail; spec only has
     no data rows and says why."""

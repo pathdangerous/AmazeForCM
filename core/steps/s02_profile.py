@@ -25,16 +25,24 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from core.domain.profiling import FeedProfile, FileProfile
+from core.domain.profiling import FeedProfile, FileProfile, ProfilerInput
 from core.domain.requirement import Requirement
-from core.repositories.errors import FeedHasNoFile, FeedNotACandidate
+from core.repositories.errors import (
+    FeedHasNoFile,
+    FeedNotACandidate,
+    FeedNotProfiled,
+    ProfileAlreadySummarised,
+    ProfileSuperseded,
+)
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feeds import FeedRepository
+from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.profiling import ENGINE, NotATable, coverage_of, profile_csv, spec_of
 from core.steps.result import StepResult
+from core.steps.s1_scope import RunsAgent
 from ports.connectors.catalogue import SourceCatalogue, SourceEntry
 from ports.storage.base import BlobNotFound, BlobStore
 
@@ -128,3 +136,71 @@ def record_profile(session: Session, attempt: ProfileAttempt, *, profiled_by: st
     if attempt.detail is None:
         return Profiled(profile=profile)
     return SpecOnlyLowConfidence(profile=profile, detail=attempt.detail)
+
+
+# ---------------------------------------------------------------- the ProfilerAgent's summary (assumptions 14 to 17)
+
+
+class ProfileSummary(BaseModel):
+    """The summary waiting for the sign-off. Not an outcome: nobody has decided anything yet."""
+
+    model_config = ConfigDict(frozen=True)
+
+    proposal_id: UUID
+    log_id: UUID
+    profile_id: UUID
+    summary: str
+    recommended_outcome: str
+    gaps: list[str]
+    reasons: list[str]
+
+
+def summary_of(session: Session, *, feed_id: UUID, profile_id: UUID):
+    """The profile_summary proposal of this profile, if one exists (one per profile)."""
+    found = [p for p in ProposalRepository(session).list_for_feed(feed_id, "profile_summary")
+             if p.payload.get("profile_id") == str(profile_id)]
+    return found[-1] if found else None
+
+
+def summary_input(session: Session, *, feed_id: UUID) -> ProfilerInput:
+    """Read only: the agent's input for the feed's latest profile. The caller then ends the transaction, so
+    no connection is held while the model answers."""
+    feed = FeedRepository(session).get(feed_id)
+    if feed.stage != "candidate":
+        raise FeedNotACandidate(f"Feed {feed.code!r} is {feed.stage}; only a candidate feed is summarised")
+    profile = FeedProfileRepository(session).latest(feed_id)
+    if profile is None:
+        raise FeedNotProfiled(f"Feed {feed.code!r} has no profile to summarise")
+    if summary_of(session, feed_id=feed_id, profile_id=profile.id) is not None:
+        raise ProfileAlreadySummarised(f"Profile {profile.version} of feed {feed.code!r} already has its summary")
+    requirements = RequirementRepository(session)
+    return ProfilerInput(
+        feed_id=feed.id, feed_code=feed.code, profile_id=profile.id, outcome=profile.outcome,
+        row_count=profile.row_count, columns=profile.columns, detail=profile.detail, spec=profile.spec,
+        coverage=profile.coverage,
+        requirement_titles={c.requirement_id: requirements.get(c.requirement_id).title for c in profile.coverage})
+
+
+def _still_the_latest(session: Session, agent_input: ProfilerInput) -> None:
+    """before_write: lock the feed row, then check again that it is a candidate, that the profile is still
+    its latest and that nobody summarised it meanwhile."""
+    feed = FeedRepository(session).lock(agent_input.feed_id)
+    if feed.stage != "candidate":
+        raise FeedNotACandidate(f"Feed {feed.code!r} became {feed.stage} during the summary")
+    if FeedProfileRepository(session).latest(feed.id).id != agent_input.profile_id:
+        raise ProfileSuperseded(f"Feed {feed.code!r} has a newer profile than the one summarised")
+    if summary_of(session, feed_id=feed.id, profile_id=agent_input.profile_id) is not None:
+        raise ProfileAlreadySummarised(f"The profile of feed {feed.code!r} was summarised meanwhile")
+
+
+def record_summary(session: Session, *, agent: RunsAgent, agent_input: ProfilerInput) -> ProfileSummary:
+    """The model call (its call row committed at once by Agent.run()), then, with the feed locked and checked
+    again, the one profile_summary proposal. A change during the call: a discard row and nothing else."""
+    run = agent.run(session, agent_input, before_write=lambda s: _still_the_latest(s, agent_input))
+    if len(run.proposals) != 1 or run.proposals[0].kind != "profile_summary":
+        raise ValueError("step 02 expects exactly one profile_summary proposal from the agent")
+    proposal = run.proposals[0]
+    p = proposal.payload
+    return ProfileSummary(proposal_id=proposal.id, log_id=run.log_id, profile_id=agent_input.profile_id,
+                          summary=p["summary"], recommended_outcome=p["recommended_outcome"], gaps=p["gaps"],
+                          reasons=p["reasons"])

@@ -67,6 +67,15 @@ def profile_feed(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue,
     return record_profile(session, run_profile(plan, blob_store=blob_store), profiled_by=profiled_by)
 
 
+def summarise(session: Session, *, feed_id: UUID, agent: RunsAgent):
+    """The ProfilerAgent's summary of the latest profile: read, end the transaction, call, lock and write."""
+    from core.steps.s02_profile import record_summary, summary_input
+
+    agent_input = summary_input(session, feed_id=feed_id)
+    end_read(session)
+    return record_summary(session, agent=agent, agent_input=agent_input)
+
+
 def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
                  blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
                  today: date | None = None, release_after_days: int | None = None,

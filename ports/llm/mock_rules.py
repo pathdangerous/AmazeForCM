@@ -97,8 +97,42 @@ def discovery_assistant(data: dict[str, Any]) -> dict[str, Any]:
     return {"suggestions": suggestions}
 
 
+def profiler(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 4 plan, assumption 15. A requested item not in the file, or with empty cells, is a gap (each
+    gap once, in order). No gap: meets. Gaps: meets_with_gaps. No requested item in the file at all:
+    rejected. A spec-only profile: meets_with_gaps if the source declares a requested item, else rejected."""
+    items = [item for coverage in data.get("coverage", []) for item in coverage["items"]]
+    rows = data.get("row_count") or 0
+    if data.get("outcome") == "spec_only_low_confidence":
+        if any(i["declared"] for i in items):
+            gap = f"No data rows were profiled: {data.get('detail')}"
+            return {"summary": "Only the source's spec could be read.", "recommended_outcome": "meets_with_gaps",
+                    "gaps": [gap], "reasons": []}
+        return {"summary": "Only the source's spec could be read, and it declares no requested item.",
+                "recommended_outcome": "rejected", "gaps": [],
+                "reasons": ["The source declares none of the requested items"]}
+    found = [i for i in items if i["in_file"]]
+    if items and not found:
+        return {"summary": f"{rows} rows; none of the requested items is in the file.",
+                "recommended_outcome": "rejected", "gaps": [], "reasons": ["No requested item is in the file"]}
+    gaps: list[str] = []
+    for i in items:
+        if not i["in_file"]:
+            gap = f"{i['item']} is not in the file"
+        elif i["null_rate"]:
+            gap = f"{i['item']} is empty in {round(i['null_rate'] * rows)} of {rows} rows"
+        else:
+            continue
+        if gap not in gaps:
+            gaps.append(gap)
+    summary = f"{rows} rows; {len({i['item'] for i in found})} of {len({i['item'] for i in items})} requested items are in the file."
+    return {"summary": summary, "recommended_outcome": "meets_with_gaps" if gaps else "meets", "gaps": gaps,
+            "reasons": []}
+
+
 RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "intent": intent,
     "source_discovery": source_discovery,
     "discovery_assistant": discovery_assistant,
+    "profiler": profiler,
 }

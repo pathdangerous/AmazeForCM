@@ -11,8 +11,17 @@ import uuid
 
 import pytest
 
-from core.repositories.errors import FeedHasNoFile, FeedNotACandidate, FeedNotFound
+from core.repositories.errors import (
+    FeedHasNoFile,
+    FeedNotACandidate,
+    FeedNotFound,
+    FeedNotProfiled,
+    ProfileAlreadySummarised,
+    ProfileSuperseded,
+)
 from core.repositories.feed_profiles import FeedProfileRepository
+from core.repositories.proposals import ProposalRepository
+from core.steps.s02_profile import record_summary, summary_input
 from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
@@ -22,7 +31,7 @@ from ports.config import REPO_ROOT
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.storage.local import LocalBlobStore
 from tests.onboarded import registered_feed, rejected_feed
-from tests.step_chains import end_read, profile_feed
+from tests.step_chains import end_read, profile_feed, summarise
 
 CATALOGUE = SourceCatalogue.load(DEFAULT_CATALOGUE)
 FILES = REPO_ROOT / "fixtures" / "sources" / "files"
@@ -198,6 +207,70 @@ def test_a_feed_rejected_during_the_run_writes_no_profile(db_session, blobs, lif
     with pytest.raises(FeedNotACandidate):
         record_profile(db_session, attempt, profiled_by=BACKEND)
     assert len(FeedProfileRepository(db_session).history(feed.id)) == before
+
+
+# ---------------------------------------------------------------- the ProfilerAgent's summary (task 5)
+
+
+def _agent(tmp_path):
+    from agents.profiler import ProfilerAgent
+    from ports.llm.mock import MockProvider
+
+    return ProfilerAgent(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "agent-blob"))
+
+
+def test_the_summary_is_one_proposal_for_the_latest_profile(db_session, blobs, lifecycle, tmp_path):
+    from core.steps.s02_profile import ProfileSummary
+
+    feed, requirement = lifecycle
+    store(db_session, blobs, feed, (FILES / "instrument_lifecycle.csv").read_bytes())
+    profile_id = profile(db_session, blobs, feed).profile.id
+    result = summarise(db_session, feed_id=feed.id, agent=_agent(tmp_path))
+    assert isinstance(result, ProfileSummary)
+    assert (result.profile_id, result.recommended_outcome) == (profile_id, "meets_with_gaps")
+    assert result.gaps == ["issue_date is empty in 2 of 10 rows", "maturity_date is not in the file"]
+    [proposal] = ProposalRepository(db_session).list_for_feed(feed.id, "profile_summary")
+    assert (proposal.id, proposal.status, proposal.payload["profile_id"]) == (result.proposal_id, "pending",
+                                                                              str(profile_id))
+
+
+def test_a_profile_is_summarised_once(db_session, blobs, lifecycle, tmp_path):
+    feed, _ = lifecycle
+    store(db_session, blobs, feed, (FILES / "instrument_lifecycle.csv").read_bytes())
+    profile(db_session, blobs, feed)
+    summarise(db_session, feed_id=feed.id, agent=_agent(tmp_path))
+    with pytest.raises(ProfileAlreadySummarised):
+        summary_input(db_session, feed_id=feed.id)
+
+
+def test_a_feed_with_no_profile_has_nothing_to_summarise(db_session, lifecycle):
+    feed, _ = lifecycle
+    with pytest.raises(FeedNotProfiled):
+        summary_input(db_session, feed_id=feed.id)
+
+
+def test_a_newer_profile_during_the_call_writes_no_proposal(db_session, blobs, lifecycle):
+    from core.domain.profiling import ProfilerOutput
+    from core.repositories.tables import ProposalLogDiscardRow
+    from tests.stand_in_agents import StandInAgent
+
+    feed, _ = lifecycle
+    store(db_session, blobs, feed, (FILES / "instrument_lifecycle.csv").read_bytes())
+    profile(db_session, blobs, feed)
+
+    def newer_profile(session):  # another person profiles the feed while the model answers
+        profile(session, blobs, feed)
+
+    agent = StandInAgent(name="ProfilerAgent", output_schema=ProfilerOutput, during_call=newer_profile,
+                         output={"summary": "s", "recommended_outcome": "meets", "gaps": [], "reasons": []},
+                         proposals=lambda i, o: [{"kind": "profile_summary", "feed_id": i.feed_id,
+                                                  "payload": {"profile_id": str(i.profile_id)}}])
+    agent_input = summary_input(db_session, feed_id=feed.id)
+    end_read(db_session)
+    with pytest.raises(ProfileSuperseded):
+        record_summary(db_session, agent=agent, agent_input=agent_input)
+    assert ProposalRepository(db_session).list_for_feed(feed.id, "profile_summary") == []
+    assert db_session.query(ProposalLogDiscardRow).count() == 1
 
 
 def test_a_source_that_left_the_catalogue_cannot_be_profiled(db_session, blobs, lifecycle):

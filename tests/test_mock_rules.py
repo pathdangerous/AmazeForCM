@@ -26,7 +26,42 @@ def _intent(text="open price", purpose=None, note=None):
 
 
 def test_rules_are_named_by_prompt_id():
-    assert set(RULES) == {"intent", "source_discovery", "discovery_assistant"}
+    assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler"}
+
+
+# ---------------------------------------------------------------- profiler (phase 4 plan, assumption 15)
+
+
+def _item(item, *, declared=True, in_file=True, null_rate=0.0):
+    return {"item": item, "kind": "element", "declared": declared, "column": item if declared else None,
+            "in_file": in_file, "null_rate": null_rate if in_file else None, "distinct_count": 1 if in_file else None}
+
+
+def _profiler(*items, outcome="profiled", rows=10, detail=None, requirements=1):
+    coverage = [{"requirement_id": f"00000000-0000-0000-0000-00000000000{i}", "items": list(items),
+                 "missing": [x["item"] for x in items if not x["declared"] or x["in_file"] is False]}
+                for i in range(1, requirements + 1)]
+    return {"outcome": outcome, "row_count": rows, "detail": detail, "coverage": coverage}
+
+
+@pytest.mark.parametrize(("data", "outcome", "gaps", "reasons"), [
+    (_profiler(_item("volume")), "meets", [], []),
+    (_profiler(_item("volume"), _item("isin", declared=False, in_file=False)), "meets_with_gaps",
+     ["isin is not in the file"], []),
+    (_profiler(_item("issue_date", null_rate=0.2)), "meets_with_gaps", ["issue_date is empty in 2 of 10 rows"], []),
+    (_profiler(_item("isin", declared=False, in_file=False)), "rejected", [], ["No requested item is in the file"]),
+    (_profiler(_item("lot_size", in_file=None), outcome="spec_only_low_confidence", rows=0,
+               detail="The file has a header and no data rows."),
+     "meets_with_gaps", ["No data rows were profiled: The file has a header and no data rows."], []),
+    (_profiler(_item("isin", declared=False, in_file=None), outcome="spec_only_low_confidence", rows=0,
+               detail="Not a table."), "rejected", [], ["The source declares none of the requested items"]),
+    (_profiler(_item("volume"), _item("isin", declared=False, in_file=False), requirements=2), "meets_with_gaps",
+     ["isin is not in the file"], []),  # a gap of two requirements is listed once
+])
+def test_the_profiler_rule(data, outcome, gaps, reasons):
+    out = RULES["profiler"](data)
+    assert (out["recommended_outcome"], out["gaps"], out["reasons"]) == (outcome, gaps, reasons)
+    assert out["summary"]
 
 
 # ---------------------------------------------------------------- intent
