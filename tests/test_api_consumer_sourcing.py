@@ -322,6 +322,23 @@ async def test_another_requesters_requirement_or_proposal_is_404(client, db_sess
     await post(client, requirement_id, "pick", {"proposal_id": "00000000-0000-4000-8000-000000000000"}, expect=404)
 
 
+async def test_picking_a_source_that_left_the_catalogue_is_409(client):
+    """Review fix 4: the proposal still exists, but its source is gone from the catalogue. 409, not 500."""
+    from apps.api.deps import get_source_catalogue
+    from apps.api.main import app
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+
+    requirement_id, listed, _ = await scoped_and_listed(client)
+    vendor = listed[VENDOR]
+    without_vendor = SourceCatalogue([e for e in SourceCatalogue.load(DEFAULT_CATALOGUE).entries if e.code != VENDOR])
+    app.dependency_overrides[get_source_catalogue] = lambda: without_vendor
+    refused = await post(client, requirement_id, "pick", {"proposal_id": vendor["proposal_id"],
+                                                          "accepted_conditions": vendor["source"]["conditions"]},
+                         expect=409)
+    assert VENDOR in refused["detail"]
+    assert (await page(client, requirement_id))["status"] == "awaiting_source_choice"
+
+
 async def test_refused_input_is_422(client):
     requirement_id = await raise_requirement(client, "open price", ["open_price"])
     await find_source(client, requirement_id)

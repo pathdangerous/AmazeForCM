@@ -59,7 +59,7 @@ from core.steps.s4_fetch import FetchResult, fetch_source
 from core.steps.s17_discover import Assistance, Discovery, assist_input, discover, record_assist
 from ports.config import Settings
 from ports.connectors import SourceConnector
-from ports.connectors.catalogue import SourceCatalogue, SourceConditions
+from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
 from ports.identity import Identity, User
 from ports.notify import Notifier
 from ports.storage import BlobStore
@@ -225,7 +225,7 @@ def _own_requirement(session: Session, user: User, requirement_id: UUID) -> Requ
 
 
 CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyHasSource, NothingToRelease,
-             SourceAlreadyReleased)
+             SourceAlreadyReleased, UnknownSource)  # UnknownSource: a listed source left the catalogue
 
 
 def _read(session: Session, work: Callable[[], T]) -> T:
