@@ -55,12 +55,10 @@ def _created_at(*, clock: bool = False) -> Mapped[datetime]:
 
 
 class ProposalLogEntry(Base):
-    """One model call (rule 4): exactly one row per answered call, used or discarded. Append-only."""
+    """One model call (rule 4): exactly one row per answered call, committed right after the call.
+    Append-only. A discarded call also has a ProposalLogDiscardRow (0012)."""
 
     __tablename__ = "proposal_log"
-    __table_args__ = (
-        CheckConstraint("discarded_reason IS NULL OR length(btrim(discarded_reason)) > 0", name="discarded_reason"),
-    )
 
     id: Mapped[uuid.UUID] = _id()
     created_at: Mapped[datetime] = _created_at()
@@ -74,8 +72,22 @@ class ProposalLogEntry(Base):
     output: Mapped[dict[str, Any]] = mapped_column(JSONB)
     raw_ref: Mapped[str | None] = mapped_column(Text)
     latency_ms: Mapped[int] = mapped_column(Integer)
-    # 0011: why the answer was discarded (no proposal may point at it); NULL when it was used.
-    discarded_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class ProposalLogDiscardRow(Base):
+    """A model call whose answer was discarded: the status changed during the call, or writing its input
+    or proposals failed. One per call at most; the call can have no proposal. Append-only (0012)."""
+
+    __tablename__ = "proposal_log_discards"
+    __table_args__ = (
+        UniqueConstraint("proposal_log_id"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    proposal_log_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_log.id"))
+    reason: Mapped[str] = mapped_column(Text)
 
 
 class ProposalRow(Base):

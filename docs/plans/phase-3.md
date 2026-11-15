@@ -826,6 +826,7 @@ Notes only; nothing here is built in phase 3.
 4a. **Registered feeds are regular feeds from phase 4 on** (Q4, assumption 54). The daily job already fetches a registered feed whether or not a requirement selects it; registration (step 04) is the moment a candidate feed stops depending on a requirement's selection. Phase 4 must keep `FeedRepository.list_to_fetch()`'s two cases and test registration against it.
 **Phase 5**
 
+5a. **The DiscoveryAssistant sends the whole glossary on every call** (33 elements today). Before the glossary grows (the glossary builder, phase 5), pre-filter in code: send only the few candidate elements per unmatched term (name and alias similarity), so the prompt and the stored input stay small. The assistant's rule that a suggestion must be a glossary key stays.
 5. The glossary builder runs in the background. Phase 3 deliberately has no background runner, so phase 5 must choose one.
 
 **Phase 7**
@@ -1201,3 +1202,24 @@ Each with its tests written first and shown failing:
 `alembic current`: `0011 (head)`.
 
 **Test time, with no dev server running** (the `dev.ps1` windows were already closed): two runs of 1107 tests took 102 s and 77 s; a third, with `--durations=15`, 140 s. Top 5: the setups of two `test_concurrency.py` tests (3.8 s each, building their schema), `test_0009_downgrade_restores_0008_when_there_are_no_3b_rows` (3.0 s), `test_upgrade_downgrade_upgrade` (2.9 s) and an HTTP connector failed-fetch test (2.8 s). No test dominates and the same suite varies by 60 s between runs, so the cause is outside any one test; not investigated further, and the test setup is unchanged.
+
+### Fixes after the third review (2026-11-15)
+
+Each with its tests written first and shown failing:
+
+| # | Fix | Tests (failing before) |
+|---|---|---|
+| 1 | `feed_for` takes `pg_advisory_xact_lock(hashtext(source_code))` before looking for the feed | `test_two_requirements_selecting_the_same_new_source_at_once_make_one_feed` (was a unique violation on `uq_feeds_code`, a 500) |
+| 2 | **Logging redesign.** `Agent.run()` commits the call row in its own short transaction right after the call, with the output check and the input file write before it; a discard is a second append-only row in `proposal_log_discards` (migration `0012`, which moved any `0011` discard into it and dropped `proposal_log.discarded_reason`). Triggers: no proposal of a discarded call; no discard of a call that has a proposal; one discard per call | blob-store failure, wrong output schema, a refusal in `before_write`, a proposal failure (one call row and one discard each); `test_a_notifier_failure_after_the_call_leaves_its_call_row` (was: the call row lost with the rollback); `test_the_call_row_is_committed_before_the_request_writes`; the database tests in `test_proposal_log.py`; `test_0012_moves_a_0011_discard_into_its_own_table`. With the call row moved back into the caller's transaction, 6 of them failed |
+| 3 | The fetch: `fetch_plan` (read), the caller ends the transaction, `fetch_file` (connector and blob, no database), `record_fetch` (lock the feed row, decide notifications, write) | `test_no_connection_is_held_during_the_connector_call` and `..._during_the_first_fetch` (were 1, now 0); `test_the_first_fetch_and_the_daily_job_at_once_send_one_notification` (were 2 "File ready", now 1; with `get` instead of `lock` it was 2 again) |
+| 4 | `UnknownSource` on pick is 409 | `test_picking_a_source_that_left_the_catalogue_is_409` (was a bare `UnknownSource`) |
+| 5 | A proposed scope with no channel is `no_fit` (`no_channel_in_scope`): `no_source_found`, the backend team told. Two new moves: `defined → no_source_found`, `scope_not_confirmed → no_source_found` (15 moves) | `test_a_scope_with_no_channel_is_no_fit` (3 cases); `test_requirement_statuses_and_transitions_are_the_plans` |
+| 6 | Section 16, phase 5 note 5a: the assistant pre-filters glossary candidates | document |
+
+**Finding 7 (a second pooled connection for a discard) is reduced, not removed.** The call row is now written while the request holds no connection, so the usual path never needs two. A discard after `before_write` still does: `before_write` has locked the requirement on the request's connection, and the discard row is committed on a second, briefly. It happens only on a conflict.
+
+**Notifier failure after `run()` returns:** the call row stays (committed at once) and no discard row is written: the answer was used (here, "lists none"), and the request failed afterwards. The requirement keeps its status.
+
+**Test-only change:** `test_the_job_always_fetches_a_registered_feed` now commits its setup (to the test's savepoint), because the job ends its read transaction before the fetch, as the other job tests already did. The two concurrency tests use `asyncio.gather(..., return_exceptions=True)`: a failing request otherwise left the other request's session open, and the schema could not be dropped (the test hung once, during the run that showed fix 1 failing; the stuck test session was ended by hand).
+
+`alembic current`: `0012 (head)`.

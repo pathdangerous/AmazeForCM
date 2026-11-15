@@ -175,8 +175,11 @@ def test_a_status_change_during_the_model_call_logs_it_as_discarded_and_writes_n
     before = (count(db_session, ProposalLogEntry), count(db_session, ProposalRow))
     with pytest.raises(RequirementNotInStatus):
         run(db_session, req, agent)
-    # the call is logged once, marked discarded; no proposal
+    # one call row, one discard row pointing at it; no proposal
+    from core.repositories.tables import ProposalLogDiscardRow
+
     assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == (before[0] + 1, before[1])
+    assert count(db_session, ProposalLogDiscardRow) == 1
 
 
 def test_a_failed_agent_call_leaves_the_status(db_session, scoped):

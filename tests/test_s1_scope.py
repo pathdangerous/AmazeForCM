@@ -142,9 +142,12 @@ def test_a_status_change_during_the_model_call_logs_it_as_discarded_and_writes_n
     before = (count(db_session, ProposalLogEntry), count(db_session, ProposalRow))
     with pytest.raises(RequirementNotInStatus):
         propose_scope(db_session, requirement_id=req.id, agent=agent, catalogue=CATALOGUE)
-    # the call is logged once, marked discarded; no proposal
+    # one call row, one discard row pointing at it; no proposal
+    from core.repositories.tables import ProposalLogDiscardRow
+
     assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == (before[0] + 1, before[1])
-    assert db_session.scalars(select(ProposalLogEntry.discarded_reason)).all()[-1].startswith("RequirementNotInStatus")
+    [reason] = db_session.scalars(select(ProposalLogDiscardRow.reason)).all()
+    assert reason.startswith("RequirementNotInStatus")
 
 
 @pytest.mark.parametrize("start, again", [("defined", False), ("scope_not_confirmed", True),

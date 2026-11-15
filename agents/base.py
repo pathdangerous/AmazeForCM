@@ -9,16 +9,17 @@ run() is defined here only; a subclass that defines run() is refused when the cl
 in this order:
     1. render the prompt (agents/prompt_loader.py) with the input;
     2. call LLMProvider.complete();
-    3. store the rendered messages and the input in the BlobStore (agent-inputs/<agent>/<id>.json);
-    3a. before_write(session), if given: the caller locks and checks again (review fix 2);
-    4. ProposalLog.record(): one proposal_log row, whose input_ref is that key (if 3a or 5 fails, the
-       call is logged instead in its own transaction, marked discarded, with no proposal: every answered
-       call has exactly one row);
-    5. create the subclass's drafts as proposals, each pointing at that log row, with the agent's own
-       autonomy and approver role;
-    6. return an AgentRun.
-The input is stored after the call, so a failed call writes nothing at all. Everything is flushed in
-the caller's transaction, never committed.
+    3. check the output and store the rendered messages and the input in the BlobStore
+       (agent-inputs/<agent>/<id>.json);
+    4. ProposalLog.record(): the call row, whose input_ref is that key, committed at once in its own
+       short transaction (with a discard row if step 3 failed);
+    5. before_write(session), if given: the caller locks and checks again;
+    6. create the subclass's drafts as proposals, each pointing at the call row, with the agent's own
+       autonomy and approver role, in the caller's transaction (if 5 or 6 fails: a discard row,
+       committed the same way);
+    7. return an AgentRun.
+A call that fails before answering writes nothing. Every answered call has exactly one call row.
+The caller's own transaction is flushed, never committed.
 """
 
 from __future__ import annotations
@@ -96,11 +97,16 @@ class Agent:
 
     def run(self, session: Session, agent_input: BaseModel, *,
             before_write: Callable[[Session], None] | None = None) -> AgentRun:
-        """before_write(session) runs after the model call and before anything is written: the caller locks
-        what it will change and checks it again there. If it raises, nothing is written.
+        """Every answered model call has exactly one proposal_log row, committed at once in its own short
+        transaction, before the caller writes anything. If the answer is then discarded (the output check,
+        the input file, before_write or the proposals fail), a discard row pointing at it is committed the
+        same way, and the error is raised again; the caller writes nothing.
 
-        The model call itself never touches the session. The caller ends its read transaction before
-        calling run(), so no database connection is held while the model answers (review fix 2)."""
+        before_write(session) runs after the call row is committed and before the proposals: the caller
+        locks what it will change and checks it again there.
+
+        The model call never touches the session. The caller ends its read transaction before calling
+        run(), so no database connection is held while the model answers (review fix 2)."""
         if not isinstance(agent_input, self.input_schema):
             raise TypeError(f"{self.name} takes {self.input_schema.__name__}, not {type(agent_input).__name__}")
         prompt = self._prompts.get(self.prompt_id)
@@ -108,40 +114,58 @@ class Agent:
 
         result = self._provider.complete(prompt_id=prompt.prompt_id, prompt_version=prompt.version,
                                          messages=messages, response_schema=self.output_schema)
-        if not isinstance(result.output, self.output_schema):
-            raise TypeError(f"{self.name}: the provider returned {type(result.output).__name__}, "
-                            f"not {self.output_schema.__name__}")
 
         input_ref = f"agent-inputs/{self.name}/{uuid.uuid4()}.json"
-        stored = {"agent": self.name, "prompt_id": prompt.prompt_id, "prompt_version": prompt.version,
-                  "input": agent_input.model_dump(mode="json"), "messages": [m.model_dump() for m in messages]}
-        self._blobs.put(input_ref, json.dumps(stored, sort_keys=True).encode("utf-8"))
+        failure: Exception | None = None
+        try:
+            if not isinstance(result.output, self.output_schema):
+                raise TypeError(f"{self.name}: the provider returned {type(result.output).__name__}, "
+                                f"not {self.output_schema.__name__}")
+            stored = {"agent": self.name, "prompt_id": prompt.prompt_id, "prompt_version": prompt.version,
+                      "input": agent_input.model_dump(mode="json"), "messages": [m.model_dump() for m in messages]}
+            self._blobs.put(input_ref, json.dumps(stored, sort_keys=True).encode("utf-8"))
+        except Exception as exc:  # the call is logged first, then discarded, then this is raised
+            failure = exc
+        log_id = self._log_call(session, input_ref, result, discard=failure)
+        if failure is not None:
+            raise failure
 
         try:
             if before_write is not None:
                 before_write(session)
-            entry = ProposalLog(session).record(agent_name=self.name, input_ref=input_ref, result=result)
-
             drafts = self.to_proposals(agent_input, result.output)
             if drafts and self.approver_role is None:
                 raise ReadOnlyAgentProposed(f"{self.name} is read-only and cannot create proposals")
             repository = ProposalRepository(session)
             proposals = [
-                repository.create(proposal_log_id=entry.id, autonomy=self.autonomy,
+                repository.create(proposal_log_id=log_id, autonomy=self.autonomy,
                                   required_approver_roles=[self.approver_role], **draft.model_dump())
                 for draft in drafts
             ]
         except Exception as exc:
-            self._log_discarded(session, input_ref, result, exc)
+            self._own_transaction(session, lambda log: log.discard(proposal_log_id=log_id, reason=_reason(exc)))
             raise
-        return AgentRun(log_id=entry.id, input_ref=input_ref, output=result.output, proposals=proposals)
+        return AgentRun(log_id=log_id, input_ref=input_ref, output=result.output, proposals=proposals)
 
-    def _log_discarded(self, session: Session, input_ref: str, result, exc: Exception) -> None:
-        """Every answered model call has exactly one proposal_log row. When the answer is discarded, the
-        caller's transaction will be rolled back, so the row is written in its own session on the same
-        bind and committed there: marked discarded, with no proposal. On the API's engine that is its
-        own connection and transaction; in the tests' shared connection it is a savepoint."""
+    def _log_call(self, session: Session, input_ref: str, result, *, discard: Exception | None) -> UUID:
+        """The call row (and its discard row, if the answer is already discarded), committed at once."""
+        def write(log: ProposalLog) -> UUID:
+            entry = log.record(agent_name=self.name, input_ref=input_ref, result=result)
+            if discard is not None:
+                log.discard(proposal_log_id=entry.id, reason=_reason(discard))
+            return entry.id
+
+        return self._own_transaction(session, write)
+
+    @staticmethod
+    def _own_transaction(session: Session, work):
+        """A short transaction of its own on the caller's bind, committed at once. On the API's engine that
+        is its own connection; in the tests' shared connection, a savepoint rolled back with the test."""
         with Session(bind=session.get_bind(), join_transaction_mode="create_savepoint") as own:
-            ProposalLog(own).record(agent_name=self.name, input_ref=input_ref, result=result,
-                                    discarded_reason=f"{type(exc).__name__}: {exc}")
+            outcome = work(ProposalLog(own))
             own.commit()
+            return outcome
+
+
+def _reason(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"

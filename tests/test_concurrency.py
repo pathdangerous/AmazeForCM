@@ -236,11 +236,67 @@ async def test_a_status_change_during_the_model_call_gives_409_and_logs_it_as_di
         use_provider(WatchingProvider(own_schema, during_call=change_status))
         response = await f.client.post(f"/api/consumer/requirements/{f.id}/{action}", headers=RILEY, json={})
     assert response.status_code == 409, response.text
-    # Exactly one committed log row for the call, written in its own transaction and marked discarded;
-    # nothing else: no proposal, no status change.
+    # Exactly one committed call row, and one discard row pointing at it; no proposal, no status change.
     assert committed(own_schema, "SELECT count(*) FROM proposal_log") == [(before[0][0] + 1,)]
     [(reason, proposals)] = committed(
-        own_schema, "SELECT l.discarded_reason, (SELECT count(*) FROM proposals p WHERE p.proposal_log_id = l.id) "
-                    "FROM proposal_log l WHERE l.discarded_reason IS NOT NULL")
+        own_schema, "SELECT d.reason, (SELECT count(*) FROM proposals p WHERE p.proposal_log_id = d.proposal_log_id) "
+                    "FROM proposal_log_discards d")
     assert reason.startswith("RequirementNotInStatus") and proposals == 0
     assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("rejected",)]
+
+
+async def test_the_call_row_is_committed_before_the_request_writes(own_schema, flow, monkeypatch):
+    """Review round 3, fix 2: when the step takes its lock (before_write), the call row is already
+    committed, so no later failure of the request can lose it."""
+    import core.steps.s1_scope as s1_scope
+
+    seen = []
+    original = s1_scope.locked_in
+
+    def watching(session, requirement_id, allowed, what):
+        seen.append(committed(own_schema, "SELECT count(*) FROM proposal_log")[0][0])
+        return original(session, requirement_id, allowed, what)
+
+    async with flow() as f:
+        await f.raised()
+        monkeypatch.setattr(s1_scope, "locked_in", watching)
+        await f.step("find-source")
+    assert seen == [1]
+
+
+async def test_a_notifier_failure_after_the_call_leaves_its_call_row(own_schema, flow):
+    """The agent lists no source, then telling the backend team fails: the request fails and is rolled
+    back, but the call row was committed when the call ended. No discard row: the answer was used (it
+    listed none); the request failed afterwards."""
+    from apps.api.deps import get_request_notifier
+    from apps.api.main import app
+
+    class ListsNone(WatchingProvider):
+        def complete(self, **kwargs):
+            if kwargs["prompt_id"] == "source_discovery":
+                from core.domain.sourcing import SourceDiscoveryOutput
+                from ports.llm.base import LLMResult
+
+                return LLMResult(output=SourceDiscoveryOutput(ranked=[]), provider="mock", model="mock",
+                                 model_version="1", prompt_id="source_discovery", prompt_version="v1", latency_ms=0,
+                                 raw_ref=None)
+            return super().complete(**kwargs)
+
+    class FailingNotifier:
+        name = "failing"
+
+        def notify(self, **kwargs):
+            raise RuntimeError("notifier down")
+
+    async with flow() as f:
+        use_provider(ListsNone(own_schema))
+        await f.raised()
+        await f.step("find-source")
+        await f.step("scope/decision", {"decision": "approved"})
+        app.dependency_overrides[get_request_notifier] = lambda: FailingNotifier()
+        with pytest.raises(RuntimeError, match="notifier down"):
+            await f.client.post(f"/api/consumer/requirements/{f.id}/sources", headers=RILEY, json={})
+    assert committed(own_schema, "SELECT agent_name FROM proposal_log ORDER BY created_at") == [
+        ("IntentAgent",), ("SourceDiscoveryAgent",)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(0,)]
+    assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("scope_confirmed",)]

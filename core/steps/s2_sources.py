@@ -125,9 +125,10 @@ def sources_input(session: Session, *, requirement_id: UUID, catalogue: SourceCa
 def record_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent,
                    agent_input: SourceDiscoveryInput | None, catalogue: SourceCatalogue, notifier: Notifier,
                    backend_team: Sequence[str]) -> SourcesListed | NoFit:
-    """With an input: the model call, then, with the requirement locked and its status checked again, the
-    log row and the proposals. Without one: lock, check, no_fit. A status change in between gives
-    RequirementNotInStatus and nothing is written."""
+    """With an input: the model call (its call row committed at once by Agent.run()), then, with the
+    requirement locked and its status checked again, the proposals. Without one: lock, check, no_fit. A
+    status change during the call gives RequirementNotInStatus: the call gets a discard row, and nothing
+    else is written."""
     requirements = RequirementRepository(session)
 
     def no_fit(requirement, reason: Literal["nothing_in_scope", "agent_listed_none"]) -> NoFit:

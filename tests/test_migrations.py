@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0011"
+HEAD = "0012"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -20,7 +20,8 @@ TABLES = {
 PHASE_2_TABLES = {  # migration 0006
     "product_elements", "product_grants", "requirement_elements", "requirement_terms", "consumer_requests",
 }
-PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes"}  # migrations 0008 and 0009
+PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes",  # migrations 0008 and 0009
+                  "proposal_log_discards"}  # 0012
 TABLES |= PHASE_2_TABLES | PHASE_3_TABLES
 
 
@@ -73,8 +74,7 @@ def test_proposal_log_columns(migrated_engine):
     assert columns == {
         "id", "created_at", "agent_name", "provider", "model", "model_version", "prompt_id",
         "prompt_version", "input_ref", "output", "raw_ref", "latency_ms",
-        "discarded_reason",  # 0011: a call whose answer was discarded (NULL: used)
-    }
+    }  # 0011 added discarded_reason; 0012 moved discards to proposal_log_discards and dropped it
 
 
 def test_notifications_columns(migrated_engine):
@@ -199,9 +199,6 @@ REVIEWED_NULLABLE_CHECKS = {
         "COALESCE on basis and reason, IS NOT NULL on decided_by: never NULL",
     "source_choices.ck_source_choices_conditions_are_an_object":
         "accepted_conditions IS NULL OR ... spelt out before jsonb_typeof",
-    # 0011
-    "proposal_log.ck_proposal_log_discarded_reason":
-        "discarded_reason IS NULL OR ... spelt out before btrim: NULL means used, on purpose",
 }
 
 
@@ -330,6 +327,21 @@ def test_0009_downgrade_restores_0008_when_there_are_no_3b_rows(scratch_schema):
     assert columns == {"id", "created_at", "requirement_id", "feed_id", "source_code", "basis"}
     assert unique == {"uq_source_choices_requirement_id"}
     assert "requirement_scopes" not in inspect(engine).get_table_names()
+
+
+def test_0012_moves_a_0011_discard_into_its_own_table(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0011")
+    with engine.begin() as connection:
+        log_id = connection.execute(text(
+            "INSERT INTO proposal_log (agent_name, provider, model, model_version, prompt_id, prompt_version, "
+            "input_ref, output, latency_ms, discarded_reason) VALUES "
+            "('a', 'mock', 'mock', '1', 'p', 'v1', 'ref', '{}', 0, 'moved on') RETURNING id")).scalar_one()
+    command.upgrade(config, "0012")
+    with engine.connect() as connection:
+        moved = connection.execute(text("SELECT proposal_log_id, reason FROM proposal_log_discards")).all()
+    assert moved == [(log_id, "moved on")]
 
 
 def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):

@@ -99,9 +99,10 @@ def scope_input(session: Session, *, requirement_id: UUID, catalogue: SourceCata
 
 def record_scope(session: Session, *, agent: RunsAgent, agent_input: IntentInput, again: bool = False,
                  notifier: Notifier | None = None, backend_team: Sequence[str] = ()):
-    """The model call, then, with the requirement locked and its status checked again, the scope proposal
-    and the move to awaiting_scope_confirmation. A status change during the call gives
-    RequirementNotInStatus, and the call is logged as discarded (Agent.run()).
+    """The model call (its call row committed at once by Agent.run()), then, with the requirement locked
+    and its status checked again, the scope proposal and the move to awaiting_scope_confirmation. A
+    status change during the call gives RequirementNotInStatus: the call gets a discard row, and nothing
+    else is written.
 
     A scope with no channel to search cannot be confirmed into anything: it is no_fit at once
     (no_source_found, the backend team told), and the requester is not asked (review fix 5)."""

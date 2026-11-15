@@ -74,7 +74,7 @@ Check:
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0011 (head)
+.\.venv\Scripts\python -m alembic current     # expect: 0012 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```

@@ -180,8 +180,16 @@ def _requirement_scopes_row(db_session, request):
     return "requirement_scopes", scope.id
 
 
+def _proposal_log_discards_row(db_session, request):
+    from core.proposal_log import ProposalLog
+
+    log_name, log_id = _proposal_log_row(db_session, request)
+    return "proposal_log_discards", ProposalLog(db_session).discard(proposal_log_id=log_id, reason="synthetic").id
+
+
 ROWS = {
     "proposal_log": _proposal_log_row,
+    "proposal_log_discards": _proposal_log_discards_row,
     "requirement_scopes": _requirement_scopes_row,
     "approvals": _approvals_row,
     "glossary_elements": _glossary_row,
