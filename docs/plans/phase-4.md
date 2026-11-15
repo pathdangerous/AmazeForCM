@@ -693,3 +693,80 @@ Tests: 1146 at the start, 1240 at checkpoint 1. All pass, none skipped, no warni
 |---|---|---|---|---|
 | 1 | The pending-summary test split, so no test accepts two messages: `test_a_pending_summary_has_no_signer` (b_guard's message), `test_a_pending_summary_is_refused_by_the_decision_guard` (a raw `approvals` row by the signer while the proposal stays pending, so b_guard passes; c_decision's message), `test_a_summary_without_a_recommendation_cannot_be_signed_off` | a test change: with `c_decision` removed, `2 failed, 1 passed`; with `b_guard` removed, `1 failed, 2 passed` (each new test fails without its own guard) | `37 passed in 1.93s` | `750d132` |
 | 2 | `amaze_guard_feed_registration` refuses a feed that is not a candidate | `test_a_registered_feed_gets_no_second_registration`: `1 failed` | `1243 passed in 91.91s` | `a59eb2d` |
+
+### Tasks 4 to 8 (checkpoint 2)
+
+Tests: 1243 after the fixes, 1331 at checkpoint 2. All pass, none skipped, no warnings (`1331 passed in 114.14s`). Every file was test-first.
+
+| Task | RED | GREEN | Commit |
+|---|---|---|---|
+| 4 step 02 | `1 error in 0.31s` (no module) | `35 passed in 5.36s`; full `1259 passed in 98.21s` | `6de217d` |
+| 5 ProfilerAgent, summary | `2 errors in 0.44s`; `9 failed, 35 passed` (mock rule, registry) | `68 passed in 3.20s`; full `1277 passed in 98.69s` | `fe59f06` |
+| 6 step 03, rejected sources | `6 failed, 69 passed`; the sign-off file `1 error` | `94 passed in 10.07s`; full `1302 passed in 97.02s` | `4451eaa` |
+| 7 step 04 | `1 error in 0.27s`; `2 failed, 21 passed` | `35 passed in 3.89s`; full `1316 passed in 106.98s` | `d7d958a` |
+| 8 the daily job | `2 failed, 12 passed` | `14 passed`; full `1319 passed in 106.92s` | `e8e6376` |
+| check-constraint tests | (tests for existing checks) | `50 passed in 2.21s`; full `1331 passed in 114.14s` | `d743d1a` |
+
+**The feed row lock before the next version is read, and its proof** (lock replaced by a plain read with the Edit tool, run three times, restored; `grep PROOF` finds nothing):
+
+| Step | The line | Test | Without the lock |
+|---|---|---|---|
+| `record_profile` | `s02_profile.py:126` `feed = FeedRepository(session).lock(plan.feed_id)` | `test_two_profiles_of_one_feed_at_once_take_the_next_versions` | 3 of 3 failed: `UniqueViolation ... uq_feed_profiles_feed_id_version`. Two profiles are both legitimate, so the result is versions 1 and 2, not a 409 |
+| `sign_off` | `s03_signoff.py:91` `feed = feeds.lock(feed_id)` (after `lock_source`) | `test_two_signoffs_at_once_give_one_success_and_one_409` | 3 of 3 **still passed**, with the source and feed locks both removed and the profile read slowed by 0.3 s: `record_decision` locks the summary's proposal row `FOR UPDATE` and the second then finds it decided (`ProposalAlreadyDecided`). The feed lock is there for the lock order and the stage change, not for this race |
+| `register_feed` | `s04_register.py:68` `feed = feeds.lock(feed_id)` | `test_two_registrations_at_once_give_one_success_and_one_409` | 3 of 3 failed with `IntegrityError` once the sign-off read was slowed by 0.3 s. Without the slowdown it passed 3 of 3: one request finished before the other read. Both concurrency tests now slow one read |
+
+**Lock order as built** (assumption 46: source code, feed row, requirements in id order):
+
+| Step | Order |
+|---|---|
+| Known source? (`find_known_source`) | the check unlocked → `lock_source(code)` → requirement → `feed_for` (its `lock_source` again is a no-op) → feed insert or read. A source rejected in between: `SourceRejected` (409). **Changed from phase 3**, which locked the requirement first |
+| S3 pick | the proposal read unlocked → `lock_source(code)` → requirement → the proposal row (`record_decision`) → `feed_for`. **Changed from phase 3** the same way |
+| S4 `record_fetch` | feed (`FOR NO KEY UPDATE`) → each requirement that selects it, in selection order (unchanged; the feed lock is first, so two such steps never hold requirements out of order) |
+| Release on request | requirement only (its `source_choices` insert takes `FOR KEY SHARE` on the feed, which does not wait for `FOR NO KEY UPDATE`) |
+| 02 `record_profile`, summary `before_write` | feed only |
+| 03 `sign_off` | `lock_source(code)` → feed → the summary's proposal row → the requirements in id order, each re-checked: one its requester released meanwhile is skipped |
+| 04 `register_feed` | feed only. `link_to_registered_feed`: requirement only |
+| The daily job's close of empty lists | requirement only |
+
+The two lock-order tests of plan change 1 (a rejection with the daily fetch; a rejection with a requester release) are task 11 and are not built yet.
+
+**Every check constraint of `0014` and the raw-SQL test that covers it** (`test_db_onboarding_guards.py`):
+
+| Check | Test | NULL case |
+|---|---|---|
+| `ck_feed_profiles_profiled_has_rows` | `test_null_never_passes_a_profile_check` (4 cases) | `row_count` NULL |
+| `ck_feed_profiles_spec_only_has_a_reason` | the same (3 cases) | `detail` NULL |
+| `ck_feed_profiles_outcome`, `_json_shapes`, `_text_present` | `test_the_other_profile_checks` (5 cases) | NOT NULL columns |
+| `ck_feed_signoffs_gaps_and_reasons_fit` | `test_gaps_and_reasons_fit_the_outcome` (4 cases) | NOT NULL columns |
+| `ck_feed_registrations_visibility` | `test_a_registration_version_and_visibility` | NOT NULL |
+| `ck_feed_registrations_text_present` | `test_a_registration_needs_every_text` (5 cases) | NOT NULL columns |
+| `ck_feed_profiles_version`, `ck_feed_signoffs_version`, `ck_feed_registrations_version` | **behind the version trigger**: `test_version_zero_is_refused_by_the_version_trigger_before_the_check` shows version 0 refused by `trg_*_a_version` (a BEFORE trigger answers first) | NOT NULL |
+| `ck_feed_signoffs_outcome`, `ck_feed_signoffs_signed_off_by` | **behind `b_guard` and `c_decision`**: `test_a_signoffs_outcome_and_signer_are_refused_by_its_triggers_before_the_checks` | NOT NULL |
+
+The nullable columns of `0014` are `feed_profiles.row_count` and `detail` only; both are in `REVIEWED_NULLABLE_CHECKS`. The new check tests were not shown failing without their checks: `0014` is applied now and is not edited, even for a proof. Each test matches the refusing constraint by name, so it can pass only if that check refuses the row.
+
+**Unexpected failures, with their root causes:**
+1. `test_a_new_selection_wakes_the_feed` (phase 3) failed after task 8's first change. Root cause: I had added a `session.rollback()` after listing the feeds, and on the tests' shared session it undid the test's uncommitted setup. Nothing needed it; removed.
+2. `test_version_zero_...` did not raise. Root cause: the test helpers chose the version with `version or next_version`, and 0 is falsy. Now `is None`.
+3. The first register concurrency proof passed without the lock. Root cause: no pause between the read and the write, so one request finished first. Fixed in the test (a 0.3 s read), not by weakening it.
+
+**Deviations from the plan:**
+1. **Known source? and S3 pick were reordered** to take the source lock before the requirement (lock order above). Assumption 46 allowed changing phase 3 code; no phase 3 test changed.
+2. **`requirement_page.py` changed in task 6**, not 10: the page showed the N-day message after a `candidate_rejected` release. `RequirementPage` gained `signoff_note`.
+3. **`SignoffDoesNotFit`** (422, a `StepInputError`) lives in `s03_signoff.py`; `core/steps/errors.py` is not in section 11.
+4. **`ProfileSummary`, `summary_of()`** and the plan types `ProfilePlan`, `ProfileAttempt` are beyond section 5.2. `ProfilerInput` carries `requirement_titles`.
+5. **The sign-off's approval note** is "Signed off as <outcome>".
+6. **`test_a_feed_registered_by_step_04_is_fetched_with_no_selection` passed before task 8's change**: `list_to_fetch()` already had the registered case. It stays as a regression test.
+7. **The requester's notification subjects** (not worded in the plan): "Accepted with gaps: <source>", "Source rejected: <source>"; the backend team: "Linked to a registered feed: <feed>", "Source catalogue could not be read"; the owner: "Feed registered: <feed>".
+
+**Files changed outside section 11:** none.
+
+**Application database:**
+
+```
+alembic current          0013
+alembic upgrade head     Running upgrade 0013 -> 0014, profile, sign-off, register: steps 02 to 04
+alembic current          0014 (head)
+```
+
+Triggers present: `trg_feed_profiles_a_version`, `_b_fetch`, `_append_only`; `trg_feed_signoffs_a_version`, `_b_guard`, `_c_decision`, `_append_only`; `trg_feed_registrations_a_version`, `_b_guard`, `_append_only`; `trg_feeds_a_stage`; `trg_source_choices_f_feed_stage` (the `no_truncate` statement triggers are not listed by `information_schema.triggers`). The five feeds are still `candidate`; the three new tables are empty; `ck_source_choices_reason` holds the three reasons.
