@@ -840,7 +840,7 @@ Notes only; nothing here is built in phase 3.
 10. The Azure Functions timer runs the same single daily job.
 11. `SOURCE_HTTP_ALLOWED_HOSTS` is widened only for approved sources.
 12. `AzureOpenAIProvider` uses the same prompt files; compare its answers with the mock's on rows E to K.
-13. **A cleanup sweep for orphan agent input files** (risk 22): remove `agent-inputs/` keys that no `proposal_log.input_ref` names, after a grace period. An orphan appears when a transaction rolls back after `Agent.run()` stored the input, including a refusal in `before_write` (review fix 2).
+13. **A cleanup sweep for orphan agent input files** (risk 22): remove `agent-inputs/` keys that no `proposal_log.input_ref` names, after a grace period. An orphan appears when the caller's transaction rolls back after `Agent.run()` returned (for example a failed commit). A refusal in `before_write` is not an orphan any more: the discarded call's log row names the input (`0011`).
 
 ## 17. Results and deviations (recorded during implementation)
 
@@ -1194,6 +1194,8 @@ Each with its tests written first and shown failing:
 
 **Not shown failing:** the API-level `test_a_status_change_during_the_model_call_gives_409_and_writes_nothing` (find-source and sources) passed before the fix too: the old code re-read the row in `advance()` after the call, and the rollback discarded the log row. It stays as a regression test. The step-level versions did fail (the log row was flushed before the refusal).
 
-**A model call refused after it answered is not logged.** When the status changed during the call, nothing is written, so that call has no `proposal_log` row (it made no proposal and nobody saw its output); its input file is an orphan (section 16, phase 8 item 13).
+**Superseded the same day (your decision): a discarded call is logged.** Migration `0011` adds `proposal_log.discarded_reason`. If anything fails after the model answered (the status changed during the call, or writing the proposals failed), `Agent.run()` writes the call's log row in its own session on the same bind and commits it, marked discarded, then re-raises; a trigger refuses any proposal that points at a discarded row. **Rule: every answered model call has exactly one `proposal_log` row.** Tests written first and shown failing: `test_a_refusal_in_before_write_logs_the_call_as_discarded_with_no_proposal`, `test_a_failure_while_writing_the_proposals_also_logs_the_call_as_discarded`, `test_every_answered_model_call_has_exactly_one_log_row`, `test_a_discarded_call_is_marked_and_can_have_no_proposal`, the S1 and S2 step tests, and on committed rows `test_a_status_change_during_the_model_call_gives_409_and_logs_it_as_discarded` (find-source and sources). With the discard log call removed, 5 of them failed; restored.
 
-`alembic current`: `0010 (head)`.
+**Limits of the rule:** a call that fails before answering (the provider raises) has no output and no row, as before. If the caller's own commit fails after `Agent.run()` returned, the used call's row is lost with it; that cannot be caught inside `Agent.run()`.
+
+`alembic current`: `0011 (head)`.

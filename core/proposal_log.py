@@ -21,11 +21,15 @@ class ProposalLog:
     def __init__(self, session: Session):
         self._session = session
 
-    def record(self, *, agent_name: str, input_ref: str, result: LLMResult) -> ProposalLogEntry:
+    def record(self, *, agent_name: str, input_ref: str, result: LLMResult,
+               discarded_reason: str | None = None) -> ProposalLogEntry:
+        """discarded_reason: set when the answer was discarded (it then can have no proposal; 0011)."""
         if not agent_name.strip():
             raise ValueError("agent_name is required")
         if not input_ref.strip():
             raise ValueError("input_ref is required")
+        if discarded_reason is not None and not discarded_reason.strip():
+            raise ValueError("a discarded call needs its reason")
         entry = ProposalLogEntry(
             agent_name=agent_name,
             provider=result.provider,
@@ -37,6 +41,7 @@ class ProposalLog:
             output=result.output.model_dump(mode="json"),
             raw_ref=result.raw_ref,
             latency_ms=result.latency_ms,
+            discarded_reason=discarded_reason,
         )
         self._session.add(entry)
         self._session.flush()

@@ -130,7 +130,8 @@ def test_a_failed_agent_call_leaves_the_status(db_session, requirement):
     assert status(db_session, req) == "defined"
 
 
-def test_a_status_change_during_the_model_call_writes_nothing(db_session, requirement):
+def test_a_status_change_during_the_model_call_logs_it_as_discarded_and_writes_nothing_else(db_session,
+                                                                                              requirement):
     """Review fix 2: after the call the requirement is locked and its status checked again."""
     from sqlalchemy import text
 
@@ -141,7 +142,9 @@ def test_a_status_change_during_the_model_call_writes_nothing(db_session, requir
     before = (count(db_session, ProposalLogEntry), count(db_session, ProposalRow))
     with pytest.raises(RequirementNotInStatus):
         propose_scope(db_session, requirement_id=req.id, agent=agent, catalogue=CATALOGUE)
-    assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == before
+    # the call is logged once, marked discarded; no proposal
+    assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == (before[0] + 1, before[1])
+    assert db_session.scalars(select(ProposalLogEntry.discarded_reason)).all()[-1].startswith("RequirementNotInStatus")
 
 
 def test_only_the_requirements_own_requester_decides(db_session, requirement):

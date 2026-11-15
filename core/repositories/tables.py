@@ -55,9 +55,12 @@ def _created_at(*, clock: bool = False) -> Mapped[datetime]:
 
 
 class ProposalLogEntry(Base):
-    """One model call (rule 4). Append-only."""
+    """One model call (rule 4): exactly one row per answered call, used or discarded. Append-only."""
 
     __tablename__ = "proposal_log"
+    __table_args__ = (
+        CheckConstraint("discarded_reason IS NULL OR length(btrim(discarded_reason)) > 0", name="discarded_reason"),
+    )
 
     id: Mapped[uuid.UUID] = _id()
     created_at: Mapped[datetime] = _created_at()
@@ -71,6 +74,8 @@ class ProposalLogEntry(Base):
     output: Mapped[dict[str, Any]] = mapped_column(JSONB)
     raw_ref: Mapped[str | None] = mapped_column(Text)
     latency_ms: Mapped[int] = mapped_column(Integer)
+    # 0011: why the answer was discarded (no proposal may point at it); NULL when it was used.
+    discarded_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class ProposalRow(Base):

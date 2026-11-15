@@ -166,7 +166,7 @@ def test_list_from_a_wrong_status_calls_no_agent(db_session, scoped, start):
     assert agent.inputs == []
 
 
-def test_a_status_change_during_the_model_call_writes_nothing(db_session, scoped):
+def test_a_status_change_during_the_model_call_logs_it_as_discarded_and_writes_nothing_else(db_session, scoped):
     """Review fix 2: after the call the requirement is locked and its status checked again."""
     req = scoped()
     agent = ranking_agent()
@@ -175,7 +175,8 @@ def test_a_status_change_during_the_model_call_writes_nothing(db_session, scoped
     before = (count(db_session, ProposalLogEntry), count(db_session, ProposalRow))
     with pytest.raises(RequirementNotInStatus):
         run(db_session, req, agent)
-    assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == before
+    # the call is logged once, marked discarded; no proposal
+    assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == (before[0] + 1, before[1])
 
 
 def test_a_failed_agent_call_leaves_the_status(db_session, scoped):

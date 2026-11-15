@@ -34,10 +34,15 @@ class StandInAgent:
             self.during_call(session)
         raw = self._output(agent_input) if callable(self._output) else self._output
         output = self._schema.model_validate(raw)
-        if before_write is not None:  # as Agent.run(): after the call, before any write
-            before_write(session)
         result = LLMResult(output=output, provider="stand-in", model="stand-in", model_version="0",
                            prompt_id="stand_in", prompt_version="v0", latency_ms=0, raw_ref=None)
+        if before_write is not None:  # as Agent.run(): after the call, before any write
+            try:
+                before_write(session)
+            except Exception as exc:  # as Agent.run(): the call is logged, marked discarded, no proposal
+                ProposalLog(session).record(agent_name=self.name, input_ref="stand-in://input", result=result,
+                                            discarded_reason=f"{type(exc).__name__}: {exc}")
+                raise
         entry = ProposalLog(session).record(agent_name=self.name, input_ref="stand-in://input", result=result)
         repository = ProposalRepository(session)
         proposals = [repository.create(proposal_log_id=entry.id, autonomy="A2", required_approver_roles=["requester"],

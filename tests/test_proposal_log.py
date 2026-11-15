@@ -54,6 +54,30 @@ def test_record_requires_agent_name_and_input_ref(db_session, result, field):
         ProposalLog(db_session).record(result=result, **kwargs)
 
 
+def test_a_discarded_call_is_marked_and_can_have_no_proposal(db_session, result):
+    """0011: a call whose answer was discarded is logged with its reason; the database refuses a proposal
+    pointing at it, and a blank reason."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    log = ProposalLog(db_session)
+    discarded = log.record(agent_name="SmokeAgent", input_ref="ref", result=result, discarded_reason="moved on")
+    assert db_session.get(ProposalLogEntry, discarded.id).discarded_reason == "moved on"
+    with pytest.raises(DBAPIError, match="was discarded"):
+        with db_session.begin_nested():
+            db_session.execute(text(
+                "INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles, status) "
+                "VALUES (:log, 'scope', '{}', 'A2', ARRAY['requester'], 'pending')"), {"log": discarded.id})
+    with pytest.raises(ValueError):
+        log.record(agent_name="SmokeAgent", input_ref="ref", result=result, discarded_reason=" ")
+    with pytest.raises(DBAPIError, match="ck_proposal_log_discarded_reason"):
+        with db_session.begin_nested():
+            db_session.execute(text(
+                "INSERT INTO proposal_log (agent_name, provider, model, model_version, prompt_id, prompt_version, "
+                "input_ref, output, latency_ms, discarded_reason) "
+                "VALUES ('a', 'mock', 'mock', '1', 'p', 'v1', 'ref', '{}', 0, ' ')"))
+
+
 def test_one_row_per_call(db_session, result):
     log = ProposalLog(db_session)
     log.record(agent_name="SmokeAgent", input_ref="ref", result=result)

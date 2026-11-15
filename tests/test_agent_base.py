@@ -251,7 +251,13 @@ def test_before_write_runs_after_the_model_call_and_before_any_write(db_session,
     assert events == ["complete", "before_write", "log"]
 
 
-def test_a_refusal_in_before_write_writes_nothing(db_session, prompts, blobs):
+def _discarded(db_session):
+    return db_session.scalars(select(ProposalLogEntry).where(ProposalLogEntry.discarded_reason.is_not(None))).all()
+
+
+def test_a_refusal_in_before_write_logs_the_call_as_discarded_with_no_proposal(db_session, prompts, blobs):
+    """Every model call has exactly one proposal_log row: a discarded call too, written in its own
+    transaction (so the caller's rollback cannot lose it), marked discarded, with no proposal."""
     before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
 
     def refuse(session):
@@ -260,7 +266,36 @@ def test_a_refusal_in_before_write_writes_nothing(db_session, prompts, blobs):
     with pytest.raises(LookupError):
         EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(
             db_session, EchoInput(text="x"), before_write=refuse)
-    assert (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow)) == before
+    assert (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow)) == (before[0] + 1, before[1])
+    [entry] = _discarded(db_session)
+    assert entry.discarded_reason == "LookupError: the requirement moved on during the call"
+    assert (entry.agent_name, entry.output) == ("EchoAgent", {"items": ["a", "b"]})
+
+
+def test_a_failure_while_writing_the_proposals_also_logs_the_call_as_discarded(db_session, prompts, blobs,
+                                                                              monkeypatch):
+    import agents.base as base
+
+    def broken(self, **kwargs):
+        raise RuntimeError("proposal insert failed")
+
+    monkeypatch.setattr(base.ProposalRepository, "create", broken)
+    with pytest.raises(RuntimeError, match="proposal insert failed"):
+        EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(db_session, EchoInput(text="x"))
+    assert [e.discarded_reason for e in _discarded(db_session)] == ["RuntimeError: proposal insert failed"]
+
+
+def test_every_answered_model_call_has_exactly_one_log_row(db_session, prompts, blobs):
+    def refuse(session):
+        raise LookupError("moved on")
+
+    agent = EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts)
+    before = _count(db_session, ProposalLogEntry)
+    agent.run(db_session, EchoInput(text="used"))
+    with pytest.raises(LookupError):
+        agent.run(db_session, EchoInput(text="discarded"), before_write=refuse)
+    assert _count(db_session, ProposalLogEntry) == before + 2
+    assert len(_discarded(db_session)) == 1
 
 
 def test_run_flushes_but_never_commits(db_session, prompts, blobs, monkeypatch):

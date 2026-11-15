@@ -11,7 +11,9 @@ in this order:
     2. call LLMProvider.complete();
     3. store the rendered messages and the input in the BlobStore (agent-inputs/<agent>/<id>.json);
     3a. before_write(session), if given: the caller locks and checks again (review fix 2);
-    4. ProposalLog.record(): one proposal_log row, whose input_ref is that key;
+    4. ProposalLog.record(): one proposal_log row, whose input_ref is that key (if 3a or 5 fails, the
+       call is logged instead in its own transaction, marked discarded, with no proposal: every answered
+       call has exactly one row);
     5. create the subclass's drafts as proposals, each pointing at that log row, with the agent's own
        autonomy and approver role;
     6. return an AgentRun.
@@ -115,17 +117,31 @@ class Agent:
                   "input": agent_input.model_dump(mode="json"), "messages": [m.model_dump() for m in messages]}
         self._blobs.put(input_ref, json.dumps(stored, sort_keys=True).encode("utf-8"))
 
-        if before_write is not None:
-            before_write(session)
-        entry = ProposalLog(session).record(agent_name=self.name, input_ref=input_ref, result=result)
+        try:
+            if before_write is not None:
+                before_write(session)
+            entry = ProposalLog(session).record(agent_name=self.name, input_ref=input_ref, result=result)
 
-        drafts = self.to_proposals(agent_input, result.output)
-        if drafts and self.approver_role is None:
-            raise ReadOnlyAgentProposed(f"{self.name} is read-only and cannot create proposals")
-        repository = ProposalRepository(session)
-        proposals = [
-            repository.create(proposal_log_id=entry.id, autonomy=self.autonomy,
-                              required_approver_roles=[self.approver_role], **draft.model_dump())
-            for draft in drafts
-        ]
+            drafts = self.to_proposals(agent_input, result.output)
+            if drafts and self.approver_role is None:
+                raise ReadOnlyAgentProposed(f"{self.name} is read-only and cannot create proposals")
+            repository = ProposalRepository(session)
+            proposals = [
+                repository.create(proposal_log_id=entry.id, autonomy=self.autonomy,
+                                  required_approver_roles=[self.approver_role], **draft.model_dump())
+                for draft in drafts
+            ]
+        except Exception as exc:
+            self._log_discarded(session, input_ref, result, exc)
+            raise
         return AgentRun(log_id=entry.id, input_ref=input_ref, output=result.output, proposals=proposals)
+
+    def _log_discarded(self, session: Session, input_ref: str, result, exc: Exception) -> None:
+        """Every answered model call has exactly one proposal_log row. When the answer is discarded, the
+        caller's transaction will be rolled back, so the row is written in its own session on the same
+        bind and committed there: marked discarded, with no proposal. On the API's engine that is its
+        own connection and transaction; in the tests' shared connection it is a savepoint."""
+        with Session(bind=session.get_bind(), join_transaction_mode="create_savepoint") as own:
+            ProposalLog(own).record(agent_name=self.name, input_ref=input_ref, result=result,
+                                    discarded_reason=f"{type(exc).__name__}: {exc}")
+            own.commit()

@@ -89,7 +89,7 @@ async def test_no_connection_is_held_during_any_model_call(own_schema, flow):
 
 
 @pytest.mark.parametrize("action", ["find-source", "sources"])
-async def test_a_status_change_during_the_model_call_gives_409_and_writes_nothing(own_schema, flow, action):
+async def test_a_status_change_during_the_model_call_gives_409_and_logs_it_as_discarded(own_schema, flow, action):
     from sqlalchemy import text
 
     async with flow() as f:
@@ -106,5 +106,11 @@ async def test_a_status_change_during_the_model_call_gives_409_and_writes_nothin
         use_provider(WatchingProvider(own_schema, during_call=change_status))
         response = await f.client.post(f"/api/consumer/requirements/{f.id}/{action}", headers=RILEY, json={})
     assert response.status_code == 409, response.text
-    assert committed(own_schema, "SELECT count(*) FROM proposal_log") == before
+    # Exactly one committed log row for the call, written in its own transaction and marked discarded;
+    # nothing else: no proposal, no status change.
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log") == [(before[0][0] + 1,)]
+    [(reason, proposals)] = committed(
+        own_schema, "SELECT l.discarded_reason, (SELECT count(*) FROM proposals p WHERE p.proposal_log_id = l.id) "
+                    "FROM proposal_log l WHERE l.discarded_reason IS NOT NULL")
+    assert reason.startswith("RequirementNotInStatus") and proposals == 0
     assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("rejected",)]
