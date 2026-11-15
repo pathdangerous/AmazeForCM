@@ -73,10 +73,23 @@ class DailyFetch:
 
     def run(self, today: date | None = None) -> dict[str, str]:
         """Fetch every registered feed, and every candidate feed a requirement currently selects (Q4).
-        Returns feed code -> outcome, or "error: ..." for that feed."""
-        catalogue = self.catalogue_loader() if self.catalogue_loader else None
+        Returns feed code -> outcome, or "error: ..." for that feed.
+
+        A catalogue that fails to load (phase 4 plan, assumption 36; note 4d): registered feeds are still
+        fetched, with no N-day release and no closing of source lists; candidate feeds wait for the next
+        run with a good catalogue; the backend team is told once per run, with the error."""
+        catalogue, broken = None, None
+        if self.catalogue_loader:
+            try:
+                catalogue = self.catalogue_loader()
+            except Exception as exc:  # a bad file must not stop the registered feeds
+                log.exception("the source catalogue could not be read")
+                broken = exc
         with self.session_factory() as session:
-            feeds = [(f.id, f.code) for f in FeedRepository(session).list_to_fetch()]
+            feeds = [(f.id, f.code) for f in FeedRepository(session).list_to_fetch()
+                     if broken is None or f.stage == "registered"]
+        if broken is not None:
+            self._tell_catalogue_broken(broken)
         results: dict[str, str] = {}
         for feed_id, code in feeds:
             with self.session_factory() as session:
@@ -99,6 +112,19 @@ class DailyFetch:
         if catalogue is not None:
             self._close_lists_with_nothing_to_pick(catalogue)
         return results
+
+    def _tell_catalogue_broken(self, error: Exception) -> None:
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                for user_id in self.backend_team():
+                    notifier.notify(recipient=user_id, subject="Source catalogue could not be read",
+                                    body=f"The source catalogue could not be read: {error}. Registered feeds were "
+                                         "fetched; candidate feeds wait for the next run with a good catalogue.")
+                session.commit()
+            except Exception:
+                session.rollback()
+                log.exception("telling the backend team about the catalogue failed")
 
     def _close_lists_with_nothing_to_pick(self, catalogue: SourceCatalogue) -> None:
         """Every awaiting_source_choice requirement whose listed sources all left the catalogue becomes

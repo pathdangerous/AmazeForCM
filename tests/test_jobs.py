@@ -220,6 +220,73 @@ def test_the_job_skips_a_candidate_feed_that_no_requirement_selects(db_session, 
     assert SourceFetchRepository(db_session).list_for_feed(feed.id) == []
 
 
+# ---------------------------------------------------------------- phase 4: registered feeds and a broken catalogue
+
+
+def _registered_by_step_04(db_session, selected):
+    """volume onboarding on syn_exchange_volumes, signed off and registered by step 04; then the requirement
+    is released, so no requirement selects the feed. Committed to the test's savepoint."""
+    from core.repositories.source_choices import SourceChoiceRepository
+    from core.steps.s04_register import register_feed
+    from ports.identity.dev import DevIdentity
+    from ports.notify.inapp import InAppNotifier
+    from tests.conftest import dev_user_for
+    from tests.onboarded import signed_off
+
+    req, feed = selected()
+    RequirementRepository(db_session).advance(req.id, "onboarding")
+    signed_off(db_session, feed.id)
+    register_feed(db_session, feed_id=feed.id, user=dev_user_for("backend_team"), owner_id="dev-data-owner",
+                  visibility="open", catalogue=CATALOGUE, identity=DevIdentity(), notifier=InAppNotifier(db_session))
+    # The requirement releases the feed (written through the repository; no step releases an onboarding
+    # requirement on request), so only its registration keeps the feed fetched.
+    SourceChoiceRepository(db_session).record_release(requirement_id=req.id, reason="requester_asked",
+                                                      decided_by="dev-requester")
+    db_session.commit()
+    return req, feed
+
+
+def test_a_feed_registered_by_step_04_is_fetched_with_no_selection(db_session, daily, selected):
+    """Note 4a: a registered feed is a regular feed; registration ends its dependence on a selection."""
+    from core.repositories.feeds import FeedRepository
+
+    _, feed = _registered_by_step_04(db_session, selected)
+    assert FeedRepository(db_session).get(feed.id).stage == "registered"
+    assert [f.id for f in FeedRepository(db_session).list_to_fetch()] == [feed.id]
+    before = len(SourceFetchRepository(db_session).list_for_feed(feed.id))
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    assert len(SourceFetchRepository(db_session).list_for_feed(feed.id)) == before + 1
+
+
+def _broken(job):
+    import dataclasses
+
+    def fail():
+        raise ValueError("source code 'vendor_x' must start with 'syn_'")
+
+    return dataclasses.replace(job, catalogue_loader=fail)
+
+
+def test_a_catalogue_that_fails_to_load_still_fetches_registered_feeds(db_session, daily, selected):
+    """Note 4d: a bad catalogue file no longer stops every fetch."""
+    _registered_by_step_04(db_session, selected)
+    assert _broken(daily()).run() == {"syn_exchange_volumes": "fetched"}
+
+
+def test_a_catalogue_that_fails_to_load_skips_candidates_and_tells_the_backend_team(db_session, daily, selected):
+    from core.repositories.notifications import NotificationRepository
+
+    _, candidate = selected()  # a candidate feed a requirement selects: fetched only with a good catalogue
+    job = _broken(daily())
+    assert job.run() == {}
+    assert SourceFetchRepository(db_session).list_for_feed(candidate.id) == []
+    job.run()
+    told = [n for n in NotificationRepository(db_session).list_for("dev-backend-team")
+            if n.subject == "Source catalogue could not be read"]
+    assert len(told) == 2  # once per run, until it is fixed (risk 12)
+    assert "must start with 'syn_'" in told[0].body and "Registered feeds were fetched" in told[0].body
+
+
 def test_a_new_selection_wakes_the_feed(db_session, daily, selected):
     from core.repositories.source_choices import SourceChoiceRepository
 
