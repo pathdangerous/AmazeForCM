@@ -42,6 +42,11 @@ class FeedRepository:
     def get(self, feed_id: UUID) -> Feed:
         return Feed.model_validate(self._row(feed_id))
 
+    def lock(self, feed_id: UUID) -> Feed:
+        """The feed, with its row locked until the transaction ends: fetches of one feed are recorded one
+        after the other (review fix 3)."""
+        return Feed.model_validate(self._row(feed_id, lock=True))
+
     def get_by_source(self, source_code: str) -> Feed | None:
         """The feed that reads this catalogue source, if one exists (one feed per source)."""
         row = self._session.scalars(select(Row).where(Row.source_code == source_code)).one_or_none()

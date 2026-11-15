@@ -106,6 +106,102 @@ async def test_two_requirements_selecting_the_same_new_source_at_once_make_one_f
     assert committed(own_schema, "SELECT count(*) FROM source_choices") == [(2,)]
 
 
+# ---------------------------------------------------------------- review fix 3: the source fetch
+
+
+def _selected_volume(engine):
+    """A requirement selected to the known source syn_exchange_volumes, committed; returns its feed id."""
+    from core.repositories.requirements import RequirementRepository
+    from core.seed import seed_glossary  # noqa: F401 (own_schema seeded the glossary)
+    from core.steps.known_source import find_known_source
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.db import get_sessionmaker
+
+    with get_sessionmaker(engine)() as session:
+        requirement = RequirementRepository(session).create(requester_id="dev-requester", title="volume",
+                                                            element_keys=["volume"])
+        feed_id = find_known_source(session, requirement_id=requirement.id,
+                                    catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).feed.id
+        session.commit()
+    return feed_id
+
+
+def _connector(on_fetch):
+    from ports.config import REPO_ROOT
+    from ports.connectors.local_file import LocalFileConnector
+
+    class Spy(LocalFileConnector):
+        def fetch(self, source_ref):
+            on_fetch()
+            return super().fetch(source_ref)
+
+    return lambda name: Spy(REPO_ROOT / "fixtures" / "sources")
+
+
+def _daily(engine, tmp_path, factory):
+    from apps.api.jobs import DailyFetch
+    from ports.db import get_sessionmaker
+    from ports.storage.local import LocalBlobStore
+
+    return DailyFetch(session_factory=get_sessionmaker(engine), blob_store=LocalBlobStore(tmp_path / "blob"),
+                      connector_factory=factory, backend_team=lambda: ["dev-backend-team"])
+
+
+def test_no_connection_is_held_during_the_connector_call(own_schema, tmp_path):
+    _selected_volume(own_schema)
+    seen = []
+    assert _daily(own_schema, tmp_path, _connector(lambda: seen.append(own_schema.pool.checkedout()))).run() == {
+        "syn_exchange_volumes": "fetched"}
+    assert seen == [0]
+
+
+async def test_no_connection_is_held_during_the_first_fetch(own_schema, flow):
+    from apps.api.deps import get_connector_factory
+    from apps.api.main import app
+
+    seen = []
+    async with flow() as f:
+        app.dependency_overrides[get_connector_factory] = lambda: _connector(
+            lambda: seen.append(own_schema.pool.checkedout()))
+        await f.raised("volume", ("volume",))
+        found = await f.step("find-source")
+    assert found["fetch"]["outcome"] == "fetched" and seen == [0]
+
+
+def test_the_first_fetch_and_the_daily_job_at_once_send_one_notification(own_schema, tmp_path):
+    """Both fetch at once (a barrier inside the connector). The notification is decided after the fetch,
+    with the feed row locked, so only the first to write sees a feed with no file yet."""
+    from apps.api.routers.consumer import _first_fetch
+    from ports.config import Settings
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.db import get_sessionmaker
+    from ports.identity.dev import DevIdentity
+    from ports.notify.inapp import InAppNotifier
+    from ports.storage.local import LocalBlobStore
+
+    feed_id = _selected_volume(own_schema)
+    barrier = threading.Barrier(2)
+    factory = _connector(lambda: barrier.wait(timeout=10))
+    errors = []
+
+    def first_fetch():  # what POST .../find-source runs after committing the selection
+        try:
+            with get_sessionmaker(own_schema)() as session:
+                _first_fetch(session, feed_id, identity=DevIdentity(), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE),
+                             notifier=InAppNotifier(session), blob_store=LocalBlobStore(tmp_path / "api-blob"),
+                             connector_factory=factory, settings=Settings(_env_file=None))
+        except Exception as exc:  # noqa: BLE001 (reported below)
+            errors.append(exc)
+
+    api = threading.Thread(target=first_fetch)
+    api.start()
+    job_result = _daily(own_schema, tmp_path, factory).run()
+    api.join(timeout=30)
+    assert errors == [] and job_result == {"syn_exchange_volumes": "fetched"}
+    assert committed(own_schema, "SELECT count(*) FROM source_fetches") == [(2,)]
+    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'File ready%'") == [(1,)]
+
+
 # ---------------------------------------------------------------- fix 2
 
 

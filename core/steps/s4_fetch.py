@@ -12,8 +12,10 @@ Outcomes (CLAUDE.md): fetched; source_down. Rules execute: no model call, no dec
 - The backend team is told only on a change: "File ready to profile" on the feed's first fetched;
   "Source down" on the first failure after a success, or on a first fetch that fails.
 
-The file is stored before the database flush; if the transaction then fails, an orphan file is left
-(plan, risk 3). The step flushes and never commits.
+Three parts (review fix 3): fetch_plan() reads; the caller ends that transaction; fetch_file() calls the
+connector and stores the file with no database connection held; record_fetch() locks the feed row,
+decides the notifications and writes. The file is stored before the database write; if the transaction
+then fails, an orphan file is left (plan, risk 3). The step flushes and never commits.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from core.repositories.errors import FeedHasNoSource
@@ -90,51 +92,88 @@ def _release_after_n_days(session: Session, feed_id: UUID, n: int, *, catalogue:
     return released
 
 
-def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
-                 blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
-                 today: date | None = None, release_after_days: int | None = None,
-                 catalogue: SourceCatalogue | None = None) -> Fetched | SourceDown:
-    """release_after_days (with catalogue): after a source_down, release every requirement that is
-    source_selected on this feed and has failed that many UTC days in a row (assumption 51). None: no rule."""
-    if release_after_days is not None and (release_after_days < 1 or catalogue is None):
-        raise ValueError("release_after_days is at least 1 and needs the catalogue")
+class FetchPlan(BaseModel):
+    """What one fetch needs, read from the feed. Built in a read transaction the caller then ends."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feed_id: UUID
+    feed_code: str
+    connector: str
+    source_ref: str
+    fetch_id: UUID  # made first, so the blob key can carry it
+    day: date
+
+
+class FetchAttempt(BaseModel):
+    """The connector's answer, with the file already stored: a blob key and size, or why it failed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    plan: FetchPlan
+    blob_ref: str | None = None
+    size_bytes: int | None = None
+    detail: str | None = None
+
+
+def fetch_plan(session: Session, *, feed_id: UUID, today: date | None = None) -> FetchPlan:
+    """Read only. The caller ends the transaction before fetch_file(), so no database connection is held
+    while the source answers (review fix 3, the pattern of model calls)."""
     feed = FeedRepository(session).get(feed_id)
     if feed.connector is None or feed.source_ref is None:
         raise FeedHasNoSource(f"Feed {feed.code!r} has no connector; there is nothing to fetch")
+    return FetchPlan(feed_id=feed.id, feed_code=feed.code, connector=feed.connector, source_ref=feed.source_ref,
+                     fetch_id=uuid.uuid4(), day=today or datetime.now(UTC).date())
+
+
+def fetch_file(plan: FetchPlan, *, connector_factory: Callable[[str], SourceConnector],
+               blob_store: BlobStore) -> FetchAttempt:
+    """No database: the connector call, then the file stored under its key."""
+    with connector_factory(plan.connector) as connector:
+        try:
+            file = connector.fetch(plan.source_ref)
+        except SourceUnavailable as exc:
+            return FetchAttempt(plan=plan, detail=str(exc))
+    if file.size == 0:
+        return FetchAttempt(plan=plan, detail=f"{plan.source_ref} is empty")
+    key = blob_key(plan.feed_code, plan.day, plan.fetch_id, file.filename)
+    blob_store.put(key, file.content)
+    return FetchAttempt(plan=plan, blob_ref=key, size_bytes=file.size)
+
+
+def record_fetch(session: Session, attempt: FetchAttempt, *, notifier: Notifier, backend_team: Sequence[str],
+                 release_after_days: int | None = None, catalogue: SourceCatalogue | None = None) -> Fetched | SourceDown:
+    """Lock the feed row, then decide the notifications from what is committed now, then write. Two
+    fetches of one feed at once (the first fetch and the daily job) are recorded one after the other,
+    so only one of them sees a feed with no file yet (review fix 3).
+
+    release_after_days (with catalogue): after a source_down, release every requirement that is
+    source_selected on this feed and has failed that many UTC days in a row (assumption 51). None: no rule."""
+    if release_after_days is not None and (release_after_days < 1 or catalogue is None):
+        raise ValueError("release_after_days is at least 1 and needs the catalogue")
+    plan = attempt.plan
+    feed = FeedRepository(session).lock(plan.feed_id)
     fetches = SourceFetchRepository(session)
     previous = fetches.latest(feed.id)
     had_a_file = fetches.latest_fetched(feed.id) is not None
-    fetch_id = uuid.uuid4()
-    day = today or datetime.now(UTC).date()
-
-    detail = None
-    with connector_factory(feed.connector) as connector:
-        try:
-            file = connector.fetch(feed.source_ref)
-        except SourceUnavailable as exc:
-            detail = str(exc)
-        else:
-            if file.size == 0:
-                detail = f"{feed.source_ref} is empty"
 
     def tell(subject: str, body: str) -> None:
         for user_id in backend_team:
             notifier.notify(recipient=user_id, subject=subject, body=body)
 
-    if detail is not None:
-        fetches.record(feed_id=feed.id, fetch_id=fetch_id, outcome="source_down", detail=detail)
+    if attempt.detail is not None:
+        fetches.record(feed_id=feed.id, fetch_id=plan.fetch_id, outcome="source_down", detail=attempt.detail)
         if previous is None or previous.outcome == "fetched":
-            tell(f"Source down: {feed.code}", f"The source of feed {feed.code} did not answer: {detail}. "
+            tell(f"Source down: {feed.code}", f"The source of feed {feed.code} did not answer: {attempt.detail}. "
                                               "Amaze tries again every day.")
         released = []
         if release_after_days is not None:
             released = _release_after_n_days(session, feed.id, release_after_days, catalogue=catalogue,
                                              notifier=notifier, backend_team=backend_team)
-        return SourceDown(feed_code=feed.code, fetch_id=fetch_id, detail=detail, released=released)
+        return SourceDown(feed_code=feed.code, fetch_id=plan.fetch_id, detail=attempt.detail, released=released)
 
-    key = blob_key(feed.code, day, fetch_id, file.filename)
-    blob_store.put(key, file.content)
-    fetches.record(feed_id=feed.id, fetch_id=fetch_id, outcome="fetched", blob_ref=key, size_bytes=file.size)
+    fetches.record(feed_id=feed.id, fetch_id=plan.fetch_id, outcome="fetched", blob_ref=attempt.blob_ref,
+                   size_bytes=attempt.size_bytes)
     requirements = RequirementRepository(session)
     moved = []
     for requirement_id in SourceChoiceRepository(session).requirements_selecting(feed.id):
@@ -143,6 +182,18 @@ def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable
             moved.append(requirement_id)
     if not had_a_file:
         tell(f"File ready to profile: {feed.code}", f"The first file of candidate feed {feed.code} is stored "
-                                                    f"as {key} ({file.size} bytes).")
-    return Fetched(feed_code=feed.code, fetch_id=fetch_id, blob_ref=key, size_bytes=file.size,
-                   requirements_onboarding=moved)
+                                                    f"as {attempt.blob_ref} ({attempt.size_bytes} bytes).")
+    return Fetched(feed_code=feed.code, fetch_id=plan.fetch_id, blob_ref=attempt.blob_ref,
+                   size_bytes=attempt.size_bytes, requirements_onboarding=moved)
+
+
+def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
+                 blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
+                 today: date | None = None, release_after_days: int | None = None,
+                 catalogue: SourceCatalogue | None = None) -> Fetched | SourceDown:
+    """fetch_plan(), fetch_file() and record_fetch() on one session. The API and the daily job end the
+    read transaction after fetch_plan(); this chain is for callers that keep one transaction."""
+    plan = fetch_plan(session, feed_id=feed_id, today=today)
+    attempt = fetch_file(plan, connector_factory=connector_factory, blob_store=blob_store)
+    return record_fetch(session, attempt, notifier=notifier, backend_team=backend_team,
+                        release_after_days=release_after_days, catalogue=catalogue)

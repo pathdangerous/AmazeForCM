@@ -19,7 +19,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from core.repositories.feeds import FeedRepository
-from core.steps.s4_fetch import fetch_source
+from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
 from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
 from ports.connectors.catalogue import SourceCatalogue
@@ -77,10 +77,12 @@ class DailyFetch:
             with self.session_factory() as session:
                 notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
                 try:
-                    result = fetch_source(
-                        session, feed_id=feed_id, connector_factory=self.connector_factory,
-                        blob_store=self.blob_store, notifier=notifier, backend_team=self.backend_team(),
-                        today=today, catalogue=catalogue,
+                    # Read, end the transaction, fetch with no connection held, lock the feed, write.
+                    plan = fetch_plan(session, feed_id=feed_id, today=today)
+                    session.rollback()
+                    attempt = fetch_file(plan, connector_factory=self.connector_factory, blob_store=self.blob_store)
+                    result = record_fetch(
+                        session, attempt, notifier=notifier, backend_team=self.backend_team(), catalogue=catalogue,
                         release_after_days=self.release_after_days if catalogue else None,
                     )
                     session.commit()

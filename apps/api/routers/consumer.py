@@ -55,7 +55,7 @@ from core.steps.requirement_page import RequirementPage, approval_missing_messag
 from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, record_scope, scope_input
 from core.steps.s2_sources import SourcesResult, record_sources, sources_input
 from core.steps.s3_pick import ApprovalMissing, Declined, PickResult, SourcePicked, decline_source, pick_source
-from core.steps.s4_fetch import FetchResult, fetch_source
+from core.steps.s4_fetch import FetchResult, fetch_file, fetch_plan, record_fetch
 from core.steps.s17_discover import Assistance, Discovery, assist_input, discover, record_assist
 from ports.config import Settings
 from ports.connectors import SourceConnector
@@ -262,11 +262,13 @@ def _first_fetch(session: Session, feed_id: UUID, *, identity: Identity, catalog
                  notifier: Notifier, blob_store: BlobStore, connector_factory: Callable[[str], SourceConnector],
                  settings: Settings):
     """The first fetch after a selection, in its own transaction: the selection is committed first and
-    stands if the fetch gives source_down (assumption 13)."""
-    return _in_transaction(session, lambda: fetch_source(
-        session, feed_id=feed_id, connector_factory=connector_factory, blob_store=blob_store, notifier=notifier,
-        backend_team=_recipients(identity)["backend_team"], catalogue=catalogue,
-        release_after_days=settings.source_down_release_days))
+    stands if the fetch gives source_down (assumption 13). Read, end the transaction, fetch with no
+    connection held, then lock the feed and write (review fix 3)."""
+    plan = _read(session, lambda: fetch_plan(session, feed_id=feed_id))
+    attempt = fetch_file(plan, connector_factory=connector_factory, blob_store=blob_store)
+    return _in_transaction(session, lambda: record_fetch(
+        session, attempt, notifier=notifier, backend_team=_recipients(identity)["backend_team"],
+        catalogue=catalogue, release_after_days=settings.source_down_release_days))
 
 
 def _page(session: Session, requirement_id: UUID, catalogue: SourceCatalogue, settings: Settings) -> RequirementPage:

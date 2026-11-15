@@ -177,6 +177,7 @@ def test_the_job_always_fetches_a_registered_feed(db_session, daily):
                                   source_code="syn_exchange_volumes", connector="local_file",
                                   source_ref="files/exchange_volumes.csv")
     feeds.register(feed.id, owner_id="dev-data-owner")
+    db_session.commit()  # to the test's savepoint: the job ends its read transaction before the fetch
     assert daily().run() == {"syn_exchange_volumes": "fetched"}
 
 
