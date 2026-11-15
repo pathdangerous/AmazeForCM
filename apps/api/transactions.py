@@ -14,7 +14,17 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from core.repositories.errors import (
+    FeedHasNoFile,
+    FeedNotACandidate,
+    FeedNotFound,
+    FeedNotProfiled,
+    FeedNotRegistered,
+    FeedNotSignedOff,
     NothingToRelease,
+    ProfileAlreadySummarised,
+    ProfileNotSummarised,
+    ProfileSuperseded,
+    SourceRejected,
     ProposalAlreadyDecided,
     ProposalForAnotherRequirement,
     ProposalNotFound,
@@ -28,7 +38,11 @@ from ports.connectors.catalogue import UnknownSource
 T = TypeVar("T")
 
 CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyHasSource, NothingToRelease,
-             SourceAlreadyReleased, UnknownSource)  # UnknownSource: a listed source left the catalogue
+             SourceAlreadyReleased, UnknownSource,  # UnknownSource: a listed source left the catalogue
+             # phase 4 (plan, assumption 13 and section 9)
+             FeedNotACandidate, FeedHasNoFile, FeedNotProfiled, ProfileAlreadySummarised, ProfileSuperseded,
+             ProfileNotSummarised, FeedNotSignedOff, FeedNotRegistered, SourceRejected)
+NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound)
 
 
 def read(session: Session, work: Callable[[], T]) -> T:
@@ -50,7 +64,7 @@ def in_transaction(session: Session, work: Callable[[], T], *, keep: bool = True
     except CONFLICTS as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from None
-    except (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound):
+    except NOT_FOUND:
         session.rollback()
         raise HTTPException(status_code=404, detail="Not found") from None
     except StepInputError as exc:

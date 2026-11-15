@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from agents.discovery_assistant import DiscoveryAssistant
 from agents.intent import IntentAgent
+from agents.profiler import ProfilerAgent
 from agents.source_discovery import SourceDiscoveryAgent
 from ports.config import Settings, get_settings
 from ports.llm import LLMProvider, get_llm_provider
@@ -107,6 +108,18 @@ def get_intent_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_p
 def get_discovery_assistant(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
                             blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> DiscoveryAssistant:
     return DiscoveryAssistant(provider=provider, blob_store=blob_store)
+
+
+def get_profiler_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                       blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> ProfilerAgent:
+    return ProfilerAgent(provider=provider, blob_store=blob_store)
+
+
+def backend_team_user(user: Annotated[User, Depends(backend_user)]) -> User:
+    """Steps 02 to 04 act for the backend team only; every other backend role reads (phase 4 plan, assumption 3)."""
+    if "backend_team" not in user.roles:
+        raise HTTPException(status_code=403, detail="Backend team role required")
+    return user
 
 
 def get_source_discovery_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
