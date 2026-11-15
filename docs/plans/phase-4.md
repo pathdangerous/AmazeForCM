@@ -1,6 +1,6 @@
 # Phase 4 plan — Profile, sign-off, register (steps 02–04)
 
-**Status:** written on 2026-11-15; **awaits your approval**. Nothing is built.
+**Status:** written on 2026-11-15; **approved on 2026-11-15** with the open questions answered as recommended (Q7: `duckdb==1.5.6`), the three messages of assumption 26 and phase 3's `NO_SOURCE_LEFT` approved word for word, decision D1 (what approving the summary means, assumption 18), and six plan changes: the lock order (assumption 46), a sixth commit-visibility test (42), a note in the sign-off form (section 10), the router helper move as its own commit (39), the plugin section of `CLAUDE.md` (task 14) and risk 15. Those are applied below.
 **Date:** 2026-11-15. **Branch:** `phase-4`, created from `main` at `2b167f2`. **Scope:** phase 4 of `BUILD_PLAN.md` and the phase 4 notes of the phase 3 plan (section 16). Local only; nothing is pushed.
 
 **One part, four checkpoints.** Phase 4 is three steps, one agent and one migration; it is not split. I stop at each checkpoint.
@@ -149,10 +149,10 @@
 
 **Step 03: the sign-off**
 
-18. **The sign-off is the backend team's decision on the `profile_summary` proposal.**
-    - `meets` and `meets_with_gaps` approve it; `rejected` rejects it. One row in `approvals`, by a named person with the role `backend_team`.
-    - The agent's recommended outcome is advice. The person chooses the outcome and writes the gaps or reasons; nothing is copied from the agent unless the person keeps it.
-    - So there is no sign-off without a summary. If the model is down, the sign-off waits (risk 3; open question 3).
+18. **The sign-off is the backend team's decision on the `profile_summary` proposal (decision D1).**
+    - The person chooses the outcome (`meets`, `meets_with_gaps` or `rejected`) and writes the gaps or reasons; nothing is copied from the agent unless the person keeps it. `feed_signoffs` holds the person's outcome.
+    - **Approving the proposal means the person agrees with its `recommended_outcome`; rejecting it means the person chose another outcome.** One row in `approvals`, by a named person with the role `backend_team`. So a `rejected` sign-off approves a proposal that recommended `rejected`, and a `meets` sign-off rejects a proposal that recommended `meets_with_gaps`.
+    - **No sign-off without a summary** (Q3). The reasons: every sign-off then has its proposal and model call in rule 4's audit trail, and there is one decision path. Not the reason: the database cannot check that the signer holds `backend_team`, because `approvals.role` is text written by code; it checks only that the signer is the person on the `backend_team` approval row. If the model is down, the sign-off waits (risk 3).
 19. **`feed_signoffs`: versioned per feed, append-only.** Each row: the profile, the proposal, the outcome, `gaps`, `reasons`, who signed. This is where the reasons are kept.
 20. **Input rules** (refused with 422, nothing written):
     - `meets`: no gap and no reason;
@@ -176,7 +176,7 @@
     - `meets_with_gaps`, under "Your data is getting onboarded; we will notify you once it is ready.": "The backend team accepted <source> with gaps: <gap>; <gap>."
     - `rejected`, a source left to pick: "The backend team rejected <source>: <reason>; <reason>. Pick another source."
     - `rejected`, none left: "The backend team rejected <source>: <reason>; <reason>. No other source is listed. Add a note and ask for a new scope."
-27. **What the database enforces on a sign-off** (section 6): its version is the next one; the feed is a candidate; the profile is the feed's latest; the proposal is a `profile_summary` proposal of that feed that names that profile; an accepting sign-off needs the proposal approved by every required role (the `0005` function); a `rejected` one needs it rejected, with a `rejected` approval; the signer is the person who made that decision with the role `backend_team`; a spec-only profile cannot get `meets`; gaps and reasons fit the outcome.
+27. **What the database enforces on a sign-off** (section 6): its version is the next one; the feed is a candidate; the profile is the feed's latest; the proposal is a `profile_summary` proposal of that feed that names that profile; the proposal is decided; **an approved proposal needs every required role's approval and no rejection (the `0005` rules) and `outcome = payload->>'recommended_outcome'`; a rejected proposal needs a `rejected` approval and an outcome that differs (D1)**; the signer is the person on the proposal's `backend_team` approval row; a spec-only profile cannot get `meets`; gaps and reasons fit the outcome.
 
 **Step 04: register**
 
@@ -206,10 +206,10 @@
 
 37. **One migration, `0014_profile_signoff_register.py`.** It adds the three tables and their guards, the stage guard on `feeds`, and the third release reason: `ck_source_choices_reason` is dropped and created again (note 4c). It is developed against the test database, which is rebuilt on every run, and reaches the application database at checkpoint 2. After that, any fix is `0015`. The five feeds in the application database are candidates and its two releases are `requester_asked`, so nothing existing breaks the new guards.
 38. **No new requirement status; two new moves** (assumption 24). `REQUIREMENT_TRANSITIONS` and its two tests change with them.
-39. **API** (section 9). Six Amaze endpoints, four of which commit. `backend_team` for the actions; any backend role for the reads. Named conflicts give 409, refused input 422, a missing feed 404. The consumer router's `_read` and `_in_transaction` move to `apps/api/transactions.py` so both routers use one helper.
+39. **API** (section 9). Six Amaze endpoints, four of which commit. `backend_team` for the actions; any backend role for the reads. Named conflicts give 409, refused input 422, a missing feed 404. The consumer router's `_read` and `_in_transaction` move to `apps/api/transactions.py` so both routers use one helper. **The move is its own commit, first in task 9: no behaviour change, and the consumer tests are not changed.**
 40. **UI** (section 10). backend-ui gets a Feed view; consumer-ui shows gaps and rejections. No new npm package.
 41. **Synthetic data only.** Two new sources and files (section 8). They pass the real-data checks; codes start with `syn_`.
-42. **Commit-visibility tests: five, happy path only.** One for each new endpoint that commits, and one for the new commit inside Find a source (the link to a registered feed is its own transaction, which the existing test does not reach). **Expected added test time: 8 to 20 seconds** (1.5 to 4.3 s each, measured in phase 3).
+42. **Commit-visibility tests: six, happy path only.** One for each new endpoint that commits, and one for each new commit inside Find a source and Pick (the link to a registered feed is its own transaction, which the existing tests do not reach). **Expected added test time: 9 to 26 seconds** (1.5 to 4.3 s each, measured in phase 3).
 
     | Endpoint | Test | What the separate connection sees |
     |---|---|---|
@@ -218,24 +218,31 @@
     | `POST .../signoff` | `test_signoff_commits_the_decision` | the approval and the `feed_signoffs` row |
     | `POST .../register` | `test_register_commits_the_registration` | the `feed_registrations` row and the feed `registered` |
     | `POST .../find-source` (link) | `test_find_source_commits_the_link_to_a_registered_feed` | the requirement `onboarding`, no new fetch row |
+    | `POST .../pick` (link) | `test_pick_commits_the_link_to_a_registered_feed` | the approval, the `source_choices` row, the requirement `onboarding`, no new fetch row |
 43. **Concurrency tests** (`test_concurrency.py`, each on its own schema, about 2 to 4 s each):
     - `test_no_connection_is_held_during_a_profiling_run` (`pool.checkedout() == 0` inside `BlobStore.get()`);
     - `test_no_connection_is_held_during_any_model_call` gains the ProfilerAgent's call;
     - `test_a_new_profile_during_the_summary_gives_409_and_a_discard_row`;
     - `test_two_signoffs_at_once_give_one_success_and_one_409`;
-    - `test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_rejected_feed`.
+    - `test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_rejected_feed`;
+    - `test_a_rejection_and_the_daily_fetch_of_one_feed_at_once_do_not_deadlock`;
+    - `test_a_rejection_and_a_requester_release_of_one_requirement_at_once_do_not_deadlock`.
+    - In each of the last three, neither request deadlocks, and each gives one success or a 409.
 44. **Documents** (task 14): `CLAUDE.md` (layout lines, the DuckDB pin), `BUILD_PLAN.md` (who signs off, what a rejection does, what `duplicate_linked` compares), `README.md` (the demo rows, `0014 (head)`, the new append-only tables), `requirements.txt`. No new setting, so `.env.example` does not change.
 45. **I check the UI** by building it and by a scripted browser run with screenshots. The committed Playwright test stays in phase 7.
+46. **One lock order, for every step that takes more than one lock** (plan change 1): the advisory lock on the source code (`pg_advisory_xact_lock(hashtext(code))`, as `feed_for`), then the feed row (`FOR NO KEY UPDATE`), then the requirement rows in id order. A step that needs only some of them takes those in the same order. The sign-off's rejection, a selection, the fetch's write and a release follow it; phase 3's code is changed where it does not (the fetch locks the feed, then its requirements, which already fits; a release locks the requirement only). The tests are the last three of assumption 43.
 
 **Open questions, recommendation first**
 
 1. **How coverage links a file column to a requested element.** Recommended: the catalogue states it (`columns`, assumption 8). Alternative: match column names to glossary names and aliases; no catalogue change, but most columns of the sample files would not match, and it is the mapping agent's job in phase 5.
 2. **What `duplicate_linked` compares.** Recommended: the source code only (assumption 32). Alternative: also treat a candidate that reads the same `connector` and `source_ref` as a registered feed as a duplicate, found at Register. It needs a way to move a requirement to another feed (a new basis and reason on `source_choices`, a stage for the unused candidate), and the requester accepted the conditions of the other source.
-3. **A sign-off without the agent's summary.** Recommended: no; the sign-off is the decision on the proposal, so the database can tie it to a named person through `approvals` (assumption 18). Alternative: allow a sign-off with no proposal when the model is unavailable; the "who signed" guard then rests on the row's own column only.
+3. **A sign-off without the agent's summary.** Recommended: no (assumption 18). Alternative: allow a sign-off with no proposal when the model is unavailable. **Answer: as recommended. The reasons are rule 4's audit trail and one decision path; the database cannot check role membership (`approvals.role` is text).**
 4. **`meets` on a spec-only profile.** Recommended: refused (assumptions 10 and 20). Alternative: allowed; `spec_only_low_confidence` is then a label only.
 5. **What a rejection does to the requirement.** Recommended: the source is released and the requester picks again or asks for a new scope (assumption 24). Alternative: the requirement becomes `rejected`, final; the requester raises a new request.
-6. **The three requester messages of assumption 26.** Recommended: as written. They need your approval word for word, as in phase 3.
-7. **The DuckDB version.** Recommended: `1.5.6`. Alternative: `2.0.0`, the newest.
+6. **The three requester messages of assumption 26.** Recommended: as written. **Answer: approved word for word, and so is phase 3 fix 7's "The listed sources are no longer offered. Add a note and ask for a new scope."**
+7. **The DuckDB version.** Recommended: `1.5.6`. Alternative: `2.0.0`, the newest. **Answer: `duckdb==1.5.6`.**
+
+Questions 1, 2, 4, 5 and 8: **answered as recommended.**
 8. **"Who may see it".** Recommended: `open` or `restricted` at registration; who is granted access is decided with the product in phase 7 (assumption 31). Alternative: name roles or users at registration now; that adds a grants table for feeds in this phase.
 
 ## 5. Steps and typed results
@@ -311,7 +318,7 @@ Each step's results form a union discriminated on `outcome`. Steps flush and nev
 |---|---|---|---|---|
 | 02 profile | Nobody: code computes | none | none | A `feed_profiles` row: next version, a `fetched` row of the same feed |
 | 02 summary | Nobody yet | one `profile_summary` proposal per profile; roles `[backend_team]` | none | Nothing: a pending proposal changes nothing |
-| 03 sign-off | One person with `backend_team` | that proposal | approved (`meets`, `meets_with_gaps`) or rejected | A `feed_signoffs` row: the list of assumption 27. For `rejected`: the feed's stage, and the releases, which need a rejected feed |
+| 03 sign-off | One person with `backend_team` | that proposal | approved if the person's outcome is the recommended one, rejected if it differs (D1) | A `feed_signoffs` row holding the person's outcome: the list of assumption 27. For outcome `rejected`: the feed's stage, and the releases, which need a rejected feed |
 | 04 register | One person with `backend_team`, naming an owner | none of its own: it rests on the sign-off | none | A `feed_registrations` row: needs the latest, accepting sign-off. The stage `registered`: needs that row |
 | 04 `duplicate_linked` | Nobody at request time: people decided at registration | none | none | A requirement moves to `onboarding`; nothing is registered |
 
@@ -350,6 +357,9 @@ Each step's results form a union discriminated on `outcome`. Steps flush and nev
 | 503 | `test_api_amaze_onboarding.py::test_a_model_that_does_not_answer_gives_503_and_keeps_the_profile` |
 | 409 and 403 | `test_api_amaze_onboarding.py`: `test_a_wrong_stage_or_step_is_409` (eight cases), `test_only_the_backend_team_acts` |
 | Guards | `test_db_onboarding_guards.py` (section 6); `test_migrations.py::test_every_check_on_a_nullable_column_is_reviewed` with the new checks |
+| D1, raw SQL | `test_db_onboarding_guards.py`: `test_an_approved_summary_needs_the_signoff_to_hold_the_recommended_outcome`, `test_a_rejected_summary_needs_the_signoff_to_hold_another_outcome` (each with the allowed and the refused case) |
+| D1, the step | `test_s03_signoff.py`: `test_agreeing_with_the_recommendation_approves_the_summary`, `test_choosing_another_outcome_rejects_the_summary` |
+| Lock order | the last three tests of assumption 43 |
 
 ## 6. Data model
 
@@ -370,8 +380,7 @@ Each step's results form a union discriminated on `outcome`. Steps flush and nev
 | `trg_feed_profiles_a_version` | a version that is not the feed's highest plus one |
 | `trg_feed_profiles_b_fetch` | a fetch that is not a `fetched` row of the same feed |
 | `trg_feed_signoffs_a_guard` | a version that is not the next; a feed that is not a candidate; a profile of another feed or not the feed's latest; a proposal of another feed or naming another profile; `meets` on a spec-only profile; a signer who is not the `backend_team` approver of the proposal |
-| `trg_feed_signoffs_b_approved` (when the outcome accepts) | a proposal that is not an approved `profile_summary` proposal (the `0005` function) |
-| `trg_feed_signoffs_b_rejected` (when the outcome is `rejected`) | a proposal that is not a rejected `profile_summary` proposal with a `rejected` approval (new function `amaze_require_rejected_proposal`) |
+| `trg_feed_signoffs_b_decision` (new function `amaze_require_signoff_decision`, D1) | a proposal that is pending; an approved proposal without every required role's approval, with a rejection, or whose `recommended_outcome` is not the sign-off's outcome; a rejected proposal without a `rejected` approval, or whose `recommended_outcome` is the sign-off's outcome. One trigger: a `WHEN` clause cannot read the proposal's status |
 | `trg_feed_registrations_a_guard` | a version that is not the next; a sign-off of another feed, not the feed's latest, not accepting, or not on the feed's latest profile |
 | `trg_feeds_a_stage` (insert, and update of stage or owner) | a new feed that is not a candidate; `registered` without a registration row of the same owner; `rejected` without a latest sign-off `rejected`; any other change of stage |
 | `trg_source_choices_f_feed_stage` | a selection of a rejected feed; a `candidate_rejected` release of a feed that is not rejected |
@@ -453,7 +462,7 @@ Signed in as Blake Backend in backend-ui, and Riley Requester in consumer-ui:
    - the latest file, and Profile;
    - the profile: one row per column (name, type, null rate, distinct count, declared as), undeclared and missing columns, coverage per requirement; a clear "low confidence: spec only" notice with its reason;
    - the agent's summary and recommended outcome, marked as the agent's; Summarise when there is none;
-   - Sign off: the three outcomes (`meets` disabled on a spec-only profile), one line per gap or reason;
+   - Sign off: the three outcomes (`meets` disabled on a spec-only profile), one line per gap or reason, and next to the inputs: "Gaps and reasons are shown to the requester.";
    - Register: the owner (a list of data owners), open or restricted; the licence shown, not typed;
    - the history of profiles and sign-offs.
    - The four actions show only for `backend_team`.
@@ -512,8 +521,16 @@ tests/
 
 Each task: tests first and shown failing, then code, then its check, then one commit. Files are edited only with the file tools. I stop at the four checkpoints and continue without stopping between them.
 
+**Method for every task (your instruction on approval; the plugins do not load, so it is followed by hand):**
+- Before code: list any assumption the plan does not state; if it changes scope, stop and ask. Touch only the files in section 11; any other file is a deviation recorded in section 17. The simplest code that passes.
+- RED: the tests written and run, the failing summary line pasted. GREEN: the least code that passes, the summary line pasted. Refactor only with tests green.
+- An unexpected failure: reproduce, find the root cause, write it down, then fix. No guess-fixes; no weakened test.
+- Every claim in a report is backed by pasted output. Guards and commits are shown failing when removed and restored with the Edit tool; `grep PROOF` finds nothing.
+- A checkpoint report also has `git --no-optional-locks diff --stat <last checkpoint>..HEAD`, the files changed outside section 11 (or "none"), the test count and time, and the deviations.
+
 | # | Task | Tests written first | Check |
 |---|---|---|---|
+| 0 | This plan updated with the approval's decisions and changes | none | one commit |
 | 1 | DuckDB: the pin, and `profile_csv()` in `core/steps/profiling.py` | `test_profiling.py`: file order, types, null count and rate, distinct count, an empty cell is a null, the same file twice gives the same profile, a hostile header, a header only, not a table | `pip install --only-binary=:all:`; pytest |
 | 2 | The spec: catalogue `columns`, the two new sources and files, `coverage_of()` | `test_source_catalogue.py`, `test_profiling.py` | pytest |
 | 3 | Migration `0014`; tables, domain models, repositories; the two moves; the third reason; `tests/onboarded.py` and the 16 call sites | `test_migrations.py`, `test_append_only.py`, `test_domain_models.py`, the three `test_repo_feed_*.py`, `test_repo_feeds.py`, `test_repo_source_choices.py`, `test_repo_requirements.py`, `test_db_onboarding_guards.py` | pytest; each new trigger removed in turn and its tests shown failing. **CHECKPOINT 1:** pytest summary, the guard proofs, the profile of one committed sample file as JSON |
@@ -527,7 +544,7 @@ Each task: tests first and shown failing, then code, then its check, then one co
 | 11 | Commit visibility (five) and concurrency (five) | `test_commit_visibility.py`, `test_concurrency.py` | pytest; each commit removed in turn and its test shown failing. **CHECKPOINT 3:** pytest summary and its time, the two done-when tests' output, the added test time |
 | 12 | backend-ui: the Feed view, the registry link and filter | none | build; browser run, rows L to P |
 | 13 | consumer-ui: gaps, rejection, the history label | none | build; browser run, Riley's side of rows L to P |
-| 14 | Documents: `CLAUDE.md`, `BUILD_PLAN.md`, `README.md` | none | documents read back |
+| 14 | Documents: `CLAUDE.md`, `BUILD_PLAN.md`, `README.md`. `CLAUDE.md`'s plugin section says the plugins do not load in this setup, and that the Superpowers and Karpathy method is followed by hand | none | documents read back |
 | 15 | UI polish items found, appended to `docs/ui-polish.md` (not fixed) | none | the file read back |
 | 16 | Review against `CLAUDE.md`'s seven rules, the PostgreSQL 14 list and this plan. Octopus is not loaded; I review by hand unless you load it | none | findings in section 17. **CHECKPOINT 4:** section 13 results and the screenshots. Phase 5 is not started |
 
@@ -583,6 +600,7 @@ Then in the browser: rows L to P of section 8. For row N, check that `meets` can
 12. **A catalogue that stays broken tells the backend team every day.** Once per run, on purpose, until it is fixed.
 13. **Five commit-visibility and five concurrency tests add about 20 to 40 seconds** to every run, each on its own schema.
 14. **DuckDB is a new binary dependency.** Its wheel must be available on the office laptop too; the pin and `--only-binary` check make a missing wheel fail at install, not at run time.
+15. **A rejection on a spec-only profile is final and global** (row N). A header-only file gets `rejected`, the feed is rejected for every requirement, and nothing reopens it, though the source's next file might have data (risk 6).
 
 ## 16. Carried forward
 
