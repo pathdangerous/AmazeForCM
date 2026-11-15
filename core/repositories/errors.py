@@ -98,6 +98,14 @@ class ProfileSuperseded(RepositoryError):
     """A newer profile of the feed was written while this one was summarised or signed off."""
 
 
+class ProfileNotSummarised(RepositoryError):
+    """The feed's latest profile has no ProfilerAgent summary yet: no sign-off without one (Q3)."""
+
+
+class SourceRejected(RepositoryError):
+    """The backend team rejected this source's candidate feed: it is not offered or selected again (step 03)."""
+
+
 class RequirementNotInStatus(RepositoryError):
     """The requirement's status cannot move to the one asked for (REQUIREMENT_TRANSITIONS)."""
 

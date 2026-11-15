@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from core.domain.requirement import Requirement
 from core.domain.sourcing import FetchOutcome, RequirementScope, SourceChoice, SourceSummary
+from core.repositories.feed_signoffs import FeedSignoffRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.requirement_scopes import RequirementScopeRepository
@@ -51,6 +52,18 @@ def source_selected_message(source_name: str) -> str:
 
 def approval_missing_message(source_name: str) -> str:
     return f"{source_name} can be used only under these conditions. Accept them to continue."
+
+
+def accepted_with_gaps_message(source_name: str, gaps: list[str]) -> str:
+    """Phase 4 plan, assumption 26, approved word for word; shown under the onboarding message."""
+    return f"The backend team accepted {source_name} with gaps: {'; '.join(gaps)}."
+
+
+def rejected_message(source_name: str, reasons: list[str], *, source_left: bool) -> str:
+    """Phase 4 plan, assumption 26, approved word for word."""
+    tail = "Pick another source." if source_left else \
+        "No other source is listed. Add a note and ask for a new scope."
+    return f"The backend team rejected {source_name}: {'; '.join(reasons)}. {tail}"
 
 
 def released_message(source_name: str, reason: str, release_days: int, *, source_left: bool) -> str:
@@ -106,6 +119,8 @@ class RequirementPage(BaseModel):
     listed: list[SourceCandidate]  # sources the requester can pick now
     choices: list[ChoiceOnPage]  # every choice and release, oldest first
     can_release: bool
+    # Phase 4: the gaps of an accepting sign-off of the selected feed, shown under the onboarding message.
+    signoff_note: str | None = None
 
 
 def _name(catalogue: SourceCatalogue, code: str) -> str:
@@ -141,6 +156,12 @@ def requirement_page(session: Session, requirement: Requirement, catalogue: Sour
         if fetch is not None:
             last = LastFetch(outcome=fetch.outcome, at=fetch.created_at, detail=fetch.detail)
     source_name = _name(catalogue, current.source_code) if current else ""
+    signoff = FeedSignoffRepository(session).latest(current.feed_id) if current else None
+
+    def after_release(source_left: bool) -> str:
+        if current.reason == "candidate_rejected":
+            return rejected_message(source_name, signoff.reasons, source_left=source_left)
+        return released_message(source_name, current.reason, release_days, source_left=source_left)
 
     status = requirement.status
     next_action: NextAction | None = None
@@ -159,15 +180,14 @@ def requirement_page(session: Session, requirement: Requirement, catalogue: Sour
         message, next_action = SCOPE_CONFIRMED, "list_sources"
     elif status == "awaiting_source_choice":
         next_action = "pick_source"
-        message = released_message(source_name, current.reason, release_days, source_left=True) \
-            if _newer(current, scope) else PICK_A_SOURCE
+        message = after_release(True) if _newer(current, scope) else PICK_A_SOURCE
     elif status == "no_source_found":
         next_action = "ask_for_scope"
         listed_now = [] if scope is None else [
             p for p in ProposalRepository(session).list_for_requirement(requirement.id, "source_list")
             if p.created_at > scope.created_at]
         if _newer(current, scope):
-            message = released_message(source_name, current.reason, release_days, source_left=False)
+            message = after_release(False)
         elif any(p.status == "pending" for p in listed_now):  # undecided, so they left the catalogue
             message = NO_SOURCE_LEFT
         elif listed_now:
@@ -187,4 +207,7 @@ def requirement_page(session: Session, requirement: Requirement, catalogue: Sour
                               source_name=_name(catalogue, c.source_code), reason=c.reason, at=c.created_at)
                  for c in history],
         can_release=status == "source_selected",
+        signoff_note=accepted_with_gaps_message(source_name, signoff.gaps)
+        if status == "onboarding" and current.action == "selected" and signoff and signoff.outcome == "meets_with_gaps"
+        else None,
     )

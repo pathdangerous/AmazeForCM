@@ -43,16 +43,19 @@ class Released(BaseModel):
 
 def release_source(session: Session, *, requirement_id: UUID, reason: ReleaseReason, user: User | None,
                    catalogue: SourceCatalogue, notifier: Notifier, backend_team: Sequence[str]) -> Released:
-    """user: the requester for requester_asked; None for the N-day rule."""
+    """user: the requester for requester_asked; None for a release by rule (the N-day rule, or step 03's
+    rejection, candidate_rejected). Only candidate_rejected releases an onboarding requirement: its file
+    was handed to step 02, and step 02 rejected it (phase 4 plan, assumption 24)."""
     if (reason == "requester_asked") != (user is not None):
-        raise ValueError("a requester_asked release names the requester; a source_down_n_days release names nobody")
+        raise ValueError("a requester_asked release names the requester; a release by rule names nobody")
     requirements = RequirementRepository(session)
     requirement = requirements.lock(requirement_id)
     if user is not None and user.id != requirement.requester_id:
         raise NotTheRequester(f"Only {requirement.requester_id} releases the source of requirement {requirement_id}")
-    if requirement.status != "source_selected":
+    allowed = ("source_selected", "onboarding") if reason == "candidate_rejected" else ("source_selected",)
+    if requirement.status not in allowed:
         raise RequirementNotInStatus(
-            f"Requirement {requirement_id} is {requirement.status}; only a source_selected requirement is released")
+            f"Requirement {requirement_id} is {requirement.status}; a {reason} release is from {', '.join(allowed)}")
 
     choice = SourceChoiceRepository(session).record_release(requirement_id=requirement_id, reason=reason,
                                                             decided_by=user.id if user else None)

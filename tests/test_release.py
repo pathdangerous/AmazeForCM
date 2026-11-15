@@ -121,6 +121,20 @@ def test_picking_again_adds_the_next_version(db_session, picked_backup):
     assert status(db_session, req) == "source_selected"
 
 
+def test_a_candidate_rejected_release_comes_from_onboarding_or_source_selected(db_session, picked_backup):
+    """Phase 4: the sign-off's rejection releases by rule, naming nobody (the person is on the sign-off)."""
+    from core.repositories.feeds import FeedRepository
+    from tests.onboarded import rejected_feed
+
+    req, _ = picked_backup
+    RequirementRepository(db_session).advance(req.id, "onboarding")
+    rejected_feed(db_session, FeedRepository(db_session).get_by_source(BACKUP).id)
+    with pytest.raises(ValueError):
+        release(db_session, req, user=REQUESTER, reason="candidate_rejected")
+    result = release(db_session, req, user=None, reason="candidate_rejected")
+    assert (result.reason, result.status) == ("candidate_rejected", "awaiting_source_choice")
+
+
 def test_the_backend_team_is_told_once_per_release(db_session, picked_backup):
     req, _ = picked_backup
     before = len(NotificationRepository(db_session).list_for("dev-backend-team"))

@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from core.domain.requirement import Requirement
 from core.domain.sourcing import CandidateRef, Coverage, SourceDiscoveryInput, SourceSummary
 from core.repositories.errors import RequirementNotInStatus
+from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.requirement_scopes import RequirementScopeRepository
 from core.repositories.requirements import RequirementRepository
@@ -79,8 +80,11 @@ def listed_sources(session: Session, requirement_id: UUID, catalogue: SourceCata
     """The sources the requester can still pick: pending source_list proposals, in rank order. The
     conditions shown are the catalogue's now (the ones a pick must accept, assumption 56)."""
     listed = []
+    rejected = FeedRepository(session).rejected_source_codes()  # phase 4: rejected at step 03, for anyone
     for proposal in ProposalRepository(session).list_for_requirement(requirement_id, "source_list", "pending"):
         payload = proposal.payload
+        if payload["source_code"] in rejected:
+            continue
         try:
             entry = catalogue.get(payload["source_code"])
         except UnknownSource:  # gone from the catalogue: it cannot be picked
@@ -103,11 +107,12 @@ def sources_input(session: Session, *, requirement_id: UUID, catalogue: SourceCa
             f"Requirement {requirement_id} is {requirement.status}; sources are listed from scope_confirmed")
     scope = RequirementScopeRepository(session).current(requirement_id)
     released = SourceChoiceRepository(session).released_sources(requirement_id)
+    rejected = FeedRepository(session).rejected_source_codes()
     candidates = []
     for entry in catalogue.entries:
         if entry.visibility != scope.visibility or entry.channel not in scope.where_to_search:
             continue
-        if entry.code in released:
+        if entry.code in released or entry.code in rejected:
             continue
         covered = coverage(requirement, entry)
         if covered.elements or covered.terms:

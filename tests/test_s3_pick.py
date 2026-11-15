@@ -188,6 +188,23 @@ def test_a_decided_proposal_cannot_be_picked(db_session, listed):
         pick(db_session, req, proposals[VENDOR], conditions(VENDOR))
 
 
+def test_picking_a_rejected_source_is_409(db_session, listed):
+    """Listed before the backend team rejected its feed: not shown any more, and a pick is SourceRejected."""
+    from core.repositories.errors import SourceRejected
+    from core.steps.s2_sources import listed_sources
+    from tests.onboarded import rejected_feed
+
+    req, proposals = listed()
+    feed = FeedRepository(db_session).create_candidate(code=VENDOR, name="Vendor", source_code=VENDOR,
+                                                       connector="local_file", source_ref="files/vendor_eod_prices.csv")
+    rejected_feed(db_session, feed.id)
+    assert [c.source.code for c in listed_sources(db_session, req.id, CATALOGUE)] == [BACKUP]
+    before = snapshot(db_session)
+    with pytest.raises(SourceRejected, match=VENDOR):
+        pick(db_session, req, proposals[VENDOR], conditions(VENDOR))
+    assert snapshot(db_session) == before
+
+
 def test_declining_a_source_rejects_its_proposal_and_keeps_the_others(db_session, listed):
     req, proposals = listed()
     result = decline_source(db_session, requirement_id=req.id, user=REQUESTER, proposal_id=proposals[VENDOR],

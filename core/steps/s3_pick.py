@@ -29,12 +29,18 @@ from sqlalchemy.orm import Session
 
 from core.domain.proposal import Proposal
 from core.domain.sourcing import SourceSummary
-from core.repositories.errors import ProposalAlreadyDecided, ProposalForAnotherRequirement, RequirementNotInStatus
+from core.repositories.errors import (
+    ProposalAlreadyDecided,
+    ProposalForAnotherRequirement,
+    RequirementNotInStatus,
+    SourceRejected,
+)
+from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.steps.errors import NotTheRequester
-from core.steps.known_source import feed_for
+from core.steps.known_source import feed_for, lock_source
 from core.steps.result import StepResult
 from core.steps.s2_sources import listed_sources
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions
@@ -85,7 +91,15 @@ def _listed_proposal(session: Session, *, requirement_id: UUID, user: User, prop
 
 def pick_source(session: Session, *, requirement_id: UUID, user: User, proposal_id: UUID,
                 accepted_conditions: SourceConditions | None, catalogue: SourceCatalogue) -> SourcePicked | ApprovalMissing:
+    """Lock order (phase 4 plan, assumption 46): the proposal is read unlocked to know its source, then the
+    source code is locked, then the requirement (in _listed_proposal), then everything is checked again.
+    A source rejected at step 03 is SourceRejected (409)."""
+    code = ProposalRepository(session).get(proposal_id).payload.get("source_code")
+    if code:
+        lock_source(session, code)
     proposal = _listed_proposal(session, requirement_id=requirement_id, user=user, proposal_id=proposal_id)
+    if proposal.payload["source_code"] in FeedRepository(session).rejected_source_codes():
+        raise SourceRejected(f"Source {proposal.payload['source_code']} was rejected by the backend team")
     entry = catalogue.get(proposal.payload["source_code"])
     source = SourceSummary.of(entry)
     if accepted_conditions is None:

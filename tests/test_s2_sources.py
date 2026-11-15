@@ -157,6 +157,21 @@ def test_a_released_source_is_not_listed(db_session, scoped):
     assert [c.code for c in agent.inputs[0].candidates] == ["syn_vendor_eod_prices"]
 
 
+def test_a_rejected_source_is_not_listed(db_session, scoped):
+    """Phase 4 plan, assumption 25: a source whose candidate feed the backend team rejected, for anyone."""
+    from core.repositories.feeds import FeedRepository
+    from tests.onboarded import rejected_feed
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_backup_eod_prices", name="Backup",
+                                                       source_code="syn_backup_eod_prices", connector="local_file",
+                                                       source_ref="files/backup_eod_prices.csv")
+    rejected_feed(db_session, feed.id)
+    req = scoped()
+    agent = ranking_agent()
+    run(db_session, req, agent)
+    assert [c.code for c in agent.inputs[0].candidates] == ["syn_vendor_eod_prices"]
+
+
 @pytest.mark.parametrize("start", ["awaiting_scope_confirmation", "awaiting_source_choice", "defined"])
 def test_list_from_a_wrong_status_calls_no_agent(db_session, scoped, start):
     req = scoped()

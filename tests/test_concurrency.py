@@ -430,3 +430,62 @@ def test_two_profiles_of_one_feed_at_once_take_the_next_versions(own_schema, tmp
     assert errors == []
     assert sorted(results) == [1, 2]
     assert committed(own_schema, "SELECT version FROM feed_profiles ORDER BY version") == [(1,), (2,)]
+
+
+def _run_at_once(work, count=2):
+    """Run work(i) on `count` threads that start together; returns (results, errors), each a list."""
+    barrier, results, errors = threading.Barrier(count), [], []
+
+    def one(i):
+        try:
+            barrier.wait(timeout=10)
+            results.append(work(i))
+        except Exception as exc:  # noqa: BLE001 (returned to the test)
+            errors.append(exc)
+
+    threads = [threading.Thread(target=one, args=(i,)) for i in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    return results, errors
+
+
+def _summarised_feed(engine, tmp_path, recommended="meets"):
+    """The lifecycle feed with a profile and a pending summary, committed; returns its id."""
+    from ports.db import get_sessionmaker
+    from ports.storage.local import LocalBlobStore
+    from tests.onboarded import profiled, summary
+
+    feed_id = _lifecycle_with_a_file(engine, LocalBlobStore(tmp_path / "blob"))
+    with get_sessionmaker(engine)() as session:
+        summary(session, profiled(session, feed_id), recommended=recommended)
+        session.commit()
+    return feed_id
+
+
+def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path):
+    """sign_off locks the source code, then the feed row, then reads the latest version and the summary's
+    status: the second waits, then finds the summary decided (ProposalAlreadyDecided, 409). Never a unique
+    violation on (feed_id, version)."""
+    from core.repositories.errors import ProposalAlreadyDecided
+    from core.steps.s03_signoff import sign_off
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.db import get_sessionmaker
+    from ports.notify.inapp import InAppNotifier
+    from tests.conftest import dev_user_for
+
+    feed_id = _summarised_feed(own_schema, tmp_path)
+
+    def work(_):
+        with get_sessionmaker(own_schema)() as session:
+            result = sign_off(session, feed_id=feed_id, user=dev_user_for("backend_team"), outcome="meets", gaps=[],
+                              reasons=[], catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE),
+                              notifier=InAppNotifier(session), backend_team=["dev-backend-team"])
+            session.commit()
+            return result.outcome
+
+    results, errors = _run_at_once(work)
+    assert results == ["meets"]
+    assert [type(e) for e in errors] == [ProposalAlreadyDecided]
+    assert committed(own_schema, "SELECT version, outcome FROM feed_signoffs") == [(1, "meets")]

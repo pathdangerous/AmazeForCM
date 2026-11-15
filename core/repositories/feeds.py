@@ -96,6 +96,11 @@ class FeedRepository:
         self._session.flush()
         return Feed.model_validate(row)
 
+    def rejected_source_codes(self) -> set[str]:
+        """The sources whose candidate feed was rejected at step 03: not offered again, to anyone."""
+        return set(self._session.scalars(select(Row.source_code).where(Row.stage == "rejected",
+                                                                       Row.source_code.is_not(None))))
+
     def reject(self, feed_id: UUID) -> Feed:
         """Step 03 rejected: the candidate becomes rejected, for good in phase 4. The database needs the
         feed's latest sign-off to be rejected (0014)."""

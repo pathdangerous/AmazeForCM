@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from core.domain.feed import Feed
 from core.domain.requirement import Requirement
 from core.domain.sourcing import SourceChoice, SourceSummary
-from core.repositories.errors import RequirementNotInStatus
+from core.repositories.errors import RequirementNotInStatus, SourceRejected
 from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
@@ -55,20 +55,29 @@ class FindSource(BaseModel):
     choice: SourceChoice | None = None
 
 
-def _known_entry(requirement: Requirement, catalogue: SourceCatalogue) -> SourceEntry | None:
+def _known_entry(requirement: Requirement, catalogue: SourceCatalogue, rejected: frozenset[str]) -> SourceEntry | None:
     asked = set(requirement.elements)
-    covering = [s for s in catalogue.known() if asked <= set(s.elements)]
+    covering = [s for s in catalogue.known() if asked <= set(s.elements) and s.code not in rejected]
     return min(covering, key=lambda s: (len(set(s.elements) - asked), s.code)) if covering else None
 
 
-def check_known_source(requirement: Requirement, catalogue: SourceCatalogue) -> KnownSource | NoKnownSource:
-    """The rule alone: reads nothing, writes nothing."""
+def check_known_source(requirement: Requirement, catalogue: SourceCatalogue,
+                       rejected: frozenset[str] = frozenset()) -> KnownSource | NoKnownSource:
+    """The rule alone: reads nothing, writes nothing. rejected: sources whose feed the backend team rejected
+    (phase 4 plan, assumption 25); they are not counted."""
     if requirement.terms or not requirement.elements:
         return NoKnownSource(reason="terms_ticked")
-    entry = _known_entry(requirement, catalogue)
+    entry = _known_entry(requirement, catalogue, rejected)
     if entry is None:
         return NoKnownSource(reason="no_known_source_covers")
     return KnownSource(source=SourceSummary.of(entry))
+
+
+def lock_source(session: Session, code: str) -> None:
+    """The advisory lock on a source code, held until the transaction ends. First in the lock order of every
+    step that takes more than one lock (phase 4 plan, assumption 46): source code, feed row, requirements
+    in id order."""
+    session.execute(select(func.pg_advisory_xact_lock(func.hashtext(code))))
 
 
 def feed_for(session: Session, *, entry: SourceEntry, requirement_id: UUID) -> Feed:
@@ -76,8 +85,9 @@ def feed_for(session: Session, *, entry: SourceEntry, requirement_id: UUID) -> F
     that selects it (one feed per source, assumption 11). Also used by S3.
 
     An advisory lock on the source code, held until the transaction ends, comes first: two requirements
-    selecting the same new source at once then make one feed, not a unique violation (review fix 1)."""
-    session.execute(select(func.pg_advisory_xact_lock(func.hashtext(entry.code))))
+    selecting the same new source at once then make one feed, not a unique violation (review fix 1). The
+    callers take it already, before the requirement (assumption 46); taking it again here is a no-op."""
+    lock_source(session, entry.code)
     feeds = FeedRepository(session)
     return feeds.get_by_source(entry.code) or feeds.create_candidate(
         code=entry.code, name=entry.name, requirement_id=requirement_id, source_code=entry.code,
@@ -98,14 +108,23 @@ def select_source(session: Session, *, requirement: Requirement, entry: SourceEn
 
 def find_known_source(session: Session, *, requirement_id: UUID, catalogue: SourceCatalogue) -> FindSource:
     """Known source? from a requirement with status defined. Raises RequirementNotInStatus otherwise,
-    whatever the outcome would be, so a second click writes nothing."""
-    requirement = RequirementRepository(session).lock(requirement_id)
+    whatever the outcome would be, so a second click writes nothing.
+
+    Lock order (phase 4 plan, assumption 46): the check is first made unlocked, to know which source to
+    lock; then the source code, then the requirement; then the status and the rejected sources are read
+    again. A source rejected in between is SourceRejected (409): the requester clicks again."""
+    requirements, feeds = RequirementRepository(session), FeedRepository(session)
+    first = check_known_source(requirements.get(requirement_id), catalogue, frozenset(feeds.rejected_source_codes()))
+    if isinstance(first, KnownSource):
+        lock_source(session, first.source.code)
+    requirement = requirements.lock(requirement_id)
     if requirement.status != "defined":
         raise RequirementNotInStatus(
             f"Requirement {requirement_id} is {requirement.status}; Known source? starts from defined"
         )
-    check = check_known_source(requirement, catalogue)
-    if isinstance(check, NoKnownSource):
-        return FindSource(check=check)
-    feed, choice = select_source(session, requirement=requirement, entry=catalogue.get(check.source.code))
-    return FindSource(check=check, feed=feed, choice=choice)
+    if isinstance(first, NoKnownSource):
+        return FindSource(check=first)
+    if first.source.code in feeds.rejected_source_codes():
+        raise SourceRejected(f"Source {first.source.code} was rejected by the backend team meanwhile")
+    feed, choice = select_source(session, requirement=requirement, entry=catalogue.get(first.source.code))
+    return FindSource(check=first, feed=feed, choice=choice)

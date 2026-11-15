@@ -26,6 +26,12 @@ def test_step_02_outcomes_are_claude_mds():
     assert union_outcomes(ProfileResult) == claude_md_outcomes("02 Profile") == ["profiled", "spec_only_low_confidence"]
 
 
+def test_step_03_outcomes_are_claude_mds():
+    from core.steps.s03_signoff import SignoffResult
+
+    assert union_outcomes(SignoffResult) == claude_md_outcomes("03 Sign off") == ["meets", "meets_with_gaps", "rejected"]
+
+
 def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("17 Discover") == ["found", "not_entitled_visible"]
     assert claude_md_outcomes("Routing checks") == ["reuse", "compose", "create_product", "raise_requirement"]

@@ -136,6 +136,19 @@ def test_find_needs_status_defined(db_session, requirement, elements):
     assert (count(db_session, FeedRow), count(db_session, SourceChoiceRow)) == (0, 0)
 
 
+def test_a_rejected_source_is_not_a_known_source(db_session, requirement):
+    """Phase 4 plan, assumption 25: the backend team rejected syn_exchange_volumes's candidate feed."""
+    from tests.onboarded import rejected_feed
+
+    first = requirement(["volume"])
+    feed = find_known_source(db_session, requirement_id=first.id, catalogue=CATALOGUE).feed
+    rejected_feed(db_session, feed.id)
+    later = requirement(["volume"])
+    result = find_known_source(db_session, requirement_id=later.id, catalogue=CATALOGUE)
+    assert isinstance(result.check, NoKnownSource) and result.feed is None
+    assert result.check.reason == "no_known_source_covers"
+
+
 def test_a_second_click_is_refused(db_session, requirement):
     req = requirement(["volume"])
     find_known_source(db_session, requirement_id=req.id, catalogue=CATALOGUE)
