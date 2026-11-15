@@ -11,6 +11,7 @@ from core.domain.sourcing import ChannelRef, ElementRef, IntentInput
 from core.repositories.tables import ProposalLogEntry
 from ports.llm.mock import MockProvider
 from ports.storage.local import LocalBlobStore
+from tests.step_chains import end_read
 
 CHANNELS = [ChannelRef(channel="exchanges", visibility="public"),
             ChannelRef(channel="market_data_vendors", visibility="public"),
@@ -38,6 +39,7 @@ def test_one_scope_proposal_for_the_requester(db_session, agent, glossary):
     from core.repositories.requirements import RequirementRepository
 
     req = RequirementRepository(db_session).create(requester_id="dev-requester", title="open price")
+    end_read(db_session)
     run = agent.run(db_session, _input(requirement_id=req.id))
     [proposal] = run.proposals
     assert (proposal.kind, proposal.required_approver_roles, proposal.autonomy, proposal.requirement_id) == (
@@ -52,6 +54,7 @@ def test_a_private_word_in_the_purpose_gives_a_private_scope(db_session, agent, 
     from core.repositories.requirements import RequirementRepository
 
     req = RequirementRepository(db_session).create(requester_id="dev-requester", title="yield to maturity")
+    end_read(db_session)
     run = agent.run(db_session, _input(requirement_id=req.id, purpose="internal desk data"))
     assert (run.proposals[0].payload["visibility"], run.proposals[0].payload["where_to_search"]) == (
         "private", ["internal_systems"])

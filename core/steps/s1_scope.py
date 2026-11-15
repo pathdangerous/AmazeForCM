@@ -2,8 +2,9 @@
 
 Outcomes (CLAUDE.md): scoped; scope_not_confirmed.
 
-- propose_scope(): the IntentAgent proposes one scope (a scope proposal for the requester) and the
-  requirement waits as awaiting_scope_confirmation. From defined (after no_known_source), or, with
+- scope_input() (read), then the caller ends the transaction, then record_scope(): the IntentAgent
+  proposes one scope (a scope proposal for the requester) and the requirement waits as
+  awaiting_scope_confirmation. From defined (after no_known_source), or, with
   again=True, from scope_not_confirmed or no_source_found with the requester's note. The status is
   checked before the agent is called, so a refused request makes no model call.
 - decide_scope(): only the requirement's own requester approves or rejects; the requester never edits
@@ -130,15 +131,6 @@ def record_scope(session: Session, *, agent: RunsAgent, agent_input: IntentInput
     return ScopeProposed(proposal_id=proposal.id, log_id=run.log_id, visibility=payload["visibility"],
                          provider=payload["provider"], where_to_search=payload["where_to_search"],
                          reason=payload["reason"])
-
-
-def propose_scope(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                  note: str | None = None, again: bool = False, notifier: Notifier | None = None,
-                  backend_team: Sequence[str] = ()):
-    """scope_input() then record_scope() on one session. The API ends the read transaction between them."""
-    agent_input = scope_input(session, requirement_id=requirement_id, catalogue=catalogue, note=note, again=again)
-    return record_scope(session, agent=agent, agent_input=agent_input, again=again, notifier=notifier,
-                        backend_team=backend_team)
 
 
 def pending_scope(session: Session, requirement_id: UUID):

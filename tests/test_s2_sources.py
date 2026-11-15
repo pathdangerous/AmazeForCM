@@ -17,7 +17,8 @@ from core.repositories.proposals import ProposalRepository
 from core.repositories.requirement_scopes import RequirementScopeRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.tables import ProposalLogEntry, ProposalRow
-from core.steps.s2_sources import NoFit, SourcesListed, list_sources, listed_sources
+from core.steps.s2_sources import NoFit, SourcesListed, listed_sources
+from tests.step_chains import list_sources
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.notify.inapp import InAppNotifier
 from tests.conftest import dev_user_for

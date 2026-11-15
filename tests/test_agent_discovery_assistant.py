@@ -11,7 +11,7 @@ import pytest
 from agents.discovery_assistant import DiscoveryAssistant
 from core.domain.sourcing import AssistantOutput
 from core.repositories.tables import ProposalLogEntry, ProposalRow
-from core.steps.s17_discover import assist
+from tests.step_chains import assist
 from ports.llm.mock import MockProvider
 from ports.storage.local import LocalBlobStore
 from tests.stand_in_agents import StandInAgent

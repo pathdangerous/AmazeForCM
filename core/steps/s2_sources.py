@@ -149,11 +149,3 @@ def record_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent,
         return no_fit(locked[0], "agent_listed_none")
     requirements.advance(requirement_id, "awaiting_source_choice")
     return SourcesListed(candidates=listed_sources(session, requirement_id, catalogue))
-
-
-def list_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                 notifier: Notifier, backend_team: Sequence[str]) -> SourcesListed | NoFit:
-    """sources_input() then record_sources() on one session. The API ends the read transaction between them."""
-    agent_input = sources_input(session, requirement_id=requirement_id, catalogue=catalogue)
-    return record_sources(session, requirement_id=requirement_id, agent=agent, agent_input=agent_input,
-                          catalogue=catalogue, notifier=notifier, backend_team=backend_team)

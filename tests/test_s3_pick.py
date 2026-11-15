@@ -18,8 +18,8 @@ from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.tables import ApprovalRow, FeedRow, SourceChoiceRow, SourceFetchRow
 from core.steps.errors import NotTheRequester
-from core.steps.s2_sources import list_sources
 from core.steps.s3_pick import ApprovalMissing, SourcePicked, decline_source, pick_source
+from tests.step_chains import list_sources
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.identity.base import User
 from ports.notify.inapp import InAppNotifier

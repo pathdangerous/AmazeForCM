@@ -11,6 +11,7 @@ from core.domain.sourcing import CandidateRef, Coverage, SourceDiscoveryInput, S
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.llm.mock import MockProvider
 from ports.storage.local import LocalBlobStore
+from tests.step_chains import end_read
 
 CATALOGUE = SourceCatalogue.load(DEFAULT_CATALOGUE)
 
@@ -39,6 +40,7 @@ def test_one_proposal_per_ranked_source_with_the_catalogues_facts(db_session, tm
 
     req = RequirementRepository(db_session).create(requester_id="dev-requester", title="open price")
     agent = SourceDiscoveryAgent(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "blob"))
+    end_read(db_session)
     run = agent.run(db_session, _input(req.id))
     # The mock: both cover 2 of 2; the backup declares fewer other fields, so it ranks first.
     assert [p.payload["source_code"] for p in run.proposals] == ["syn_backup_eod_prices", "syn_vendor_eod_prices"]

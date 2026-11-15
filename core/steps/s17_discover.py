@@ -1,7 +1,8 @@
 """Step 17 Discover: search the products by element, domain or words of their name and description.
 
-discover() is deterministic code, no model call (decision 1). Read only. Phase 3b adds assist(): an
-optional, separate call to the read-only DiscoveryAssistant, received as an argument (assumption 22).
+discover() is deterministic code, no model call (decision 1). Read only. Phase 3b adds assist_input()
+and record_assist(): an optional, separate call to the read-only DiscoveryAssistant, received as an
+argument (assumption 22); the caller ends the read transaction between them.
 
 Outcomes, one per product (CLAUDE.md): found; not_entitled_visible (shown, with the route to access).
 Restricted products are shown to everyone. No hits is an empty list, not an outcome (decision 14).
@@ -166,10 +167,3 @@ def record_assist(session: Session, *, agent: RunsAgent, agent_input: AssistantI
                                       element_name=names[suggested.element_key], reason=suggested.reason,
                                       products=_hits(session, holding, user_id, roles, display_name)))
     return Assistance(log_id=run.log_id, suggestions=suggestions)
-
-
-def assist(session: Session, *, query: str, agent: RunsAgent, user_id: str, roles: Sequence[str],
-           display_name: Callable[[str], str]) -> Assistance:
-    """assist_input() then record_assist() on one session. The API ends the read transaction between them."""
-    return record_assist(session, agent=agent, agent_input=assist_input(session, query=query), user_id=user_id,
-                         roles=roles, display_name=display_name)

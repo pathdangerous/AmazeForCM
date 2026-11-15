@@ -185,15 +185,3 @@ def record_fetch(session: Session, attempt: FetchAttempt, *, notifier: Notifier,
                                                     f"as {attempt.blob_ref} ({attempt.size_bytes} bytes).")
     return Fetched(feed_code=feed.code, fetch_id=plan.fetch_id, blob_ref=attempt.blob_ref,
                    size_bytes=attempt.size_bytes, requirements_onboarding=moved)
-
-
-def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
-                 blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
-                 today: date | None = None, release_after_days: int | None = None,
-                 catalogue: SourceCatalogue | None = None) -> Fetched | SourceDown:
-    """fetch_plan(), fetch_file() and record_fetch() on one session. The API and the daily job end the
-    read transaction after fetch_plan(); this chain is for callers that keep one transaction."""
-    plan = fetch_plan(session, feed_id=feed_id, today=today)
-    attempt = fetch_file(plan, connector_factory=connector_factory, blob_store=blob_store)
-    return record_fetch(session, attempt, notifier=notifier, backend_team=backend_team,
-                        release_after_days=release_after_days, catalogue=catalogue)

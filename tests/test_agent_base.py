@@ -104,6 +104,12 @@ def _count(session, table):
     return session.scalar(select(func.count()).select_from(table))
 
 
+def _end_read(session):
+    """As the API does before a model call: end the read transaction (Agent.run() refuses one that is
+    open). In the test's savepoint mode this only releases the savepoint; the test is still rolled back."""
+    session.commit()
+
+
 # ---------------------------------------------------------------- the class itself
 
 
@@ -224,6 +230,7 @@ def test_a_failed_model_call_writes_nothing(db_session, prompts, blobs):
     before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
     agent = EchoAgent(provider=FakeProvider(error=RuntimeError("model unavailable")), blob_store=blobs,
                       prompts=prompts)
+    _end_read(db_session)
     with pytest.raises(RuntimeError, match="model unavailable"):
         agent.run(db_session, EchoInput(text="x"))
     assert (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow)) == before
@@ -240,9 +247,22 @@ def test_a_read_only_agent_cannot_create_proposals(db_session, prompts, blobs, m
     monkeypatch.setattr(LookOnlyAgent, "to_proposals",
                         lambda self, i, o: [AgentProposal(kind="scope", payload={})])
     before = _count(db_session, ProposalRow)
+    _end_read(db_session)
     with pytest.raises(ReadOnlyAgentProposed):
         agent.run(db_session, EchoInput(text="x"))
     assert _count(db_session, ProposalRow) == before
+
+
+def test_run_refuses_a_session_already_in_a_transaction(db_session, prompts, blobs):
+    """Independent review, fix 5: the caller must end its read transaction before the model call, so no
+    connection is held while the model answers. A session in a transaction is refused before the call."""
+    from agents.base import SessionInTransaction
+
+    provider = FakeProvider()
+    db_session.execute(select(1))  # the session holds a transaction (and a connection) now
+    with pytest.raises(SessionInTransaction, match="end the read transaction"):
+        EchoAgent(provider=provider, blob_store=blobs, prompts=prompts).run(db_session, EchoInput(text="x"))
+    assert provider.calls == []
 
 
 def test_run_refuses_an_input_of_the_wrong_schema(db_session, prompts, blobs):
@@ -287,6 +307,7 @@ def _one_call_and_its_discard(db_session, before, reason_start):
 
 def test_a_refusal_in_before_write_leaves_one_call_row_and_a_discard(db_session, prompts, blobs):
     before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
+    _end_read(db_session)
 
     def refuse(session):
         raise LookupError("the requirement moved on during the call")
@@ -307,6 +328,7 @@ def test_a_failure_while_writing_the_proposals_leaves_one_call_row_and_a_discard
 
     monkeypatch.setattr(base.ProposalRepository, "create", broken)
     before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
+    _end_read(db_session)
     with pytest.raises(RuntimeError, match="proposal insert failed"):
         EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(db_session, EchoInput(text="x"))
     _one_call_and_its_discard(db_session, before, "RuntimeError: proposal insert failed")
@@ -318,6 +340,7 @@ def test_a_blob_store_failure_leaves_one_call_row_and_a_discard(db_session, prom
 
     monkeypatch.setattr(blobs, "put", broken)
     before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
+    _end_read(db_session)
     with pytest.raises(OSError, match="disk full"):
         EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(db_session, EchoInput(text="x"))
     _one_call_and_its_discard(db_session, before, "OSError: disk full")
@@ -330,6 +353,7 @@ def test_an_output_of_the_wrong_schema_leaves_one_call_row_and_a_discard(db_sess
             return result.model_copy(update={"output": EchoInput(text="not the output schema")})
 
     before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
+    _end_read(db_session)
     with pytest.raises(TypeError, match="EchoOutput"):
         EchoAgent(provider=WrongSchema(), blob_store=blobs, prompts=prompts).run(db_session, EchoInput(text="x"))
     _one_call_and_its_discard(db_session, before, "TypeError")
@@ -341,7 +365,9 @@ def test_every_answered_model_call_has_exactly_one_call_row(db_session, prompts,
 
     agent = EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts)
     before = _count(db_session, ProposalLogEntry)
+    _end_read(db_session)
     agent.run(db_session, EchoInput(text="used"))
+    _end_read(db_session)  # as the API commits the used call's proposals
     with pytest.raises(LookupError):
         agent.run(db_session, EchoInput(text="discarded"), before_write=refuse)
     assert _count(db_session, ProposalLogEntry) == before + 2

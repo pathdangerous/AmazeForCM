@@ -49,6 +49,11 @@ class ReadOnlyAgentProposed(RuntimeError):
     """A read-only agent (approver_roles ()) returned proposal drafts."""
 
 
+class SessionInTransaction(RuntimeError):
+    """run() was given a session that is in a transaction: it would hold a database connection while the
+    model answers. The caller reads, ends that transaction, then calls run() (independent review, fix 5)."""
+
+
 class AgentProposal(BaseModel):
     """One proposal draft from an agent. Autonomy and approver come from the agent, not from here."""
 
@@ -108,7 +113,11 @@ class Agent:
         locks what it will change and checks it again there.
 
         The model call never touches the session. The caller ends its read transaction before calling
-        run(), so no database connection is held while the model answers (review fix 2)."""
+        run(), so no database connection is held while the model answers (review fix 2); a session still
+        in a transaction is refused with SessionInTransaction before the call (independent review, fix 5)."""
+        if session.in_transaction():
+            raise SessionInTransaction(f"{self.name}: end the read transaction before the model call (commit or "
+                                       "roll back), so no database connection is held while the model answers")
         if not isinstance(agent_input, self.input_schema):
             raise TypeError(f"{self.name} takes {self.input_schema.__name__}, not {type(agent_input).__name__}")
         prompt = self._prompts.get(self.prompt_id)

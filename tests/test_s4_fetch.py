@@ -20,7 +20,8 @@ from core.repositories.notifications import NotificationRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.known_source import find_known_source
-from core.steps.s4_fetch import Fetched, SourceDown, fetch_source
+from core.steps.s4_fetch import Fetched, SourceDown
+from tests.step_chains import fetch_source
 from ports.connectors.base import FetchedFile, SourceUnavailable
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.connectors.local_file import LocalFileConnector

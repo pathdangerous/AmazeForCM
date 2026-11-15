@@ -16,7 +16,8 @@ from core.repositories.requirement_scopes import RequirementScopeRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.tables import ApprovalRow, ProposalLogEntry, ProposalRow
 from core.steps.errors import NotTheRequester
-from core.steps.s1_scope import ScopeNotConfirmed, Scoped, decide_scope, propose_scope
+from core.steps.s1_scope import ScopeNotConfirmed, Scoped, decide_scope
+from tests.step_chains import propose_scope
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.identity.base import User
 from tests.conftest import dev_user_for
