@@ -4,6 +4,9 @@ Carried item 3 (phase 3 plan, assumptions 17 and 18). Nothing per feed is kept i
 API restart loses nothing: the new start-up registers the same job, and the job finds every feed in the
 database. The Azure Functions timer (phase 8) has the same shape.
 
+After the fetches, a requirement waiting on listed sources that have all left the catalogue becomes
+no_source_found (independent review, fix 7).
+
 Each feed is fetched in its own session and transaction. An unexpected error in one feed is rolled
 back and reported; the other feeds are still fetched. source_down is an outcome, not an error.
 """
@@ -19,6 +22,8 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from core.repositories.feeds import FeedRepository
+from core.repositories.requirements import RequirementRepository
+from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
 from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
@@ -91,7 +96,28 @@ class DailyFetch:
                     session.rollback()
                     log.exception("daily fetch of feed %s failed", code)
                     results[code] = f"error: {exc}"
+        if catalogue is not None:
+            self._close_lists_with_nothing_to_pick(catalogue)
         return results
+
+    def _close_lists_with_nothing_to_pick(self, catalogue: SourceCatalogue) -> None:
+        """Every awaiting_source_choice requirement whose listed sources all left the catalogue becomes
+        no_source_found (independent review, fix 7). Each in its own transaction; one failure does not
+        stop the others."""
+        with self.session_factory() as session:
+            waiting = RequirementRepository(session).ids_in_status("awaiting_source_choice")
+            session.rollback()
+        for requirement_id in waiting:
+            with self.session_factory() as session:
+                notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+                try:
+                    if close_if_nothing_to_pick(session, requirement_id=requirement_id, catalogue=catalogue,
+                                                notifier=notifier, backend_team=self.backend_team()):
+                        log.info("requirement %s: no listed source is left in the catalogue", requirement_id)
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    log.exception("closing the source list of requirement %s failed", requirement_id)
 
 
 def register_daily_fetch(scheduler: Scheduler, daily: DailyFetch) -> None:

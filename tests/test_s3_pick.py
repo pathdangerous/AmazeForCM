@@ -205,3 +205,41 @@ def test_declining_the_last_source_gives_no_source_found(db_session, listed):
                                 note=None, catalogue=CATALOGUE)
     assert (result.status, result.remaining) == ("no_source_found", 0)
     assert status(db_session, req) == "no_source_found"
+
+
+def _close(db_session, req, catalogue):
+    from core.steps.s3_pick import close_if_nothing_to_pick
+
+    return close_if_nothing_to_pick(db_session, requirement_id=req.id, catalogue=catalogue,
+                                    notifier=InAppNotifier(db_session), backend_team=["dev-backend-team"])
+
+
+def test_a_list_whose_sources_left_the_catalogue_is_closed_as_no_source_found(db_session, listed):
+    """Independent review, fix 7. A listed source that left the catalogue cannot be picked or declined.
+    While one is left nothing changes; when none is left the requirement is no_source_found, the backend
+    team is told, and the requester sees why and what to do next."""
+    from core.steps.requirement_page import NO_SOURCE_LEFT, requirement_page
+    from ports.notify.inapp import NotificationRow
+
+    req, proposals = listed()
+    one_left = SourceCatalogue([e for e in CATALOGUE.entries if e.code != VENDOR])
+    none_left = SourceCatalogue([e for e in CATALOGUE.entries if e.code not in (VENDOR, BACKUP)])
+    assert _close(db_session, req, CATALOGUE) is False
+    assert _close(db_session, req, one_left) is False
+    assert status(db_session, req) == "awaiting_source_choice"
+
+    assert _close(db_session, req, none_left) is True
+    assert status(db_session, req) == "no_source_found"
+    told = db_session.scalars(select(NotificationRow).where(NotificationRow.subject.like("No source left%"))).all()
+    assert [(n.recipient, n.subject) for n in told] == [("dev-backend-team", "No source left: open price")]
+    page = requirement_page(db_session, RequirementRepository(db_session).get(req.id), none_left)
+    assert (page.message, page.next_action) == (NO_SOURCE_LEFT, "ask_for_scope")
+    # nobody decided the two proposals: they stay pending (assumption 37)
+    assert {ProposalRepository(db_session).get(p).status for p in proposals.values()} == {"pending"}
+
+
+def test_closing_needs_status_awaiting_source_choice(db_session, listed):
+    req, proposals = listed()
+    pick(db_session, req, proposals[VENDOR], conditions(VENDOR))
+    assert _close(db_session, req, SourceCatalogue([])) is False
+    assert status(db_session, req) == "source_selected"

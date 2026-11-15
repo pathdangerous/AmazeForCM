@@ -13,11 +13,14 @@ Outcomes (CLAUDE.md): source_picked; approval_missing.
   transaction after committing this one, as for a known source (assumption 13).
 - decline_source(): the requester rejects a listed source; if no listed source is left, the requirement
   becomes no_source_found.
+- close_if_nothing_to_pick(): run by the daily job; every listed source left the catalogue, so the
+  requirement becomes no_source_found and the backend team is told.
 Only the requirement's own requester picks or declines. The step flushes; the caller commits.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -36,6 +39,7 @@ from core.steps.result import StepResult
 from core.steps.s2_sources import listed_sources
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions
 from ports.identity.base import User
+from ports.notify.base import Notifier
 
 
 class SourcePicked(StepResult):
@@ -110,3 +114,21 @@ def decline_source(session: Session, *, requirement_id: UUID, user: User, propos
         RequirementRepository(session).advance(requirement_id, "no_source_found")
         status = "no_source_found"
     return Declined(source_code=proposal.payload["source_code"], status=status, remaining=remaining)
+
+
+def close_if_nothing_to_pick(session: Session, *, requirement_id: UUID, catalogue: SourceCatalogue,
+                             notifier: Notifier, backend_team: Sequence[str]) -> bool:
+    """A listed source that left the catalogue cannot be picked or declined. When no listed source is left,
+    the requirement becomes no_source_found and the backend team is told; the requester adds a note and
+    asks for a new scope (independent review, fix 7). Rules execute: nobody decides, and the proposals of
+    the sources that left stay pending (assumption 37). True when it closed the list. Flushes only."""
+    requirements = RequirementRepository(session)
+    requirement = requirements.lock(requirement_id)
+    if requirement.status != "awaiting_source_choice" or listed_sources(session, requirement_id, catalogue):
+        return False
+    requirements.advance(requirement_id, "no_source_found")
+    for user_id in backend_team:
+        notifier.notify(recipient=user_id, subject=f"No source left: {requirement.title}",
+                        body=f"Requirement {requirement_id} ({requirement.title}): every listed source has left "
+                             "the catalogue. It is now no_source_found; the requester can ask for a new scope.")
+    return True

@@ -53,6 +53,12 @@ class RequirementRepository:
             query = query.where(Row.requester_id == requester_id)
         return self._models(self._session.scalars(query).all())
 
+    def ids_in_status(self, status: RequirementStatus) -> list[UUID]:
+        """The ids of the requirements with this status, oldest first."""
+        status = _STATUS.validate_python(status)
+        query = select(Row.id).where(Row.status == status).order_by(Row.created_at, Row.id)
+        return list(self._session.scalars(query))
+
     def advance(self, requirement_id: UUID, to: RequirementStatus) -> Requirement:
         """Move the requirement to `to`, only along REQUIREMENT_TRANSITIONS. The row is locked, so two
         requests cannot both make the same move."""

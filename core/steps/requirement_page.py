@@ -35,6 +35,8 @@ SCOPE_CONFIRMED = "Thanks. Amaze is now finding sources for this data."
 PICK_A_SOURCE = "Pick a source and accept its conditions to start onboarding."
 NO_FIT = "No source fits this request. The backend team has been told."
 ALL_DECLINED = "You declined every listed source. Add a note and ask Amaze to look again."
+# Independent review, fix 7: every listed source left the catalogue. Wording not yet approved.
+NO_SOURCE_LEFT = "The listed sources are no longer offered. Add a note and ask for a new scope."
 
 NextAction = Literal["find_source", "confirm_scope", "ask_for_scope", "list_sources", "pick_source"]
 
@@ -161,10 +163,14 @@ def requirement_page(session: Session, requirement: Requirement, catalogue: Sour
             if _newer(current, scope) else PICK_A_SOURCE
     elif status == "no_source_found":
         next_action = "ask_for_scope"
+        listed_now = [] if scope is None else [
+            p for p in ProposalRepository(session).list_for_requirement(requirement.id, "source_list")
+            if p.created_at > scope.created_at]
         if _newer(current, scope):
             message = released_message(source_name, current.reason, release_days, source_left=False)
-        elif scope is not None and any(p.created_at > scope.created_at for p in
-                                       ProposalRepository(session).list_for_requirement(requirement.id, "source_list")):
+        elif any(p.status == "pending" for p in listed_now):  # undecided, so they left the catalogue
+            message = NO_SOURCE_LEFT
+        elif listed_now:
             message = ALL_DECLINED
         else:
             message = NO_FIT

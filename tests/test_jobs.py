@@ -60,6 +60,32 @@ def selected(db_session, glossary):
     return _select
 
 
+def test_the_job_closes_a_list_whose_sources_left_the_catalogue(db_session, daily, glossary, make_proposal):
+    """Independent review, fix 7: the daily job loads the catalogue on each run; a requirement waiting
+    on listed sources of which none is left in it becomes no_source_found."""
+    import dataclasses
+
+    from sqlalchemy import text
+
+    from core.repositories.requirements import RequirementRepository
+
+    def waiting(title, source_code):
+        req = RequirementRepository(db_session).create(requester_id="dev-requester", title=title,
+                                                       element_keys=["open_price"])
+        make_proposal(kind="source_list", roles=("requester",), payload={"source_code": source_code},
+                      requirement_id=req.id)
+        db_session.execute(text("UPDATE requirements SET status = 'awaiting_source_choice' WHERE id = :id"),
+                           {"id": req.id})
+        return req
+
+    gone, kept = waiting("open price", "syn_vendor_eod_prices"), waiting("open price too", "syn_backup_eod_prices")
+    db_session.commit()
+    without_vendor = SourceCatalogue([e for e in CATALOGUE.entries if e.code != "syn_vendor_eod_prices"])
+    dataclasses.replace(daily(), catalogue_loader=lambda: without_vendor).run()
+    statuses = {r.id: r.status for r in RequirementRepository(db_session).list()}
+    assert (statuses[gone.id], statuses[kept.id]) == ("no_source_found", "awaiting_source_choice")
+
+
 async def start_and_stop(daily_fetch):
     """One API start-up and shutdown with this job; returns the jobs the scheduler held while running."""
     from apps.api.main import app
