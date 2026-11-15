@@ -15,6 +15,7 @@ The agent is an argument (assumption 22): this module never imports agents. It f
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Literal, Protocol
 from uuid import UUID
 
@@ -32,6 +33,7 @@ from core.steps.errors import NothingToDecide, NotTheRequester
 from core.steps.result import StepResult
 from ports.connectors.catalogue import SourceCatalogue
 from ports.identity.base import User
+from ports.notify.base import Notifier
 
 FIRST_FROM = ("defined",)
 AGAIN_FROM = ("scope_not_confirmed", "no_source_found")
@@ -95,29 +97,47 @@ def scope_input(session: Session, *, requirement_id: UUID, catalogue: SourceCata
     )
 
 
-def record_scope(session: Session, *, agent: RunsAgent, agent_input: IntentInput, again: bool = False) -> ScopeProposed:
-    """The model call, then, with the requirement locked and its status checked again, the log row, the
-    scope proposal and the move to awaiting_scope_confirmation. A status change during the call gives
-    RequirementNotInStatus and nothing is written."""
+def record_scope(session: Session, *, agent: RunsAgent, agent_input: IntentInput, again: bool = False,
+                 notifier: Notifier | None = None, backend_team: Sequence[str] = ()):
+    """The model call, then, with the requirement locked and its status checked again, the scope proposal
+    and the move to awaiting_scope_confirmation. A status change during the call gives
+    RequirementNotInStatus, and the call is logged as discarded (Agent.run()).
+
+    A scope with no channel to search cannot be confirmed into anything: it is no_fit at once
+    (no_source_found, the backend team told), and the requester is not asked (review fix 5)."""
     allowed = AGAIN_FROM if again else FIRST_FROM
     requirement_id = agent_input.requirement_id
-    run = agent.run(session, agent_input,
-                    before_write=lambda s: locked_in(s, requirement_id, allowed, "a scope is proposed"))
+    locked = []
+    run = agent.run(session, agent_input, before_write=lambda s: locked.append(
+        locked_in(s, requirement_id, allowed, "a scope is proposed")))
     if len(run.proposals) != 1 or run.proposals[0].kind != "scope":
         raise ValueError("S1 expects exactly one scope proposal from the agent")
     proposal = run.proposals[0]
-    RequirementRepository(session).advance(requirement_id, "awaiting_scope_confirmation")
     payload = proposal.payload
+    if not payload["where_to_search"]:
+        from core.steps.s2_sources import NoFit  # s2 imports this module
+
+        requirement = locked[0]
+        if requirement.status != "no_source_found":
+            RequirementRepository(session).advance(requirement_id, "no_source_found")
+        for user_id in backend_team:
+            notifier.notify(recipient=user_id, subject=f"No source fits: {requirement.title}",
+                            body=f"Requirement {requirement_id} ({requirement.title}): the proposed "
+                                 f"{payload['visibility']} scope names no channel to search (no_channel_in_scope).")
+        return NoFit(reason="no_channel_in_scope")
+    RequirementRepository(session).advance(requirement_id, "awaiting_scope_confirmation")
     return ScopeProposed(proposal_id=proposal.id, log_id=run.log_id, visibility=payload["visibility"],
                          provider=payload["provider"], where_to_search=payload["where_to_search"],
                          reason=payload["reason"])
 
 
 def propose_scope(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                  note: str | None = None, again: bool = False) -> ScopeProposed:
+                  note: str | None = None, again: bool = False, notifier: Notifier | None = None,
+                  backend_team: Sequence[str] = ()):
     """scope_input() then record_scope() on one session. The API ends the read transaction between them."""
     agent_input = scope_input(session, requirement_id=requirement_id, catalogue=catalogue, note=note, again=again)
-    return record_scope(session, agent=agent, agent_input=agent_input, again=again)
+    return record_scope(session, agent=agent, agent_input=agent_input, again=again, notifier=notifier,
+                        backend_team=backend_team)
 
 
 def pending_scope(session: Session, requirement_id: UUID):

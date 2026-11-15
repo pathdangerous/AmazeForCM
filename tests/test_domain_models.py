@@ -235,8 +235,9 @@ def test_requirement_statuses_and_transitions_are_the_plans():
         ("scope_confirmed", "awaiting_source_choice"), ("scope_confirmed", "no_source_found"),  # S2
         ("awaiting_source_choice", "source_selected"), ("awaiting_source_choice", "no_source_found"),  # S3
         ("source_selected", "awaiting_source_choice"), ("source_selected", "no_source_found"),  # release
+        ("defined", "no_source_found"), ("scope_not_confirmed", "no_source_found"),  # S1: no channel (review fix 5)
     })
-    assert len(REQUIREMENT_TRANSITIONS) == 13
+    assert len(REQUIREMENT_TRANSITIONS) == 15
     assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
 
 

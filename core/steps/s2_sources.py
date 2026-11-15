@@ -56,7 +56,8 @@ class SourcesListed(StepResult):
 
 class NoFit(StepResult):
     outcome: Literal["no_fit"] = "no_fit"
-    reason: Literal["nothing_in_scope", "agent_listed_none"]
+    # no_channel_in_scope: S1 found no channel to search, so S2 never ran (review fix 5)
+    reason: Literal["nothing_in_scope", "agent_listed_none", "no_channel_in_scope"]
 
 
 SourcesResult = Annotated[SourcesListed | NoFit, Field(discriminator="outcome")]

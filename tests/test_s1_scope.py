@@ -147,6 +147,25 @@ def test_a_status_change_during_the_model_call_logs_it_as_discarded_and_writes_n
     assert db_session.scalars(select(ProposalLogEntry.discarded_reason)).all()[-1].startswith("RequirementNotInStatus")
 
 
+@pytest.mark.parametrize("start, again", [("defined", False), ("scope_not_confirmed", True),
+                                          ("no_source_found", True)])
+def test_a_scope_with_no_channel_is_no_fit(db_session, requirement, start, again):
+    """Review fix 5: nowhere to search (the catalogue has no channel of the proposed visibility). The
+    requester is not asked to confirm it: no_fit, no_source_found, and the backend team is told."""
+    from core.repositories.notifications import NotificationRepository
+    from core.steps.s2_sources import NoFit
+    from ports.notify.inapp import InAppNotifier
+
+    req = requirement(start)
+    nowhere = {**PUBLIC, "where_to_search": []}
+    result = propose_scope(db_session, requirement_id=req.id, agent=scope_agent(nowhere), catalogue=CATALOGUE,
+                           again=again, notifier=InAppNotifier(db_session), backend_team=["dev-backend-team"])
+    assert isinstance(result, NoFit) and result.reason == "no_channel_in_scope"
+    assert status(db_session, req) == "no_source_found"
+    assert [n.subject for n in NotificationRepository(db_session).list_for("dev-backend-team")] == [
+        "No source fits: open price"]
+
+
 def test_only_the_requirements_own_requester_decides(db_session, requirement):
     req = requirement()
     propose_scope(db_session, requirement_id=req.id, agent=scope_agent(), catalogue=CATALOGUE)

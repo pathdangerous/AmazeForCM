@@ -293,7 +293,10 @@ def find_source(requirement_id: UUID, session: DbSession, user: Requester, ident
     scope = None
     if found.feed is None:  # no_known_source wrote nothing: read S1's input, then the model call, then write
         agent_input = _read(session, lambda: scope_input(session, requirement_id=requirement_id, catalogue=catalogue))
-        scope = _in_transaction(session, lambda: record_scope(session, agent=intent_agent, agent_input=agent_input))
+        proposed = _in_transaction(session, lambda: record_scope(
+            session, agent=intent_agent, agent_input=agent_input, notifier=notifier,
+            backend_team=_recipients(identity)["backend_team"]))
+        scope = proposed if isinstance(proposed, ScopeProposed) else None  # None: no_fit, no channel
     fetch = None
     if found.feed is not None:
         fetch = _first_fetch(session, found.feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
@@ -327,7 +330,7 @@ class DeclineBody(NoteBody):
 
 
 class ScopeResponse(BaseModel):
-    scope: ScopeProposed
+    scope: ScopeProposed | None  # None: the proposed scope named no channel, so no_fit (review fix 5)
     message: str
     requirement: RequirementPage
 
@@ -365,14 +368,17 @@ class ReleaseResponse(BaseModel):
 
 @router.post("/requirements/{requirement_id}/scope", response_model=ScopeResponse)
 def ask_for_scope(requirement_id: UUID, body: NoteBody, session: DbSession, user: Requester, catalogue: Catalogue,
-                  settings: AppSettings, intent_agent: ScopeAgent) -> ScopeResponse:
+                  settings: AppSettings, intent_agent: ScopeAgent, identity: IdentityPort,
+                  notifier: RequestNotifier) -> ScopeResponse:
     """S1 again, with the requester's note, after scope_not_confirmed or no_source_found."""
     _own_requirement(session, user, requirement_id)
     agent_input = _read(session, lambda: scope_input(session, requirement_id=requirement_id, catalogue=catalogue,
                                                      note=body.note, again=True))
-    scope = _in_transaction(session, lambda: record_scope(session, agent=intent_agent, agent_input=agent_input,
-                                                          again=True))
+    proposed = _in_transaction(session, lambda: record_scope(
+        session, agent=intent_agent, agent_input=agent_input, again=True, notifier=notifier,
+        backend_team=_recipients(identity)["backend_team"]))
     page = _page(session, requirement_id, catalogue, settings)
+    scope = proposed if isinstance(proposed, ScopeProposed) else None
     return ScopeResponse(scope=scope, message=page.message, requirement=page)
 
 
