@@ -12,3 +12,5 @@ apscheduler==3.11.3
 httpx==0.28.1
 # Prompt files (agents/prompts/*.yaml). Already installed with uvicorn[standard]; pinned in phase 3.
 pyyaml==6.0.3
+# Step 02 profiling (phase 4): in-memory DuckDB over one CSV file. 1.5.6 has a cp314 Windows wheel.
+duckdb==1.5.6
