@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 
 import pytest
 
@@ -166,6 +167,48 @@ async def test_no_connection_is_held_during_the_first_fetch(own_schema, flow):
         await f.raised("volume", ("volume",))
         found = await f.step("find-source")
     assert found["fetch"]["outcome"] == "fetched" and seen == [0]
+
+
+async def test_a_release_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_schema, flow, tmp_path, monkeypatch):
+    """Independent review, fix 1. The fetch locks the feed row, then each requirement that selects it. A
+    release locks the requirement, then inserts a source_choices row whose foreign key takes a key-share
+    lock on the feed. With FOR UPDATE on the feed each waits for the other and PostgreSQL aborts one (a
+    500 on the release, or a lost fetch). FOR NO KEY UPDATE does not conflict with a key-share lock.
+
+    The fetch holds the feed lock until the release has been sent and has had time to reach its insert."""
+    import core.steps.s4_fetch as s4_fetch
+    from core.repositories.source_fetches import SourceFetchRepository
+
+    feed_locked, release_sent = threading.Event(), threading.Event()
+
+    class WaitingFetches(SourceFetchRepository):
+        def record(self, **kwargs):
+            row = super().record(**kwargs)
+            feed_locked.set()  # record_fetch holds the feed row lock now
+            release_sent.wait(timeout=5)
+            time.sleep(0.5)  # the release reaches its insert meanwhile
+            return row
+
+    _selected_volume(own_schema)
+    [(requirement_id,)] = committed(own_schema, "SELECT id FROM requirements")
+    monkeypatch.setattr(s4_fetch, "SourceFetchRepository", WaitingFetches)
+    results = {}
+    job = threading.Thread(target=lambda: results.update(_daily(own_schema, tmp_path, _connector(lambda: None)).run()))
+    async with flow() as f:
+        job.start()
+        assert await asyncio.to_thread(feed_locked.wait, 5)
+        release_sent.set()
+        try:
+            response = await f.client.post(f"/api/consumer/requirements/{requirement_id}/release", headers=RILEY)
+        except Exception as exc:  # noqa: BLE001 (a deadlock reaches the test as an exception; reported below)
+            response = exc
+        finally:
+            await asyncio.to_thread(job.join, 30)  # never leave the job's session open: the schema is dropped
+    assert not isinstance(response, Exception), repr(response)
+    assert response.status_code == 200, response.text
+    assert results == {"syn_exchange_volumes": "fetched"}
+    assert committed(own_schema, "SELECT status FROM requirements") == [("no_source_found",)]
+    assert committed(own_schema, "SELECT action FROM source_choices ORDER BY version") == [("selected",), ("released",)]
 
 
 def test_the_first_fetch_and_the_daily_job_at_once_send_one_notification(own_schema, tmp_path):

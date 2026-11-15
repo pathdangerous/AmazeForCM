@@ -43,8 +43,8 @@ class FeedRepository:
         return Feed.model_validate(self._row(feed_id))
 
     def lock(self, feed_id: UUID) -> Feed:
-        """The feed, with its row locked until the transaction ends: fetches of one feed are recorded one
-        after the other (review fix 3)."""
+        """The feed, with its row locked (FOR NO KEY UPDATE) until the transaction ends: fetches of one feed
+        are recorded one after the other (review fix 3); rows that only reference the feed do not wait."""
         return Feed.model_validate(self._row(feed_id, lock=True))
 
     def get_by_source(self, source_code: str) -> Feed | None:
@@ -99,7 +99,10 @@ class FeedRepository:
     def _row(self, feed_id: UUID, *, lock: bool = False) -> Row:
         query = select(Row).where(Row.id == feed_id)
         if lock:
-            query = query.with_for_update()
+            # FOR NO KEY UPDATE: two fetches of one feed still wait for each other, but a foreign key to the
+            # feed (a source_choices or source_fetches insert: FOR KEY SHARE) does not wait. With FOR UPDATE
+            # a release and a fetch of the same feed deadlocked (independent review, fix 1).
+            query = query.with_for_update(key_share=True)
         row = self._session.scalars(query).one_or_none()
         if row is None:
             raise FeedNotFound(f"No feed with id {feed_id}")
