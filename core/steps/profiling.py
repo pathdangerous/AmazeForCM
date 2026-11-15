@@ -16,7 +16,9 @@ from pathlib import Path
 
 import duckdb
 
-from core.domain.profiling import FileColumn, FileProfile
+from core.domain.profiling import FileColumn, FileProfile, ItemCoverage, RequirementCoverage, SourceSpec
+from core.domain.requirement import Requirement
+from ports.connectors.catalogue import SourceEntry
 
 ENGINE = f"duckdb {duckdb.__version__}"
 _READ = "read_csv($path, header = true, sample_size = -1)"
@@ -53,3 +55,42 @@ def profile_csv(path: Path) -> FileProfile:
         columns.append(FileColumn(name=name, type=type_, null_count=nulls,
                                   null_rate=round(nulls / rows, 6) if rows else None, distinct_count=distinct))
     return FileProfile(row_count=rows, columns=columns, engine=ENGINE)
+
+
+# ---------------------------------------------------------------- the spec and coverage (assumptions 8 and 9)
+
+
+def _phrase(text: str) -> str:
+    """As S2 compares a ticked term with a source's other fields: lower case, '_' and spaces as one space."""
+    return " ".join(text.lower().replace("_", " ").split())
+
+
+def spec_of(entry: SourceEntry) -> SourceSpec:
+    return SourceSpec(source_code=entry.code, elements=entry.elements, other_fields=entry.other_fields,
+                      columns=entry.columns)
+
+
+def spec_check(entry: SourceEntry, file: FileProfile) -> tuple[list[str], list[str]]:
+    """(columns in the file the spec does not declare, declared columns missing from the file), each in order."""
+    in_file = [c.name for c in file.columns]
+    return [n for n in in_file if n not in entry.columns], [n for n in entry.columns if n not in in_file]
+
+
+def coverage_of(requirement: Requirement, entry: SourceEntry, file: FileProfile | None) -> RequirementCoverage:
+    """Each requested element and ticked term: declared by the source, its column, and that column's
+    statistics in the file. Without a file (spec only), from the spec alone."""
+    by_field = {_phrase(field): column for column, field in entry.columns.items()}
+    stats = {} if file is None else {c.name: c for c in file.columns}
+    wanted = [(k, "element", k) for k in requirement.elements] + [(t, "term", _phrase(t)) for t in requirement.terms]
+    items, missing = [], []
+    for item, kind, key in wanted:
+        declared = (key in entry.elements) if kind == "element" else (key in {_phrase(f) for f in entry.other_fields})
+        column = by_field.get(_phrase(key)) if declared else None
+        found = stats.get(column) if column else None
+        in_file = None if file is None else found is not None
+        items.append(ItemCoverage(item=item, kind=kind, declared=declared, column=column, in_file=in_file,
+                                  null_rate=found.null_rate if found else None,
+                                  distinct_count=found.distinct_count if found else None))
+        if not declared or in_file is False:
+            missing.append(item)
+    return RequirementCoverage(requirement_id=requirement.id, items=items, missing=missing)

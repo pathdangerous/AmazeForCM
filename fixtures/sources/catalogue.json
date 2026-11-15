@@ -1,5 +1,5 @@
 {
-  "description": "Synthetic source catalogue for the Amaze for CM PoC custom data product (phase 3). Every source, provider and file is invented. Codes start with syn_. No real vendor, exchange or client.",
+  "description": "Synthetic source catalogue for the Amaze for CM PoC custom data product (phase 3). Every source, provider and file is invented. Codes start with syn_. No real vendor, exchange or client. columns (phase 4): which file column holds each declared field, as the source states it.",
   "sources": [
     {"code": "syn_exchange_volumes", "name": "Exchange daily volumes", "provider": "Synthetic Exchange Group",
      "description": "Daily traded volume per instrument, published by a synthetic exchange.",
@@ -7,6 +7,7 @@
      "conditions": {"licence": "Synthetic exchange data licence", "permitted_use": "Internal analysis and reporting",
                     "redistribution": "Not allowed outside the firm", "external_approvals": []},
      "elements": ["instrument_id", "price_date", "volume"], "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "trade_date": "price_date", "traded_qty": "volume"},
      "connector": "local_file", "source_ref": "files/exchange_volumes.csv"},
 
     {"code": "syn_offline_accruals", "name": "Accrued interest feed", "provider": "Synthetic Settlement House",
@@ -15,6 +16,7 @@
      "conditions": {"licence": "Synthetic settlement data licence", "permitted_use": "Internal valuation",
                     "redistribution": "Not allowed", "external_approvals": []},
      "elements": ["instrument_id", "price_date", "accrued_interest"], "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "accrual_date": "price_date", "accrued": "accrued_interest"},
      "connector": "local_file", "source_ref": "files/offline_accruals.csv"},
 
     {"code": "syn_vendor_eod_prices", "name": "Vendor end-of-day prices", "provider": "Synthetic Market Data Ltd",
@@ -25,6 +27,8 @@
                     "external_approvals": ["A signed data agreement with the vendor, held by your desk"]},
      "elements": ["instrument_id", "price_date", "open_price", "high_price", "low_price", "close_price", "volume"],
      "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "px_date": "price_date", "px_open": "open_price", "px_high": "high_price",
+                 "px_low": "low_price", "px_close": "close_price", "qty": "volume"},
      "connector": "local_file", "source_ref": "files/vendor_eod_prices.csv"},
 
     {"code": "syn_open_esg_scores", "name": "Open ESG scores", "provider": "Synthetic Open Data Foundation",
@@ -33,6 +37,7 @@
      "conditions": {"licence": "Synthetic open data licence", "permitted_use": "Any use, with attribution",
                     "redistribution": "Allowed with attribution", "external_approvals": []},
      "elements": ["instrument_id"], "other_fields": ["esg score"],
+     "columns": {"instrument": "instrument_id", "esg_score": "esg score"},
      "connector": "local_file", "source_ref": "files/open_esg_scores.csv"},
 
     {"code": "syn_internal_desk_marks", "name": "Desk end-of-day marks", "provider": "Synthetic trading desk",
@@ -41,6 +46,7 @@
      "conditions": {"licence": "Internal data, no licence", "permitted_use": "Internal risk and valuation",
                     "redistribution": "Not allowed", "external_approvals": []},
      "elements": ["instrument_id", "price_date", "mid_price"], "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "mark_date": "price_date", "mid": "mid_price"},
      "connector": "local_file", "source_ref": "files/internal_desk_marks.csv"},
 
     {"code": "syn_backup_eod_prices", "name": "Backup end-of-day prices", "provider": "Synthetic Backup Pricing Co",
@@ -49,6 +55,25 @@
      "conditions": {"licence": "Synthetic backup pricing licence", "permitted_use": "Internal analysis",
                     "redistribution": "Not allowed", "external_approvals": []},
      "elements": ["instrument_id", "price_date", "open_price", "close_price"], "other_fields": [],
-     "connector": "local_file", "source_ref": "files/backup_eod_prices.csv"}
+     "columns": {"instr_id": "instrument_id", "px_date": "price_date", "open_px": "open_price", "close_px": "close_price"},
+     "connector": "local_file", "source_ref": "files/backup_eod_prices.csv"},
+
+    {"code": "syn_instrument_lifecycle", "name": "Instrument lifecycle", "provider": "Synthetic Reference Data Co",
+     "description": "Issue date and status per instrument. Two issue dates are empty on purpose, so the profile shows a null rate.",
+     "visibility": "public", "channel": "market_data_vendors", "known": false,
+     "conditions": {"licence": "Synthetic reference data licence", "permitted_use": "Internal analysis and reporting",
+                    "redistribution": "Not allowed", "external_approvals": []},
+     "elements": ["instrument_id", "issue_date", "instrument_status"], "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "issued_on": "issue_date", "state": "instrument_status"},
+     "connector": "local_file", "source_ref": "files/instrument_lifecycle.csv"},
+
+    {"code": "syn_listing_details", "name": "Listing details", "provider": "Synthetic Exchange Group",
+     "description": "Trading venue and board lot per instrument. Its sample file has a header and no rows, on purpose, so the profile is spec only.",
+     "visibility": "public", "channel": "exchanges", "known": false,
+     "conditions": {"licence": "Synthetic exchange data licence", "permitted_use": "Internal analysis",
+                    "redistribution": "Not allowed outside the firm", "external_approvals": []},
+     "elements": ["instrument_id", "exchange_mic", "lot_size"], "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "venue_code": "exchange_mic", "board_lot": "lot_size"},
+     "connector": "local_file", "source_ref": "files/listing_details.csv"}
   ]
 }

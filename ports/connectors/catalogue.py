@@ -61,6 +61,9 @@ class SourceEntry(BaseModel):
     other_fields: list[Text] = Field(default_factory=list)  # fields that are not glossary elements
     connector: Literal["local_file", "http"]
     source_ref: Text
+    # Phase 4 (plan, assumption 8): file column name -> the declared element key or other field it holds.
+    # The source's own statement, used for coverage in step 02; not the mapping of step 06.
+    columns: dict[Text, Text]
 
     @model_validator(mode="after")
     def _rules(self) -> SourceEntry:
@@ -68,6 +71,14 @@ class SourceEntry(BaseModel):
             raise ValueError(f"source code {self.code!r} must start with {CODE_PREFIX!r} (synthetic data only)")
         if not self.elements and not self.other_fields:
             raise ValueError("a source declares at least one element or other field")
+        declared = [*self.elements, *self.other_fields]
+        held = list(self.columns.values())
+        if undeclared := sorted(set(held) - set(declared)):
+            raise ValueError(f"source {self.code!r}: columns hold fields it has not declared: {', '.join(undeclared)}")
+        if without := [f for f in declared if f not in held]:
+            raise ValueError(f"source {self.code!r}: declared fields with no column: {', '.join(without)}")
+        if twice := sorted({f for f in held if held.count(f) > 1}):
+            raise ValueError(f"source {self.code!r}: fields held by two columns: {', '.join(twice)}")
         if self.known and self.conditions.external_approvals:
             raise ValueError(f"known source {self.code!r} cannot need external approvals")
         return self

@@ -38,7 +38,8 @@ def entry(code, elements, *, known=True):
     return {"code": code, "name": code, "provider": "Synthetic", "description": "Synthetic.",
             "visibility": "public", "channel": "exchanges", "known": known,
             "conditions": {"licence": "L", "permitted_use": "U", "redistribution": "R", "external_approvals": []},
-            "elements": elements, "other_fields": [], "connector": "local_file", "source_ref": f"files/{code}.csv"}
+            "elements": elements, "other_fields": [], "connector": "local_file", "source_ref": f"files/{code}.csv",
+            "columns": {f"col_{e}": e for e in elements}}
 
 
 def catalogue_of(tmp_path, *entries):

@@ -82,3 +82,84 @@ def test_a_file_that_is_not_a_csv_table_is_refused_by_name(tmp_path):
 def test_the_engine_is_the_pinned_duckdb(tmp_path):
     assert duckdb.__version__ == "1.5.6"
     assert profile_csv(write(tmp_path, "a.csv", LIFECYCLE)).engine == "duckdb 1.5.6"
+
+
+# ---------------------------------------------------------------- task 2: the spec and coverage
+
+
+import uuid  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
+
+from core.domain.requirement import Requirement  # noqa: E402
+from core.steps.profiling import coverage_of, spec_check, spec_of  # noqa: E402
+from ports.config import REPO_ROOT  # noqa: E402
+from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue  # noqa: E402
+
+CATALOGUE = SourceCatalogue.load(DEFAULT_CATALOGUE)
+FILES = REPO_ROOT / "fixtures" / "sources"
+
+
+def requirement(elements=(), terms=()):
+    return Requirement(id=uuid.uuid4(), created_at=datetime.now(UTC), requester_id="dev-requester", title="t",
+                       description="", status="onboarding", elements=sorted(elements), terms=sorted(terms))
+
+
+def items(coverage):
+    return [(i.item, i.kind, i.declared, i.column, i.in_file, i.null_rate, i.distinct_count) for i in coverage.items]
+
+
+def test_coverage_links_each_requested_element_to_its_column_and_its_statistics():
+    entry = CATALOGUE.get("syn_instrument_lifecycle")
+    file = profile_csv(FILES / entry.source_ref)
+    req = requirement(["issue_date", "instrument_id", "maturity_date"])
+    coverage = coverage_of(req, entry, file)
+    assert coverage.requirement_id == req.id
+    assert items(coverage) == [
+        ("instrument_id", "element", True, "instr_id", True, 0.0, 10),
+        ("issue_date", "element", True, "issued_on", True, 0.2, 7),
+        ("maturity_date", "element", False, None, False, None, None),
+    ]
+    assert coverage.missing == ["maturity_date"]
+
+
+def test_a_ticked_term_is_covered_by_an_other_field_column():
+    entry = CATALOGUE.get("syn_open_esg_scores")
+    coverage = coverage_of(requirement(terms=["ESG score"]), entry, profile_csv(FILES / entry.source_ref))
+    assert items(coverage) == [("ESG score", "term", True, "esg_score", True, 0.0, 10)]
+    assert coverage.missing == []
+
+
+def test_a_declared_column_absent_from_the_file_is_missing(tmp_path):
+    entry = CATALOGUE.get("syn_exchange_volumes")
+    file = profile_csv(write(tmp_path, "v.csv", "instr_id,trade_date\nsyn-0001,2026-11-02\n"))
+    coverage = coverage_of(requirement(["volume"]), entry, file)
+    assert items(coverage) == [("volume", "element", True, "traded_qty", False, None, None)]
+    assert coverage.missing == ["volume"]
+    assert spec_check(entry, file) == ([], ["traded_qty"])
+
+
+def test_without_a_file_coverage_comes_from_the_spec_alone():
+    entry = CATALOGUE.get("syn_listing_details")
+    coverage = coverage_of(requirement(["lot_size", "isin"]), entry, None)
+    assert items(coverage) == [("isin", "element", False, None, None, None, None),
+                               ("lot_size", "element", True, "board_lot", None, None, None)]
+    assert coverage.missing == ["isin"]
+
+
+def test_a_header_only_file_has_the_columns_but_no_statistics():
+    entry = CATALOGUE.get("syn_listing_details")
+    coverage = coverage_of(requirement(["lot_size"]), entry, profile_csv(FILES / entry.source_ref))
+    assert items(coverage) == [("lot_size", "element", True, "board_lot", True, None, 0)]
+
+
+def test_spec_check_lists_undeclared_and_missing_columns():
+    entry = CATALOGUE.get("syn_open_esg_scores")
+    assert spec_check(entry, profile_csv(FILES / entry.source_ref)) == (["score_year"], [])
+
+
+def test_the_spec_is_kept_as_it_was_read():
+    entry = CATALOGUE.get("syn_exchange_volumes")
+    assert spec_of(entry).model_dump() == {
+        "source_code": "syn_exchange_volumes", "elements": ["instrument_id", "price_date", "volume"],
+        "other_fields": [], "columns": {"instr_id": "instrument_id", "trade_date": "price_date",
+                                        "traded_qty": "volume"}}

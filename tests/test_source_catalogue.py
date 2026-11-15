@@ -22,6 +22,7 @@ ENTRY = {
     "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal analysis",
                    "redistribution": "Not allowed", "external_approvals": []},
     "elements": ["volume"], "other_fields": [], "connector": "local_file", "source_ref": "files/x.csv",
+    "columns": {"qty": "volume"},
 }
 
 
@@ -36,11 +37,17 @@ def catalogue():
     return SourceCatalogue.load(DEFAULT_CATALOGUE)
 
 
-def test_the_six_synthetic_sources(catalogue):
+def test_the_eight_synthetic_sources(catalogue):
     assert [s.code for s in catalogue.entries] == [
         "syn_exchange_volumes", "syn_offline_accruals", "syn_vendor_eod_prices", "syn_open_esg_scores",
         "syn_internal_desk_marks", "syn_backup_eod_prices",
+        "syn_instrument_lifecycle", "syn_listing_details",  # phase 4 plan, section 8
     ]
+    for code in ("syn_instrument_lifecycle", "syn_listing_details"):
+        source = catalogue.get(code)
+        assert (source.visibility, source.known, source.conditions.external_approvals) == ("public", False, [])
+    assert catalogue.get("syn_instrument_lifecycle").elements == ["instrument_id", "issue_date", "instrument_status"]
+    assert catalogue.get("syn_listing_details").elements == ["instrument_id", "exchange_mic", "lot_size"]
     backup = catalogue.get("syn_backup_eod_prices")  # assumption 58
     assert (backup.visibility, backup.channel, backup.known, backup.conditions.external_approvals) == (
         "public", "market_data_vendors", False, [])
@@ -61,6 +68,43 @@ def test_every_element_is_in_the_glossary_seed(catalogue):
 def test_every_file_exists_except_the_one_missing_on_purpose(catalogue):
     missing = [s.code for s in catalogue.entries if not (SOURCES / s.source_ref).is_file()]
     assert missing == ["syn_offline_accruals", "syn_backup_eod_prices"]  # rows B and J of the plan: source_down
+
+
+def test_each_file_header_is_its_spec_columns(catalogue):
+    """Phase 4 plan, assumption 8: columns names the file column of every declared field. The ESG file
+    keeps one column its spec does not declare (score_year), on purpose."""
+    for source in catalogue.entries:
+        path = SOURCES / source.source_ref
+        if not path.is_file():
+            continue
+        header = path.read_text(encoding="utf-8").splitlines()[0].split(",")
+        extra = ["score_year"] if source.code == "syn_open_esg_scores" else []
+        assert sorted(header) == sorted([*source.columns, *extra]), source.code
+
+
+def test_the_new_files_show_a_null_rate_and_no_rows():
+    lifecycle = (SOURCES / "files" / "instrument_lifecycle.csv").read_text(encoding="utf-8").splitlines()
+    assert len(lifecycle) == 11 and sum(1 for line in lifecycle[1:] if line.split(",")[1] == "") == 2
+    assert (SOURCES / "files" / "listing_details.csv").read_text(encoding="utf-8").splitlines() == [
+        "instr_id,venue_code,board_lot"]
+
+
+@pytest.mark.parametrize(
+    ("columns", "message"),
+    [
+        ({"qty": "volume", "px": "close_price"}, "not declared"),
+        ({}, "no column"),
+        ({"qty": "volume", "qty2": "volume"}, "two columns"),
+    ],
+)
+def test_the_loader_refuses_columns_that_do_not_match_the_declared_fields(tmp_path, columns, message):
+    with pytest.raises((ValueError, ValidationError), match=message):
+        SourceCatalogue.load(write(tmp_path, {**ENTRY, "columns": columns}))
+
+
+def test_a_column_may_hold_an_other_field(tmp_path):
+    entry = {**ENTRY, "other_fields": ["esg score"], "columns": {"qty": "volume", "esg": "esg score"}}
+    assert SourceCatalogue.load(write(tmp_path, entry)).get("syn_x").columns == {"qty": "volume", "esg": "esg score"}
 
 
 def test_channels_each_once_with_their_visibility(catalogue):

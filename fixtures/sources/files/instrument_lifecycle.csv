@@ -1,0 +1,11 @@
+instr_id,issued_on,state
+syn-0001,2019-03-04,active
+syn-0002,,active
+syn-0003,2020-07-15,active
+syn-0004,2018-11-30,matured
+syn-0005,2021-01-11,active
+syn-0006,,suspended
+syn-0007,2020-07-15,active
+syn-0008,2022-09-01,active
+syn-0009,2017-06-19,matured
+syn-0010,2023-05-22,active
