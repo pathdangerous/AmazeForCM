@@ -26,6 +26,11 @@ ONBOARDING = "Your data is getting onboarded; we will notify you once it is read
 RAISED = "Requirement raised; the backend team will look for a source."
 SCOPE_TO_CONFIRM = "No known source has this data yet. Confirm where Amaze should look for it."
 NO_FIT = "No source fits this request. The backend team has been told."
+# Approved at checkpoint 5 (2026-11-15), word for word.
+SCOPE_NOT_CONFIRMED = "You didn't confirm where to look. Add a note and ask again."
+SCOPE_CONFIRMED = "Thanks. Amaze is now finding sources for this data."
+PICK_A_SOURCE = "Pick a source and accept its conditions to start onboarding."
+ALL_DECLINED = "You declined every listed source. Add a note and ask Amaze to look again."
 VENDOR, BACKUP = "syn_vendor_eod_prices", "syn_backup_eod_prices"
 
 
@@ -171,8 +176,10 @@ async def scoped_and_listed(client, query="open price", element_keys=("open_pric
     requirement_id = await raise_requirement(client, query, element_keys, terms, purpose)
     await find_source(client, requirement_id)
     decided = await post(client, requirement_id, "scope/decision", {"decision": "approved"})
-    assert decided["result"]["outcome"] == "scoped"
+    assert (decided["result"]["outcome"], decided["message"]) == ("scoped", SCOPE_CONFIRMED)
     listed = await post(client, requirement_id, "sources")
+    if listed["result"]["outcome"] == "sources_listed":
+        assert listed["message"] == PICK_A_SOURCE
     return requirement_id, {c["source"]["code"]: c for c in listed["result"].get("candidates", [])}, listed
 
 
@@ -234,6 +241,7 @@ async def test_row_h_a_rejected_scope_and_asking_again_with_a_note(client):
                                                                      "note": "It is internal desk data"})
     assert (rejected["result"]["outcome"], rejected["result"]["note"]) == ("scope_not_confirmed",
                                                                            "It is internal desk data")
+    assert rejected["message"] == SCOPE_NOT_CONFIRMED
     assert (await page(client, requirement_id))["next_action"] == "ask_for_scope"
     again = await post(client, requirement_id, "scope", {"note": "It is internal desk data"})
     assert again["scope"]["visibility"] == "private"  # the note holds a private word
@@ -284,7 +292,7 @@ async def test_declining_listed_sources(client):
     assert (first["result"]["status"], first["result"]["remaining"]) == ("awaiting_source_choice", 1)
     last = await post(client, requirement_id, "decline", {"proposal_id": listed[BACKUP]["proposal_id"]})
     assert last["result"]["status"] == "no_source_found"
-    assert last["message"] == "No listed source is left. Add a note and ask for a new scope."
+    assert last["message"] == ALL_DECLINED
 
 
 async def test_a_wrong_status_is_409(client):

@@ -29,11 +29,12 @@ from ports.connectors.catalogue import SourceCatalogue, UnknownSource
 ONBOARDING = "Your data is getting onboarded; we will notify you once it is ready."
 NO_KNOWN_SOURCE = "No known source has this data yet."
 SCOPE_TO_CONFIRM = "No known source has this data yet. Confirm where Amaze should look for it."
-SCOPE_NOT_CONFIRMED = "You did not confirm the scope. Add a note and ask for a new one."
-SCOPE_CONFIRMED = "Scope confirmed. Amaze is listing the sources that fit."
-PICK_A_SOURCE = "Pick a source and accept its conditions."
+# Approved at checkpoint 5 (2026-11-15), word for word.
+SCOPE_NOT_CONFIRMED = "You didn't confirm where to look. Add a note and ask again."
+SCOPE_CONFIRMED = "Thanks. Amaze is now finding sources for this data."
+PICK_A_SOURCE = "Pick a source and accept its conditions to start onboarding."
 NO_FIT = "No source fits this request. The backend team has been told."
-ALL_DECLINED = "No listed source is left. Add a note and ask for a new scope."
+ALL_DECLINED = "You declined every listed source. Add a note and ask Amaze to look again."
 
 NextAction = Literal["find_source", "confirm_scope", "ask_for_scope", "list_sources", "pick_source"]
 
