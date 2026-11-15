@@ -10,6 +10,7 @@ in this order:
     1. render the prompt (agents/prompt_loader.py) with the input;
     2. call LLMProvider.complete();
     3. store the rendered messages and the input in the BlobStore (agent-inputs/<agent>/<id>.json);
+    3a. before_write(session), if given: the caller locks and checks again (review fix 2);
     4. ProposalLog.record(): one proposal_log row, whose input_ref is that key;
     5. create the subclass's drafts as proposals, each pointing at that log row, with the agent's own
        autonomy and approver role;
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from typing import Any, ClassVar
 from uuid import UUID
 
@@ -90,7 +92,13 @@ class Agent:
         """The proposal drafts for this output. None by default (a read-only agent)."""
         return []
 
-    def run(self, session: Session, agent_input: BaseModel) -> AgentRun:
+    def run(self, session: Session, agent_input: BaseModel, *,
+            before_write: Callable[[Session], None] | None = None) -> AgentRun:
+        """before_write(session) runs after the model call and before anything is written: the caller locks
+        what it will change and checks it again there. If it raises, nothing is written.
+
+        The model call itself never touches the session. The caller ends its read transaction before
+        calling run(), so no database connection is held while the model answers (review fix 2)."""
         if not isinstance(agent_input, self.input_schema):
             raise TypeError(f"{self.name} takes {self.input_schema.__name__}, not {type(agent_input).__name__}")
         prompt = self._prompts.get(self.prompt_id)
@@ -107,6 +115,8 @@ class Agent:
                   "input": agent_input.model_dump(mode="json"), "messages": [m.model_dump() for m in messages]}
         self._blobs.put(input_ref, json.dumps(stored, sort_keys=True).encode("utf-8"))
 
+        if before_write is not None:
+            before_write(session)
         entry = ProposalLog(session).record(agent_name=self.name, input_ref=input_ref, result=result)
 
         drafts = self.to_proposals(agent_input, result.output)

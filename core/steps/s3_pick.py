@@ -65,7 +65,7 @@ class Declined(BaseModel):
 
 
 def _listed_proposal(session: Session, *, requirement_id: UUID, user: User, proposal_id: UUID) -> Proposal:
-    requirement = RequirementRepository(session).get(requirement_id)
+    requirement = RequirementRepository(session).lock(requirement_id)
     if user.id != requirement.requester_id:
         raise NotTheRequester(f"Only {requirement.requester_id} picks the source of requirement {requirement_id}")
     if requirement.status != "awaiting_source_choice":

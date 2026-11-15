@@ -234,6 +234,35 @@ def test_run_refuses_an_input_of_the_wrong_schema(db_session, prompts, blobs):
         EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(db_session, Other(text="x"))
 
 
+def test_before_write_runs_after_the_model_call_and_before_any_write(db_session, prompts, blobs, monkeypatch):
+    """Review fix 2: the caller locks and re-checks here, after the call, with nothing written yet."""
+    import agents.base as base
+
+    events = []
+    original_record = base.ProposalLog.record
+
+    def record(self, **kwargs):
+        events.append("log")
+        return original_record(self, **kwargs)
+
+    monkeypatch.setattr(base.ProposalLog, "record", record)
+    EchoAgent(provider=FakeProvider(events=events), blob_store=blobs, prompts=prompts).run(
+        db_session, EchoInput(text="x"), before_write=lambda session: events.append("before_write"))
+    assert events == ["complete", "before_write", "log"]
+
+
+def test_a_refusal_in_before_write_writes_nothing(db_session, prompts, blobs):
+    before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
+
+    def refuse(session):
+        raise LookupError("the requirement moved on during the call")
+
+    with pytest.raises(LookupError):
+        EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(
+            db_session, EchoInput(text="x"), before_write=refuse)
+    assert (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow)) == before
+
+
 def test_run_flushes_but_never_commits(db_session, prompts, blobs, monkeypatch):
     def no_commit():
         raise AssertionError("Agent.run() must not commit")

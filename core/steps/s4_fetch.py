@@ -78,7 +78,7 @@ def _release_after_n_days(session: Session, feed_id: UUID, n: int, *, catalogue:
     last_fetched = fetches.latest_fetched(feed_id)
     released = []
     for requirement_id in choices.requirements_selecting(feed_id):
-        if requirements.get(requirement_id).status != "source_selected":
+        if requirements.lock(requirement_id).status != "source_selected":
             continue
         since = choices.current(requirement_id).created_at
         if last_fetched is not None and last_fetched.created_at > since:
@@ -138,7 +138,7 @@ def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable
     requirements = RequirementRepository(session)
     moved = []
     for requirement_id in SourceChoiceRepository(session).requirements_selecting(feed.id):
-        if requirements.get(requirement_id).status == "source_selected":
+        if requirements.lock(requirement_id).status == "source_selected":
             requirements.advance(requirement_id, "onboarding")
             moved.append(requirement_id)
     if not had_a_file:

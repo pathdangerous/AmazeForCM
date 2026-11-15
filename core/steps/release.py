@@ -47,7 +47,7 @@ def release_source(session: Session, *, requirement_id: UUID, reason: ReleaseRea
     if (reason == "requester_asked") != (user is not None):
         raise ValueError("a requester_asked release names the requester; a source_down_n_days release names nobody")
     requirements = RequirementRepository(session)
-    requirement = requirements.get(requirement_id)
+    requirement = requirements.lock(requirement_id)
     if user is not None and user.id != requirement.requester_id:
         raise NotTheRequester(f"Only {requirement.requester_id} releases the source of requirement {requirement_id}")
     if requirement.status != "source_selected":

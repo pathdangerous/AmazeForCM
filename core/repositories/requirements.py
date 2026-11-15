@@ -41,6 +41,12 @@ class RequirementRepository:
     def get(self, requirement_id: UUID) -> Requirement:
         return self._models([self._row(requirement_id)])[0]
 
+    def lock(self, requirement_id: UUID) -> Requirement:
+        """The requirement, with its row locked until the transaction ends. Every step that changes a
+        requirement calls this first, so two requests on one requirement run one after the other and the
+        second sees what the first committed (review fix 1)."""
+        return self._models([self._row(requirement_id, lock=True)])[0]
+
     def list(self, requester_id: str | None = None) -> list[Requirement]:
         query = select(Row).order_by(Row.created_at.desc(), Row.id)
         if requester_id is not None:

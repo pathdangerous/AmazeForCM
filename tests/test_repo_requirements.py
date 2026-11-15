@@ -72,6 +72,23 @@ def test_unknown_status_and_unknown_requirement(repo):
         repo.advance(uuid.uuid4(), "source_selected")
 
 
+def test_lock_returns_the_requirement_with_its_row_locked(repo, db_session):
+    """Review fix 1: a step that changes a requirement locks its row first (SELECT ... FOR UPDATE)."""
+    req = repo.create(requester_id="dev-requester", title="T")
+    statements = []
+    from sqlalchemy import event
+
+    listener = lambda conn, cursor, statement, *args: statements.append(statement)  # noqa: E731
+    event.listen(db_session.get_bind(), "before_cursor_execute", listener)
+    try:
+        assert repo.lock(req.id) == repo.get(req.id)
+    finally:
+        event.remove(db_session.get_bind(), "before_cursor_execute", listener)
+    assert any("FOR UPDATE" in s for s in statements)
+    with pytest.raises(RequirementNotFound):
+        repo.lock(uuid.uuid4())
+
+
 def test_set_status_is_gone(repo):
     """Phase 1's set_status() allowed any move; every change now goes through advance()."""
     assert not hasattr(repo, "set_status")

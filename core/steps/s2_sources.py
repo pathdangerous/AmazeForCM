@@ -31,7 +31,7 @@ from core.repositories.requirement_scopes import RequirementScopeRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.steps.result import StepResult
-from core.steps.s1_scope import RunsAgent
+from core.steps.s1_scope import RunsAgent, locked_in
 from ports.connectors.catalogue import SourceCatalogue, SourceEntry, UnknownSource
 from ports.notify.base import Notifier
 
@@ -90,11 +90,14 @@ def listed_sources(session: Session, requirement_id: UUID, catalogue: SourceCata
     return sorted(listed, key=lambda c: (c.rank, c.source.code))
 
 
-def list_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                 notifier: Notifier, backend_team: Sequence[str]) -> SourcesListed | NoFit:
-    requirements = RequirementRepository(session)
-    requirement = requirements.get(requirement_id)
-    if requirement.status != "scope_confirmed":
+FROM = ("scope_confirmed",)
+
+
+def sources_input(session: Session, *, requirement_id: UUID, catalogue: SourceCatalogue) -> SourceDiscoveryInput | None:
+    """Read only: the SourceDiscoveryAgent's input, or None when no source in scope covers anything (no
+    model call is needed then). The caller ends the read transaction before the model call (review fix 2)."""
+    requirement = RequirementRepository(session).get(requirement_id)
+    if requirement.status not in FROM:
         raise RequirementNotInStatus(
             f"Requirement {requirement_id} is {requirement.status}; sources are listed from scope_confirmed")
     scope = RequirementScopeRepository(session).current(requirement_id)
@@ -111,21 +114,44 @@ def list_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent, ca
                                            description=entry.description, elements=entry.elements,
                                            other_fields=entry.other_fields, conditions=entry.conditions,
                                            coverage=covered))
+    if not candidates:
+        return None
+    return SourceDiscoveryInput(
+        requirement_id=requirement_id, requested_elements=requirement.elements, requested_terms=requirement.terms,
+        scope_visibility=scope.visibility, where_to_search=scope.where_to_search, candidates=candidates)
 
-    def no_fit(reason: Literal["nothing_in_scope", "agent_listed_none"]) -> NoFit:
+
+def record_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent,
+                   agent_input: SourceDiscoveryInput | None, catalogue: SourceCatalogue, notifier: Notifier,
+                   backend_team: Sequence[str]) -> SourcesListed | NoFit:
+    """With an input: the model call, then, with the requirement locked and its status checked again, the
+    log row and the proposals. Without one: lock, check, no_fit. A status change in between gives
+    RequirementNotInStatus and nothing is written."""
+    requirements = RequirementRepository(session)
+
+    def no_fit(requirement, reason: Literal["nothing_in_scope", "agent_listed_none"]) -> NoFit:
         requirements.advance(requirement_id, "no_source_found")
+        scope = RequirementScopeRepository(session).current(requirement_id)
         for user_id in backend_team:
             notifier.notify(recipient=user_id, subject=f"No source fits: {requirement.title}",
                             body=f"No catalogue source fits requirement {requirement.id} ({requirement.title}) "
                                  f"in its {scope.visibility} scope ({reason}).")
         return NoFit(reason=reason)
 
-    if not candidates:
-        return no_fit("nothing_in_scope")
-    run = agent.run(session, SourceDiscoveryInput(
-        requirement_id=requirement_id, requested_elements=requirement.elements, requested_terms=requirement.terms,
-        scope_visibility=scope.visibility, where_to_search=scope.where_to_search, candidates=candidates))
+    if agent_input is None:
+        return no_fit(locked_in(session, requirement_id, FROM, "sources are listed"), "nothing_in_scope")
+    locked = []
+    run = agent.run(session, agent_input, before_write=lambda s: locked.append(
+        locked_in(s, requirement_id, FROM, "sources are listed")))
     if not run.proposals:
-        return no_fit("agent_listed_none")
+        return no_fit(locked[0], "agent_listed_none")
     requirements.advance(requirement_id, "awaiting_source_choice")
     return SourcesListed(candidates=listed_sources(session, requirement_id, catalogue))
+
+
+def list_sources(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
+                 notifier: Notifier, backend_team: Sequence[str]) -> SourcesListed | NoFit:
+    """sources_input() then record_sources() on one session. The API ends the read transaction between them."""
+    agent_input = sources_input(session, requirement_id=requirement_id, catalogue=catalogue)
+    return record_sources(session, requirement_id=requirement_id, agent=agent, agent_input=agent_input,
+                          catalogue=catalogue, notifier=notifier, backend_team=backend_team)

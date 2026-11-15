@@ -21,16 +21,21 @@ from ports.llm.base import LLMResult
 class StandInAgent:
     def __init__(self, *, name: str, output_schema: type[BaseModel], output: dict[str, Any] | Callable,
                  proposals: Callable[[BaseModel, BaseModel], list[dict[str, Any]]] = lambda i, o: [],
-                 error: Exception | None = None):
+                 error: Exception | None = None, during_call: Callable[[Any], None] | None = None):
         self.name, self._schema, self._output, self._proposals, self.error = name, output_schema, output, proposals, error
+        self.during_call = during_call  # runs where the model call would be; gets the session
         self.inputs: list[BaseModel] = []
 
-    def run(self, session, agent_input: BaseModel) -> AgentRun:
+    def run(self, session, agent_input: BaseModel, *, before_write=None) -> AgentRun:
         self.inputs.append(agent_input)
         if self.error is not None:
             raise self.error
+        if self.during_call is not None:
+            self.during_call(session)
         raw = self._output(agent_input) if callable(self._output) else self._output
         output = self._schema.model_validate(raw)
+        if before_write is not None:  # as Agent.run(): after the call, before any write
+            before_write(session)
         result = LLMResult(output=output, provider="stand-in", model="stand-in", model_version="0",
                            prompt_id="stand_in", prompt_version="v0", latency_ms=0, raw_ref=None)
         entry = ProposalLog(session).record(agent_name=self.name, input_ref="stand-in://input", result=result)

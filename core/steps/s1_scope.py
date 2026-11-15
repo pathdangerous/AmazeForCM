@@ -38,7 +38,7 @@ AGAIN_FROM = ("scope_not_confirmed", "no_source_found")
 
 
 class RunsAgent(Protocol):
-    def run(self, session: Session, agent_input: BaseModel) -> AgentRun: ...
+    def run(self, session: Session, agent_input: BaseModel, *, before_write=None) -> AgentRun: ...
 
 
 class Scoped(StepResult):
@@ -67,31 +67,57 @@ class ScopeProposed(BaseModel):
     reason: str
 
 
-def propose_scope(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                  note: str | None = None, again: bool = False) -> ScopeProposed:
-    requirements = RequirementRepository(session)
-    requirement = requirements.get(requirement_id)
+def locked_in(session: Session, requirement_id: UUID, allowed: tuple[str, ...], what: str):
+    """Lock the requirement and check its status: the check every step makes before it writes."""
+    requirement = RequirementRepository(session).lock(requirement_id)
+    if requirement.status not in allowed:
+        raise RequirementNotInStatus(
+            f"Requirement {requirement_id} is {requirement.status}; {what} from {', '.join(allowed)}")
+    return requirement
+
+
+def scope_input(session: Session, *, requirement_id: UUID, catalogue: SourceCatalogue, note: str | None = None,
+                again: bool = False) -> IntentInput:
+    """Read only: the IntentAgent's input, after checking the status. The caller then ends the read
+    transaction, so no connection is held during the model call (review fix 2)."""
+    requirement = RequirementRepository(session).get(requirement_id)
     allowed = AGAIN_FROM if again else FIRST_FROM
     if requirement.status not in allowed:
         raise RequirementNotInStatus(
             f"Requirement {requirement_id} is {requirement.status}; a scope is proposed from {', '.join(allowed)}")
     glossary = GlossaryRepository(session)
-    agent_input = IntentInput(
+    return IntentInput(
         requirement_id=requirement.id, requirement_text=requirement.title, purpose=requirement.description or None,
         note=(note or "").strip() or None,
         elements=[ElementRef(key=k, name=glossary.get_current(k).name) for k in requirement.elements],
         terms=requirement.terms,
         channels=[ChannelRef(channel=c, visibility=v) for c, v in catalogue.channels()],
     )
-    run = agent.run(session, agent_input)
+
+
+def record_scope(session: Session, *, agent: RunsAgent, agent_input: IntentInput, again: bool = False) -> ScopeProposed:
+    """The model call, then, with the requirement locked and its status checked again, the log row, the
+    scope proposal and the move to awaiting_scope_confirmation. A status change during the call gives
+    RequirementNotInStatus and nothing is written."""
+    allowed = AGAIN_FROM if again else FIRST_FROM
+    requirement_id = agent_input.requirement_id
+    run = agent.run(session, agent_input,
+                    before_write=lambda s: locked_in(s, requirement_id, allowed, "a scope is proposed"))
     if len(run.proposals) != 1 or run.proposals[0].kind != "scope":
         raise ValueError("S1 expects exactly one scope proposal from the agent")
     proposal = run.proposals[0]
-    requirements.advance(requirement.id, "awaiting_scope_confirmation")
+    RequirementRepository(session).advance(requirement_id, "awaiting_scope_confirmation")
     payload = proposal.payload
     return ScopeProposed(proposal_id=proposal.id, log_id=run.log_id, visibility=payload["visibility"],
                          provider=payload["provider"], where_to_search=payload["where_to_search"],
                          reason=payload["reason"])
+
+
+def propose_scope(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
+                  note: str | None = None, again: bool = False) -> ScopeProposed:
+    """scope_input() then record_scope() on one session. The API ends the read transaction between them."""
+    agent_input = scope_input(session, requirement_id=requirement_id, catalogue=catalogue, note=note, again=again)
+    return record_scope(session, agent=agent, agent_input=agent_input, again=again)
 
 
 def pending_scope(session: Session, requirement_id: UUID):
@@ -113,7 +139,7 @@ def proposed_scope(session: Session, requirement_id: UUID) -> ScopeProposed | No
 def decide_scope(session: Session, *, requirement_id: UUID, user: User, decision: Decision,
                  note: str | None = None) -> Scoped | ScopeNotConfirmed:
     requirements = RequirementRepository(session)
-    requirement = requirements.get(requirement_id)
+    requirement = requirements.lock(requirement_id)
     if user.id != requirement.requester_id:
         raise NotTheRequester(f"Only {requirement.requester_id} decides the scope of requirement {requirement_id}")
     if requirement.status != "awaiting_scope_confirmation":

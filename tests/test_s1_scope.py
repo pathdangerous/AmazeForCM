@@ -130,6 +130,20 @@ def test_a_failed_agent_call_leaves_the_status(db_session, requirement):
     assert status(db_session, req) == "defined"
 
 
+def test_a_status_change_during_the_model_call_writes_nothing(db_session, requirement):
+    """Review fix 2: after the call the requirement is locked and its status checked again."""
+    from sqlalchemy import text
+
+    req = requirement()
+    agent = scope_agent()
+    agent.during_call = lambda session: session.execute(
+        text("UPDATE requirements SET status = 'rejected' WHERE id = :id"), {"id": req.id})
+    before = (count(db_session, ProposalLogEntry), count(db_session, ProposalRow))
+    with pytest.raises(RequirementNotInStatus):
+        propose_scope(db_session, requirement_id=req.id, agent=agent, catalogue=CATALOGUE)
+    assert (count(db_session, ProposalLogEntry), count(db_session, ProposalRow)) == before
+
+
 def test_only_the_requirements_own_requester_decides(db_session, requirement):
     req = requirement()
     propose_scope(db_session, requirement_id=req.id, agent=scope_agent(), catalogue=CATALOGUE)

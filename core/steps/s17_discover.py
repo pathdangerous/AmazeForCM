@@ -110,7 +110,7 @@ def _hits(session: Session, products, user_id: str, roles: Sequence[str],
 
 
 class RunsAgent(Protocol):
-    def run(self, session: Session, agent_input: BaseModel) -> AgentRun: ...
+    def run(self, session: Session, agent_input: BaseModel, *, before_write=None) -> AgentRun: ...
 
 
 class Suggestion(BaseModel):
@@ -132,19 +132,27 @@ class Assistance(BaseModel):
     suggestions: list[Suggestion]
 
 
-def assist(session: Session, *, query: str, agent: RunsAgent, user_id: str, roles: Sequence[str],
-           display_name: Callable[[str], str]) -> Assistance:
-    """Ask the DiscoveryAssistant about the words the deterministic search did not match. With none, no
-    model is called. Code keeps only suggestions for those words and for keys in the glossary, each
-    once. Writes nothing but the agent's proposal_log row; the caller commits it."""
+def assist_input(session: Session, *, query: str) -> AssistantInput | None:
+    """Read only: the DiscoveryAssistant's input, or None when the search left no word unmatched (no
+    model call then). The caller ends the read transaction before the model call (review fix 2)."""
     glossary = GlossaryRepository(session).list_current()
     unmatched = match(query, build_phrases(glossary)).terms if query.strip() else []
     if not unmatched:
+        return None
+    return AssistantInput(query=query, unmatched_terms=unmatched,
+                          glossary=[GlossaryRef(key=e.key, name=e.name, aliases=e.aliases) for e in glossary])
+
+
+def record_assist(session: Session, *, agent: RunsAgent, agent_input: AssistantInput | None, user_id: str,
+                  roles: Sequence[str], display_name: Callable[[str], str]) -> Assistance:
+    """The model call, then the log row and the suggestions. Code keeps only suggestions for the
+    unmatched words and for keys in the glossary, each once. Writes nothing but the agent's proposal_log
+    row; the caller commits it."""
+    if agent_input is None:
         return Assistance(log_id=None, suggestions=[])
-    run = agent.run(session, AssistantInput(
-        query=query, unmatched_terms=unmatched,
-        glossary=[GlossaryRef(key=e.key, name=e.name, aliases=e.aliases) for e in glossary]))
-    names = {e.key: e.name for e in glossary}
+    run = agent.run(session, agent_input)
+    unmatched = agent_input.unmatched_terms
+    names = {e.key: e.name for e in GlossaryRepository(session).list_current()}
     products = ProductRepository(session).list_with_elements()
     seen, suggestions = set(), []
     for suggested in run.output.suggestions:
@@ -158,3 +166,10 @@ def assist(session: Session, *, query: str, agent: RunsAgent, user_id: str, role
                                       element_name=names[suggested.element_key], reason=suggested.reason,
                                       products=_hits(session, holding, user_id, roles, display_name)))
     return Assistance(log_id=run.log_id, suggestions=suggestions)
+
+
+def assist(session: Session, *, query: str, agent: RunsAgent, user_id: str, roles: Sequence[str],
+           display_name: Callable[[str], str]) -> Assistance:
+    """assist_input() then record_assist() on one session. The API ends the read transaction between them."""
+    return record_assist(session, agent=agent, agent_input=assist_input(session, query=query), user_id=user_id,
+                         roles=roles, display_name=display_name)

@@ -94,7 +94,7 @@ def select_source(session: Session, *, requirement: Requirement, entry: SourceEn
 def find_known_source(session: Session, *, requirement_id: UUID, catalogue: SourceCatalogue) -> FindSource:
     """Known source? from a requirement with status defined. Raises RequirementNotInStatus otherwise,
     whatever the outcome would be, so a second click writes nothing."""
-    requirement = RequirementRepository(session).get(requirement_id)
+    requirement = RequirementRepository(session).lock(requirement_id)
     if requirement.status != "defined":
         raise RequirementNotInStatus(
             f"Requirement {requirement_id} is {requirement.status}; Known source? starts from defined"

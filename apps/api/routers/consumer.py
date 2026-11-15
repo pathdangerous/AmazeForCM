@@ -35,11 +35,14 @@ from core.domain.requirement import Requirement
 from core.repositories.consumer_requests import ConsumerRequestRepository
 from core.repositories.errors import (
     ConsumerRequestNotFound,
+    NothingToRelease,
     ProposalAlreadyDecided,
     ProposalForAnotherRequirement,
     ProposalNotFound,
+    RequirementAlreadyHasSource,
     RequirementNotFound,
     RequirementNotInStatus,
+    SourceAlreadyReleased,
     UnknownGlossaryElement,
 )
 from core.repositories.feeds import FeedRepository
@@ -49,11 +52,11 @@ from core.steps.known_source import KnownSourceResult, find_known_source
 from core.steps.release import Released, release_source
 from core.steps.request_data import RequestResult, request_data
 from core.steps.requirement_page import RequirementPage, approval_missing_message, requirement_page
-from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, propose_scope
-from core.steps.s2_sources import SourcesResult, list_sources
+from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, record_scope, scope_input
+from core.steps.s2_sources import SourcesResult, record_sources, sources_input
 from core.steps.s3_pick import ApprovalMissing, Declined, PickResult, SourcePicked, decline_source, pick_source
 from core.steps.s4_fetch import FetchResult, fetch_source
-from core.steps.s17_discover import Assistance, Discovery, assist, discover
+from core.steps.s17_discover import Assistance, Discovery, assist_input, discover, record_assist
 from ports.config import Settings
 from ports.connectors import SourceConnector
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions
@@ -130,14 +133,10 @@ def search_assist(body: AssistBody, session: DbSession, user: Requester, identit
                   assistant: Annotated[DiscoveryAssistant, Depends(get_discovery_assistant)]) -> Assistance:
     """The read-only DiscoveryAssistant beside the deterministic search. It changes nothing; its call is
     logged in proposal_log (rule 4), so this endpoint commits that one row."""
-    try:
-        result = assist(session, query=body.q, agent=assistant, user_id=user.id, roles=list(user.roles),
-                        display_name=_display_name(identity))
-        session.commit()
-    except BaseException:
-        session.rollback()
-        raise
-    return result
+    agent_input = _read(session, lambda: assist_input(session, query=body.q))
+    return _in_transaction(session, lambda: record_assist(
+        session, agent=assistant, agent_input=agent_input, user_id=user.id, roles=list(user.roles),
+        display_name=_display_name(identity)))
 
 
 @router.post("/requests", response_model=RequestResult, status_code=201)
@@ -225,14 +224,27 @@ def _own_requirement(session: Session, user: User, requirement_id: UUID) -> Requ
     return requirement
 
 
-def _in_transaction(session: Session, work: Callable[[], T]) -> T:
+CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyHasSource, NothingToRelease,
+             SourceAlreadyReleased)
+
+
+def _read(session: Session, work: Callable[[], T]) -> T:
+    """Read what a model call needs, then end the transaction (rollback: nothing was written), so the
+    connection goes back to the pool before the model is called (review fix 2). Errors as below."""
+    return _in_transaction(session, work, keep=False)
+
+
+def _in_transaction(session: Session, work: Callable[[], T], *, keep: bool = True) -> T:
     """Run one step and commit it, or roll it back whole. Named errors become 409, 404 or 422; anything
     else (a failed model call, a stub adapter) is rolled back and raised, never turned into an outcome."""
     try:
         result = work()
-        session.commit()
+        if keep:
+            session.commit()
+        else:
+            session.rollback()
         return result
-    except (RequirementNotInStatus, ProposalAlreadyDecided) as exc:
+    except CONFLICTS as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound):
@@ -276,15 +288,12 @@ def find_source(requirement_id: UUID, session: DbSession, user: Requester, ident
     """Known source?: a known source is selected, then fetched in its own transaction. With no known
     source, S1 proposes a scope in the same transaction (one commit, whichever branch ran)."""
     _own_requirement(session, user, requirement_id)
-
-    def work():
-        found = find_known_source(session, requirement_id=requirement_id, catalogue=catalogue)
-        scope = None
-        if found.feed is None:
-            scope = propose_scope(session, requirement_id=requirement_id, agent=intent_agent, catalogue=catalogue)
-        return found, scope
-
-    found, scope = _in_transaction(session, work)
+    found = _in_transaction(session, lambda: find_known_source(session, requirement_id=requirement_id,
+                                                               catalogue=catalogue))
+    scope = None
+    if found.feed is None:  # no_known_source wrote nothing: read S1's input, then the model call, then write
+        agent_input = _read(session, lambda: scope_input(session, requirement_id=requirement_id, catalogue=catalogue))
+        scope = _in_transaction(session, lambda: record_scope(session, agent=intent_agent, agent_input=agent_input))
     fetch = None
     if found.feed is not None:
         fetch = _first_fetch(session, found.feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
@@ -359,8 +368,10 @@ def ask_for_scope(requirement_id: UUID, body: NoteBody, session: DbSession, user
                   settings: AppSettings, intent_agent: ScopeAgent) -> ScopeResponse:
     """S1 again, with the requester's note, after scope_not_confirmed or no_source_found."""
     _own_requirement(session, user, requirement_id)
-    scope = _in_transaction(session, lambda: propose_scope(
-        session, requirement_id=requirement_id, agent=intent_agent, catalogue=catalogue, note=body.note, again=True))
+    agent_input = _read(session, lambda: scope_input(session, requirement_id=requirement_id, catalogue=catalogue,
+                                                     note=body.note, again=True))
+    scope = _in_transaction(session, lambda: record_scope(session, agent=intent_agent, agent_input=agent_input,
+                                                          again=True))
     page = _page(session, requirement_id, catalogue, settings)
     return ScopeResponse(scope=scope, message=page.message, requirement=page)
 
@@ -380,9 +391,10 @@ def find_sources(requirement_id: UUID, session: DbSession, user: Requester, iden
                  catalogue: Catalogue, settings: AppSettings, notifier: RequestNotifier,
                  list_agent: ListAgent) -> SourcesResponse:
     _own_requirement(session, user, requirement_id)
-    result = _in_transaction(session, lambda: list_sources(
-        session, requirement_id=requirement_id, agent=list_agent, catalogue=catalogue, notifier=notifier,
-        backend_team=_recipients(identity)["backend_team"]))
+    agent_input = _read(session, lambda: sources_input(session, requirement_id=requirement_id, catalogue=catalogue))
+    result = _in_transaction(session, lambda: record_sources(
+        session, requirement_id=requirement_id, agent=list_agent, agent_input=agent_input, catalogue=catalogue,
+        notifier=notifier, backend_team=_recipients(identity)["backend_team"]))
     page = _page(session, requirement_id, catalogue, settings)
     return SourcesResponse(result=result, message=page.message, requirement=page)
 
