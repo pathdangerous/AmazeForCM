@@ -181,6 +181,7 @@ Order of precedence when they disagree:
 - Every step that changes a requirement (or any row others may change at the same time) locks that row first (`RequirementRepository.lock()`), and the API maps each named conflict to 409, never 500.
 - No database connection is held during a model call. Every agent-backed step follows one pattern: (1) a read-only `*_input()` builds the agent's input and checks the status; (2) the API ends that read transaction; (3) `Agent.run(..., before_write=...)` calls the model; (4) in `before_write` the step locks the row and checks its status again; (5) only then are the log row, the proposals and the status change written, in one transaction. A change during the call gives 409 and writes nothing. `tests/test_concurrency.py` checks `pool.checkedout() == 0` during every call.
 - Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. Never work around these triggers; add a new version instead.
+- At the end of each phase, append any UI polish items found to `docs/ui-polish.md` (one line each: screen, issue, proposed fix). Do not fix them unless asked; phase 7.5 does.
 - Edit files only with the file tools (Read, Edit, Write). Never rewrite or patch files through PowerShell, sed or other shell commands.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.
 - Do not add features beyond the current phase in `BUILD_PLAN.md`.

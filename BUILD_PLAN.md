@@ -73,6 +73,12 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - On release, the product is created (step 20) and the requester gets "Ready" (or "Access restricted").
 - **Done when:** the Playwright test runs the full PoC story, including one held delivery.
 
+## Phase 7.5 — UI polish
+
+- Work through `docs/ui-polish.md`.
+- First decide on a component library and the visual reference; then apply them to both UIs.
+- **Done when:** the Playwright test still passes and the screenshots are approved.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
