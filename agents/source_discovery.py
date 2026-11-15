@@ -16,7 +16,7 @@ class SourceDiscoveryAgent(Agent):
     name = "SourceDiscoveryAgent"
     prompt_id = "source_discovery"
     autonomy = "A2"
-    approver_role = "requester"
+    approver_roles = ("requester",)
     input_schema = SourceDiscoveryInput
     output_schema = SourceDiscoveryOutput
 

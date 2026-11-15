@@ -2,8 +2,8 @@
 
 A subclass declares what it is and how its output becomes proposal drafts:
 
-    name, prompt_id, autonomy (A1 | A2), approver_role (a Role, or None for a read-only agent),
-    input_schema, output_schema, and optionally to_proposals(agent_input, output).
+    name, prompt_id, autonomy (A1 | A2), approver_roles (an ordered tuple of roles, each once; () for a
+    read-only agent), input_schema, output_schema, and optionally to_proposals(agent_input, output).
 
 run() is defined here only; a subclass that defines run() is refused when the class is created. It does,
 in this order:
@@ -42,11 +42,11 @@ from ports.identity.base import ROLES, Role
 from ports.llm.base import LLMProvider
 from ports.storage.base import BlobStore
 
-_DECLARED = ("name", "prompt_id", "autonomy", "approver_role", "input_schema", "output_schema")
+_DECLARED = ("name", "prompt_id", "autonomy", "approver_roles", "input_schema", "output_schema")
 
 
 class ReadOnlyAgentProposed(RuntimeError):
-    """A read-only agent (approver_role None) returned proposal drafts."""
+    """A read-only agent (approver_roles ()) returned proposal drafts."""
 
 
 class AgentProposal(BaseModel):
@@ -64,7 +64,7 @@ class Agent:
     name: ClassVar[str]
     prompt_id: ClassVar[str]
     autonomy: ClassVar[Autonomy]
-    approver_role: ClassVar[Role | None]
+    approver_roles: ClassVar[tuple[Role, ...]]  # in approval order; () for a read-only agent
     input_schema: ClassVar[type[BaseModel]]
     output_schema: ClassVar[type[BaseModel]]
 
@@ -77,14 +77,16 @@ class Agent:
             raise TypeError(f"{cls.__name__} must declare {', '.join(missing)}")
         if cls.autonomy not in ("A1", "A2"):
             raise TypeError(f"{cls.__name__}.autonomy must be A1 or A2, not {cls.autonomy!r}")
-        if cls.approver_role is not None and cls.approver_role not in ROLES:
-            raise TypeError(f"{cls.__name__}.approver_role must be a role or None, not {cls.approver_role!r}")
+        roles = cls.approver_roles
+        if (not isinstance(roles, tuple) or any(r not in ROLES for r in roles) or len(set(roles)) != len(roles)):
+            raise TypeError(f"{cls.__name__}.approver_roles must be a tuple of roles, each once (() for a "
+                            f"read-only agent), not {roles!r}")
         for attr in ("input_schema", "output_schema"):
             schema = getattr(cls, attr)
             if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
                 raise TypeError(f"{cls.__name__}.{attr} must be a Pydantic model class")
-        if cls.approver_role is None and cls.to_proposals is not Agent.to_proposals:
-            raise TypeError(f"{cls.__name__} is read-only (approver_role None) and cannot define to_proposals")
+        if not roles and cls.to_proposals is not Agent.to_proposals:
+            raise TypeError(f"{cls.__name__} is read-only (approver_roles ()) and cannot define to_proposals")
 
     def __init__(self, *, provider: LLMProvider, blob_store: BlobStore, prompts: PromptLibrary | None = None):
         self._provider = provider
@@ -134,12 +136,12 @@ class Agent:
             if before_write is not None:
                 before_write(session)
             drafts = self.to_proposals(agent_input, result.output)
-            if drafts and self.approver_role is None:
+            if drafts and not self.approver_roles:
                 raise ReadOnlyAgentProposed(f"{self.name} is read-only and cannot create proposals")
             repository = ProposalRepository(session)
             proposals = [
                 repository.create(proposal_log_id=log_id, autonomy=self.autonomy,
-                                  required_approver_roles=[self.approver_role], **draft.model_dump())
+                                  required_approver_roles=list(self.approver_roles), **draft.model_dump())
                 for draft in drafts
             ]
         except Exception as exc:

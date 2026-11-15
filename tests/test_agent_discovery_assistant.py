@@ -30,7 +30,7 @@ def stand_in(suggestions):
 
 def test_the_agents_declaration():
     assert (DiscoveryAssistant.name, DiscoveryAssistant.prompt_id, DiscoveryAssistant.autonomy,
-            DiscoveryAssistant.approver_role) == ("DiscoveryAssistant", "discovery_assistant", "A2", None)
+            DiscoveryAssistant.approver_roles) == ("DiscoveryAssistant", "discovery_assistant", "A2", ())
 
 
 def test_closing_prices_suggests_close_price_with_the_products_that_hold_it(db_session, glossary, make_product,

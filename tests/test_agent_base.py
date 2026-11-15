@@ -44,7 +44,7 @@ class EchoAgent(Agent):
     name = "EchoAgent"
     prompt_id = "echo"
     autonomy = "A2"
-    approver_role = "requester"
+    approver_roles = ("requester",)
     input_schema = EchoInput
     output_schema = EchoOutput
 
@@ -52,11 +52,18 @@ class EchoAgent(Agent):
         return [AgentProposal(kind="scope", payload={"item": item}) for item in output.items]
 
 
+class TwoStepAgent(EchoAgent):
+    """Step 09's shape (phase 6): the steward approves, then the checker."""
+
+    name = "TwoStepAgent"
+    approver_roles = ("data_steward", "checker")
+
+
 class LookOnlyAgent(Agent):
     name = "LookOnlyAgent"
     prompt_id = "echo"
     autonomy = "A2"
-    approver_role = None
+    approver_roles = ()
     input_schema = EchoInput
     output_schema = EchoOutput
 
@@ -112,17 +119,29 @@ def test_a_subclass_must_declare_every_attribute():
         class Incomplete(Agent):  # noqa: F841
             name = "Incomplete"
             autonomy = "A2"
-            approver_role = "requester"
+            approver_roles = ("requester",)
             input_schema = EchoInput
             output_schema = EchoOutput
 
 
-@pytest.mark.parametrize("field, value", [("autonomy", "A3"), ("approver_role", "nobody")])
-def test_autonomy_and_approver_role_are_checked(field, value):
-    attributes = {"name": "Bad", "prompt_id": "echo", "autonomy": "A2", "approver_role": "requester",
+@pytest.mark.parametrize("field, value", [
+    ("autonomy", "A3"),
+    ("approver_roles", ("nobody",)),
+    ("approver_roles", "requester"),  # a bare string, not a tuple of roles
+    ("approver_roles", ["requester"]),  # a list could be changed after the check
+    ("approver_roles", ("data_steward", "data_steward")),  # one person cannot decide two steps
+])
+def test_autonomy_and_approver_roles_are_checked(field, value):
+    attributes = {"name": "Bad", "prompt_id": "echo", "autonomy": "A2", "approver_roles": ("requester",),
                   "input_schema": EchoInput, "output_schema": EchoOutput, field: value}
     with pytest.raises(TypeError, match=field):
         type("Bad", (Agent,), attributes)
+
+
+def test_proposals_need_every_declared_role_in_order(db_session, prompts, blobs):
+    """Independent review, fix 3: an agent declares an ordered tuple of approver roles."""
+    run = TwoStepAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(db_session, EchoInput(text="x"))
+    assert {tuple(p.required_approver_roles) for p in run.proposals} == {("data_steward", "checker")}
 
 
 def test_a_read_only_agent_cannot_define_to_proposals():

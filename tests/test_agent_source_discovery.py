@@ -31,7 +31,7 @@ def _input(requirement_id, codes=("syn_vendor_eod_prices", "syn_backup_eod_price
 
 def test_the_agents_declaration():
     assert (SourceDiscoveryAgent.name, SourceDiscoveryAgent.prompt_id, SourceDiscoveryAgent.autonomy,
-            SourceDiscoveryAgent.approver_role) == ("SourceDiscoveryAgent", "source_discovery", "A2", "requester")
+            SourceDiscoveryAgent.approver_roles) == ("SourceDiscoveryAgent", "source_discovery", "A2", ("requester",))
 
 
 def test_one_proposal_per_ranked_source_with_the_catalogues_facts(db_session, tmp_path):

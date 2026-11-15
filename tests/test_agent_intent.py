@@ -30,8 +30,8 @@ def agent(tmp_path):
 
 
 def test_the_agents_declaration():
-    assert (IntentAgent.name, IntentAgent.prompt_id, IntentAgent.autonomy, IntentAgent.approver_role) == (
-        "IntentAgent", "intent", "A2", "requester")
+    assert (IntentAgent.name, IntentAgent.prompt_id, IntentAgent.autonomy, IntentAgent.approver_roles) == (
+        "IntentAgent", "intent", "A2", ("requester",))
 
 
 def test_one_scope_proposal_for_the_requester(db_session, agent, glossary):

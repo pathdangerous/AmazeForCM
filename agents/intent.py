@@ -15,7 +15,7 @@ class IntentAgent(Agent):
     name = "IntentAgent"
     prompt_id = "intent"
     autonomy = "A2"
-    approver_role = "requester"
+    approver_roles = ("requester",)
     input_schema = IntentInput
     output_schema = IntentOutput
 

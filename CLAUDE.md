@@ -125,7 +125,7 @@ class LLMResult(BaseModel):
 
 ## Agents in the PoC
 
-Each agent extends `agents/base.Agent`, declares `autonomy` (A1 assist or A2 recommend; A3 is not used in the PoC) and `approver_role`, and returns a `Proposal`.
+Each agent extends `agents/base.Agent`, declares `autonomy` (A1 assist or A2 recommend; A3 is not used in the PoC) and `approver_roles` (an ordered tuple, each role once; `()` for a read-only agent), and returns a `Proposal`.
 
 | Step | Agent | Autonomy | Approver |
 |---|---|---|---|
