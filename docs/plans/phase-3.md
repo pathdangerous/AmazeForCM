@@ -823,6 +823,7 @@ Notes only; nothing here is built in phase 3.
 4. The backend team's review of the data is where access is restricted (your decision 1). It should show the conditions the requester accepted (`source_choices.accepted_conditions`, on the requirement's current choice).
 4b. **Who a feed's requirements are: use `SourceChoiceRepository.requirements_selecting(feed_id)`, never `feeds.requirement_id`** (review of phase 3). `feeds.requirement_id` keeps the first requirement that selected the source, even after it released the feed. Telling requesters about a sign-off, a rejection or "Ready" must go through the current choices.
 4c. **A release reason for a rejected candidate feed goes in a new migration, never in `0009`** (an applied migration is never edited). The check `ck_source_choices_reason` is dropped and created again with the third reason, as `0008` and `0009` did for the status list.
+4d. **If the catalogue fails to load, the daily job still fetches registered feeds** (independent review, finding 8). Today `DailyFetch.run()` loads the catalogue first, so a bad catalogue file stops every fetch. From phase 4, when registered feeds exist: on a load error, fetch the registered feeds without the N-day release rule (and without closing empty source lists), and tell the backend team in-app that the catalogue could not be read, with the error. Candidate feeds wait for the next run with a good catalogue.
 4a. **Registered feeds are regular feeds from phase 4 on** (Q4, assumption 54). The daily job already fetches a registered feed whether or not a requirement selects it; registration (step 04) is the moment a candidate feed stops depending on a requirement's selection. Phase 4 must keep `FeedRepository.list_to_fetch()`'s two cases and test registration against it.
 **Phase 5**
 
@@ -1223,3 +1224,22 @@ Each with its tests written first and shown failing:
 **Test-only change:** `test_the_job_always_fetches_a_registered_feed` now commits its setup (to the test's savepoint), because the job ends its read transaction before the fetch, as the other job tests already did. The two concurrency tests use `asyncio.gather(..., return_exceptions=True)`: a failing request otherwise left the other request's session open, and the schema could not be dropped (the test hung once, during the run that showed fix 1 failing; the stuck test session was ended by hand).
 
 `alembic current`: `0012 (head)`.
+
+### Fixes after the independent review (2026-11-15)
+
+Each with its tests written first and shown failing; one commit each. Finding 8 is a section 16 note (4d), not built.
+
+| # | Fix | Tests (failing before) |
+|---|---|---|
+| 1 | The feed row lock is `FOR NO KEY UPDATE` (`with_for_update(key_share=True)`). A release locked the requirement, then its `source_choices` insert waited for `FOR KEY SHARE` on the feed, which the fetch held `FOR UPDATE` while it waited for the requirement | `test_concurrency.py::test_a_release_and_a_fetch_of_the_same_feed_at_once_both_succeed` (was `DeadlockDetected` on the release). `test_the_first_fetch_and_the_daily_job_at_once_send_one_notification` still passes: two fetches still wait for each other |
+| 2 | Migration `0013`: `trg_source_choices_e_feed_source` refuses a row whose feed reads another source (`IS DISTINCT FROM`, so a feed with no source is refused too). Applied to the application database; its 10 existing rows all comply | `test_db_source_guards.py::test_a_choice_names_the_source_its_feed_reads` |
+| 3 | `Agent.approver_roles`: an ordered tuple, each role once, `()` for a read-only agent; a bare string or a list is refused. The three agents keep one role each | `test_proposals_need_every_declared_role_in_order`, `test_autonomy_and_approver_roles_are_checked` (5 cases), the three declaration tests |
+| 4 | `LLMUnavailable(reason)` in `ports/llm/base.py` (`timeout`, `rate_limit`, `provider_error`), answered 503 with its reason by one handler in `apps/api/main.py`. The Azure stub's docstring says to raise it | `test_a_provider_that_does_not_answer_gives_503_and_writes_nothing` (6 cases: find-source and assist; was the bare exception) |
+| 5 | `Agent.run()` refuses a session already in a transaction (`SessionInTransaction`), before the call. `propose_scope`, `list_sources`, `assist` and `fetch_source` moved from `core/steps` to `tests/step_chains.py`, which ends the read between the halves | `test_run_refuses_a_session_already_in_a_transaction`. Every API test passed unchanged; 12 step-level tests that read and then called `run()` on one session failed and now end the read first |
+| 6 | `/find-source` returns S1's typed result in `scope` (`ScopeProposed`, or `no_fit` with `no_channel_in_scope`); `/scope` answers with `result`, like every step | `test_find_source_and_scope_return_s1s_no_fit`; `test_row_h_...` reads `result` |
+| 7 | `close_if_nothing_to_pick()` (s3_pick): with every listed source gone from the catalogue, `awaiting_source_choice` becomes `no_source_found` and the backend team is told ("No source left"). The daily job runs it after the fetches, with the catalogue it loaded; the proposals stay `pending` (assumption 37). The page says: "The listed sources are no longer offered. Add a note and ask for a new scope." (**wording not yet approved**) | `test_a_list_whose_sources_left_the_catalogue_is_closed_as_no_source_found`, `test_closing_needs_status_awaiting_source_choice`, `test_jobs.py::test_the_job_closes_a_list_whose_sources_left_the_catalogue` |
+| 9 | A subclass may override only `to_proposals`: `run`, `_log_call`, `_own_transaction`, `__init__` and `__init_subclass__` are refused at class creation; its own helpers are allowed | `test_a_subclass_may_override_only_to_proposals` (4 cases) |
+
+**Limit of fix 7:** the close runs with the daily job (06:00 UTC), so until then the requester sees an empty list (`docs/ui-polish.md`).
+
+`alembic current`: `0013 (head)`.
