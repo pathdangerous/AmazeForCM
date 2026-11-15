@@ -134,3 +134,42 @@ def test_seed_glossary_element_needs_no_proposal(db_session):
         "VALUES ('seed_probe', 1, 'Seed probe', 'pricing', 'string', 'Synthetic.', 'seed')"
     ))
     assert db_session.execute(text("SELECT count(*) FROM glossary_elements WHERE key = 'seed_probe'")).scalar_one() == 1
+
+
+# ---- review fix 3 (migration 0010): a requester-role approval of a requirement's proposal comes from
+# that requirement's own requester. Raw SQL bypasses the steps' own check.
+
+APPROVAL = text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+                "VALUES (:p, 1, :role, :by, 'approved')")
+
+
+@pytest.fixture
+def riley_requirement(db_session):
+    from core.repositories.requirements import RequirementRepository
+
+    return RequirementRepository(db_session).create(requester_id="dev-requester", title="open price")
+
+
+def _approve(db_session, proposal_id, by, role="requester"):
+    with db_session.begin_nested():
+        db_session.execute(APPROVAL, {"p": proposal_id, "role": role, "by": by})
+
+
+@pytest.mark.parametrize("by", ["dev-other-requester", " ", ""])
+def test_a_requester_approval_of_a_requirements_proposal_needs_its_own_requester(db_session, make_proposal,
+                                                                                 riley_requirement, by):
+    from sqlalchemy.exc import DBAPIError
+
+    proposal = make_proposal(kind="source_list", roles=("requester",), payload={"source_code": "syn_x"},
+                             requirement_id=riley_requirement.id)
+    with pytest.raises(DBAPIError, match="only the requirement's requester"):
+        _approve(db_session, proposal.id, by)
+    _approve(db_session, proposal.id, "dev-requester")  # the requirement's own requester
+
+
+def test_the_requester_check_applies_only_to_requester_approvals_of_a_requirement(db_session, make_proposal,
+                                                                                 riley_requirement):
+    no_requirement = make_proposal(kind="scope", roles=("requester",), payload={})
+    _approve(db_session, no_requirement.id, "dev-anyone")  # no requirement to check against
+    steward = make_proposal(kind="mapping", roles=("data_steward",), requirement_id=riley_requirement.id)
+    _approve(db_session, steward.id, "dev-data-steward", role="data_steward")
