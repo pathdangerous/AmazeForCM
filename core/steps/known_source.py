@@ -18,6 +18,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.domain.feed import Feed
@@ -72,7 +73,11 @@ def check_known_source(requirement: Requirement, catalogue: SourceCatalogue) -> 
 
 def feed_for(session: Session, *, entry: SourceEntry, requirement_id: UUID) -> Feed:
     """The candidate feed of this source: the existing one, or a new one linked to the first requirement
-    that selects it (one feed per source, assumption 11). Also used by S3."""
+    that selects it (one feed per source, assumption 11). Also used by S3.
+
+    An advisory lock on the source code, held until the transaction ends, comes first: two requirements
+    selecting the same new source at once then make one feed, not a unique violation (review fix 1)."""
+    session.execute(select(func.pg_advisory_xact_lock(func.hashtext(entry.code))))
     feeds = FeedRepository(session)
     return feeds.get_by_source(entry.code) or feeds.create_candidate(
         code=entry.code, name=entry.name, requirement_id=requirement_id, source_code=entry.code,

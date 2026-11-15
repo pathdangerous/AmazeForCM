@@ -67,9 +67,43 @@ async def test_two_concurrent_picks_give_one_success_and_one_409(own_schema, flo
         bodies = [{"proposal_id": c["proposal_id"], "accepted_conditions": c["source"]["conditions"]}
                   for c in listed.values()]
         responses = await asyncio.gather(*(
-            f.client.post(f"/api/consumer/requirements/{f.id}/pick", headers=RILEY, json=body) for body in bodies))
+            f.client.post(f"/api/consumer/requirements/{f.id}/pick", headers=RILEY, json=body) for body in bodies),
+            return_exceptions=True)
+    assert not [r for r in responses if isinstance(r, BaseException)], responses
     assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
     assert committed(own_schema, "SELECT count(*) FROM source_choices WHERE requirement_id = :id", id=f.id) == [(1,)]
+
+
+async def test_two_requirements_selecting_the_same_new_source_at_once_make_one_feed(own_schema, flow, monkeypatch):
+    """Review fix 1 (second round): feed_for takes an advisory lock on the source code before it looks
+    for the feed. Both requests wait at a barrier just after that look; without the lock both find no
+    feed and both create one, and the second fails on the unique index (a 500)."""
+    import core.steps.known_source as known_source
+    from core.repositories.feeds import FeedRepository
+
+    barrier = threading.Barrier(2)
+
+    class WaitingFeeds(FeedRepository):
+        def get_by_source(self, source_code):
+            found = super().get_by_source(source_code)
+            try:
+                barrier.wait(timeout=1.5)
+            except threading.BrokenBarrierError:
+                pass  # the other request waits for the advisory lock: go on alone
+            return found
+
+    async with flow() as f:
+        first = await f.raised("volume", ("volume",))
+        second = await f.raised("volume", ("volume",))
+        monkeypatch.setattr(known_source, "FeedRepository", WaitingFeeds)
+        # return_exceptions: wait for both, so a failing request cannot leave the other's session open
+        responses = await asyncio.gather(*(
+            f.client.post(f"/api/consumer/requirements/{rid}/find-source", headers=RILEY) for rid in (first, second)),
+            return_exceptions=True)
+    assert not [r for r in responses if isinstance(r, BaseException)], responses
+    assert [r.status_code for r in responses] == [200, 200], [r.text for r in responses]
+    assert committed(own_schema, "SELECT count(*) FROM feeds WHERE source_code = 'syn_exchange_volumes'") == [(1,)]
+    assert committed(own_schema, "SELECT count(*) FROM source_choices") == [(2,)]
 
 
 # ---------------------------------------------------------------- fix 2
