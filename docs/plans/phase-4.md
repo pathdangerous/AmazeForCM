@@ -628,4 +628,59 @@ Notes only; nothing here is built in phase 4.
 
 ## 17. Results and deviations (recorded during implementation)
 
-Nothing yet. Filled at each checkpoint.
+### Tasks 0 to 3 (checkpoint 1)
+
+Tests: 1146 at the start, 1240 at checkpoint 1. All pass, none skipped, no warnings (`1240 passed in 91.71s`).
+
+| Task | RED | GREEN | Commit |
+|---|---|---|---|
+| 0 | | | `76653a0` |
+| 1 | `1 error in 0.36s` (no module) | `9 passed in 0.50s` | `ab580e0` |
+| 2 | `14 failed, 20 passed in 2.06s` (catalogue); `test_profiling.py` failed to collect | `50 passed in 2.29s` | `25c0689` |
+| 3 | `7 errors in 1.28s` (no repositories, no helper) | `1240 passed in 87.52s` (full suite) | `d3b7af5` |
+
+**Proofs that guards can fail** (each trigger commented out with the Edit tool, marked `# PROOF`, the tests run, then restored; `grep -rn PROOF --include=*.py` finds nothing; full suite after: `1240 passed in 91.71s`):
+
+| Trigger removed | Tests that failed |
+|---|---|
+| `trg_*_a_version` (the three tables) | `test_a_profile_version_must_be_the_next_one`, `test_a_signoff_version_must_be_the_next_one`, `test_a_registration_version_and_visibility` |
+| `trg_feed_profiles_b_fetch` | `test_a_profile_reads_a_fetched_file_of_its_own_feed` |
+| `trg_feed_signoffs_b_guard` | 5: candidate only, latest profile, the profile's summary, the signer, spec-only cannot meet. The pending-summary test still passed: `c_decision` refuses it on its own |
+| `trg_feed_signoffs_c_decision` (D1) | `test_an_approved_summary_needs_the_signoff_to_hold_the_recommended_outcome`, `test_a_rejected_summary_needs_the_signoff_to_hold_another_outcome`, `test_a_pending_summary_or_one_without_a_recommendation_cannot_be_signed_off` |
+| `trg_feed_registrations_b_guard` | `test_a_registration_needs_the_latest_accepting_signoff_on_the_latest_profile`, `test_a_rejecting_signoff_does_not_register` |
+| `trg_feeds_a_stage` | 4 in `test_db_onboarding_guards.py` (new feed, registered, rejected, other changes) and `test_repo_feeds.py::test_the_database_refuses_a_rejection_without_a_rejected_signoff` |
+| `trg_source_choices_f_feed_stage` | `test_a_rejected_feed_cannot_be_selected`, `test_a_candidate_rejected_release_needs_a_rejected_feed` |
+| `append_only` and `no_truncate` on the three tables | 9 in `test_append_only.py` (update, truncate, delete × 3) |
+
+**Two unexpected failures, with their root causes:**
+1. `test_a_pending_summary_...` expected `c_decision`'s message; `b_guard` answered first. Root cause: triggers of one event run in name order, and a pending summary has no approval row, so `b_guard`'s signer check refuses it before `c_decision` runs. Both refuse; the test now accepts either message, and the `b_guard` proof above shows `c_decision` alone refusing it.
+2. `test_0014_adds_the_third_release_reason_...` got `MultipleResultsFound`. Root cause: the query read `ck_source_choices_reason` from every schema, and the scratch schema and `public` both have it. The query now filters by `current_schema()`.
+3. A syntax error of my own in a test (removing a no-op `.replace()` also removed a closing parenthesis), found by `py_compile` and fixed.
+
+**Deviations from the plan:**
+1. **Task 3 was not test-first for the migration and domain models.** I wrote `0014`, `tables.py` and the domain models before their tests, then wrote every test before the repositories and the helper. So task 3's RED is a collection error, not a behaviour. The behaviour is proved by the guard removals above. Tasks 4 on are test-first.
+2. **`trg_feeds_a_stage` is an AFTER trigger.** A BEFORE trigger answers before the check constraints, and phase 1's `test_database_refuses_a_registered_feed_without_owner` asserts `ck_feeds_registered_has_owner` by name. AFTER keeps both guards, and the test is unchanged.
+3. **Trigger names and functions.** One shared function, `amaze_guard_feed_version()`, is `trg_<table>_a_version` on all three tables; the sign-off has `b_guard` and `c_decision` (planned: `a_guard`, `b_decision`); the registration has `a_version` and `b_guard`.
+4. **`FeedRepository.reject()` arrived in task 3**, not task 6: `test_list_to_fetch_skips_..._rejected_feeds` (phase 3) made a rejected feed with a raw `UPDATE`, which the stage guard now refuses.
+5. **`columns` is required on every catalogue entry.** The two catalogues written inside tests (`test_known_source.py`, `test_source_catalogue.py`) gained it.
+6. **A column carries no `declared_as`.** The profile stores the spec (with its `columns`), and each coverage item names its column. Assumption 9 said each column shows its declared field; the UI joins the two.
+7. **Models and functions beyond section 5.2:** `SourceSpec`, `ItemCoverage`, `spec_of()`, `spec_check()`. `coverage_of()` takes the catalogue `SourceEntry`; `NotATable` is the named error for a file DuckDB cannot read.
+8. **A `rejected` sign-off has no gaps**, only reasons (the plan said "at least one reason" only). The draft and the check constraint agree.
+9. **`registered_feed()` replaced 12 call sites; 4 calls stay.** The 4 are in `test_repo_feeds.py`, which tests `register()` itself, and now write the registration row first with `registration()`. The phase 3 count of 16 holds.
+10. **The `instrument_lifecycle.csv` fixture was adjusted after its test was written** (one date changed, so the issue dates have 7 distinct values, as the test states).
+
+**Files changed outside section 11:** none.
+
+**The profile of one committed sample file** (`syn_instrument_lifecycle`, a requirement for `issue_date`):
+
+```json
+{"file": {"row_count": 10, "engine": "duckdb 1.5.6", "columns": [
+   {"name": "instr_id", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 10},
+   {"name": "issued_on", "type": "DATE", "null_count": 2, "null_rate": 0.2, "distinct_count": 7},
+   {"name": "state", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 3}]},
+ "spec_check": [[], []],
+ "coverage": {"items": [{"item": "issue_date", "kind": "element", "declared": true, "column": "issued_on",
+                         "in_file": true, "null_rate": 0.2, "distinct_count": 7}], "missing": []}}
+```
+
+**Application database:** not migrated yet; `alembic current` is `0013`. `0014` reaches it at checkpoint 2, as planned.
