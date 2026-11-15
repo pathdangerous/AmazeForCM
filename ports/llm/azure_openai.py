@@ -4,6 +4,8 @@ Plan for the implementation: the openai package's AzureOpenAI client with AZURE_
 AZURE_OPENAI_API_VERSION; model = AZURE_OPENAI_DEPLOYMENT. Auth: DefaultAzureCredential token
 provider when AZURE_OPENAI_AUTH=entra, else AZURE_OPENAI_API_KEY. Use structured outputs against
 response_schema, store the raw response in the BlobStore and return its key as raw_ref.
+Errors: raise ports.llm.base.LLMUnavailable, never the SDK's own errors: "timeout" for a timeout,
+"rate_limit" for HTTP 429, "provider_error" for any other failed call. The API answers 503.
 """
 
 from __future__ import annotations

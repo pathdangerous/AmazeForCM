@@ -16,6 +16,7 @@ from apps.api.jobs import DailyFetch, register_daily_fetch
 from apps.api.routers import amaze, consumer, dev_identity, health
 from ports.config import get_settings
 from ports.identity import get_identity
+from ports.llm.base import LLMUnavailable
 from ports.scheduler import get_scheduler
 
 
@@ -47,6 +48,14 @@ app = FastAPI(title="Amaze for CM PoC API", version="0.0.0", lifespan=lifespan)
 async def adapter_not_implemented(request: Request, exc: NotImplementedError) -> JSONResponse:
     """A request reached an Azure stub adapter: report 503 (service unavailable), not a 500 crash."""
     return JSONResponse(status_code=503, content={"detail": str(exc) or "Not implemented"})
+
+
+@app.exception_handler(LLMUnavailable)
+async def model_unavailable(request: Request, exc: LLMUnavailable) -> JSONResponse:
+    """The model provider did not answer (timeout, rate limit, provider error): an expected case, 503 with
+    its reason. The step wrote nothing; the requester can try again (independent review, fix 4)."""
+    return JSONResponse(status_code=503, content={"detail": "The model did not answer. Try again later.",
+                                                  "reason": exc.reason})
 
 
 app.include_router(health.router)

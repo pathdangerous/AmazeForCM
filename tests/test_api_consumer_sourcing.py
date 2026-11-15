@@ -365,3 +365,31 @@ async def test_a_failed_model_call_writes_nothing_and_keeps_the_status(client, d
     assert response.status_code == 503
     assert (await page(client, requirement_id))["status"] == "defined"
     assert db_session.query(ProposalLogEntry).count() == 0
+
+
+@pytest.mark.parametrize("reason", ["timeout", "rate_limit", "provider_error"])
+@pytest.mark.parametrize("action", ["find-source", "assist"])
+async def test_a_provider_that_does_not_answer_gives_503_and_writes_nothing(client, db_session, reason, action):
+    """Independent review, fix 4: a timeout, a rate limit or a provider error is LLMUnavailable, an
+    expected case: 503 with its reason, mapped in one place (apps/api/main.py), never a bare 500."""
+    from apps.api.deps import get_llm_provider_port
+    from apps.api.main import app
+    from core.repositories.tables import ProposalLogEntry
+    from ports.llm.base import LLMUnavailable
+
+    class FailingMock:
+        name = "mock"
+
+        def complete(self, **kwargs):
+            raise LLMUnavailable(reason, "synthetic failure")
+
+    requirement_id = await raise_requirement(client, "open price", ["open_price"])
+    app.dependency_overrides[get_llm_provider_port] = lambda: FailingMock()
+    if action == "find-source":
+        response = await client.post(f"/api/consumer/requirements/{requirement_id}/find-source", headers=RILEY)
+    else:
+        response = await client.post("/api/consumer/search/assist", headers=RILEY, json={"q": "closing prices"})
+    assert response.status_code == 503, response.text
+    assert response.json()["reason"] == reason
+    assert (await page(client, requirement_id))["status"] == "defined"
+    assert db_session.query(ProposalLogEntry).count() == 0

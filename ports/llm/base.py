@@ -7,6 +7,20 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, SerializeAsAny
 
 
+LLMUnavailableReason = Literal["timeout", "rate_limit", "provider_error"]
+
+
+class LLMUnavailable(Exception):
+    """The provider did not answer: a timeout, a rate limit or a provider error. An expected case, not a
+    step outcome: nothing is written (no answer, so no proposal_log row) and the API answers 503, in one
+    place (apps/api/main.py). Every provider raises this, never its SDK's own errors (independent review,
+    fix 4)."""
+
+    def __init__(self, reason: LLMUnavailableReason, detail: str = ""):
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+        self.reason, self.detail = reason, detail
+
+
 class Message(BaseModel):
     role: Literal["system", "user", "assistant"]
     content: str
