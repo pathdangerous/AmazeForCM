@@ -137,6 +137,34 @@ async def test_a_stub_scheduler_gets_no_job(daily, monkeypatch):
     assert getattr(jobs_seen[0], "is_stub", False)
 
 
+# ---------------------------------------------------------------- review fix 4: the catalogue is read on each run
+
+
+def test_the_job_reads_the_catalogue_on_each_run(daily):
+    loads = []
+
+    def load():
+        loads.append(1)
+        return CATALOGUE
+
+    job = daily()
+    job.catalogue_loader = load
+    job.run()
+    job.run()
+    assert len(loads) == 2
+
+
+def test_building_the_job_does_not_read_the_catalogue(tmp_path):
+    """At start-up nothing is read, so an edited catalogue applies from the next run."""
+    from ports.config import Settings
+    from ports.identity.dev import DevIdentity
+
+    missing = tmp_path / "no_catalogue_yet.json"
+    job = DailyFetch.from_settings(Settings(_env_file=None, source_catalogue=missing), DevIdentity())
+    with pytest.raises(FileNotFoundError):
+        job.catalogue_loader()
+
+
 # ---------------------------------------------------------------- 3b: which feeds the job fetches (Q4, assumption 54)
 
 
