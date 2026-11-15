@@ -1199,3 +1199,5 @@ Each with its tests written first and shown failing:
 **Limits of the rule:** a call that fails before answering (the provider raises) has no output and no row, as before. If the caller's own commit fails after `Agent.run()` returned, the used call's row is lost with it; that cannot be caught inside `Agent.run()`.
 
 `alembic current`: `0011 (head)`.
+
+**Test time, with no dev server running** (the `dev.ps1` windows were already closed): two runs of 1107 tests took 102 s and 77 s; a third, with `--durations=15`, 140 s. Top 5: the setups of two `test_concurrency.py` tests (3.8 s each, building their schema), `test_0009_downgrade_restores_0008_when_there_are_no_3b_rows` (3.0 s), `test_upgrade_downgrade_upgrade` (2.9 s) and an HTTP connector failed-fetch test (2.8 s). No test dominates and the same suite varies by 60 s between runs, so the cause is outside any one test; not investigated further, and the test setup is unchanged.
