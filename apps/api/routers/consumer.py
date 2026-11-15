@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypeVar
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,23 +31,14 @@ from apps.api.deps import (
     get_source_discovery_agent,
     requester_user,
 )
+from apps.api.transactions import in_transaction as _in_transaction
+from apps.api.transactions import read as _read
 from core.domain.requirement import Requirement
 from core.repositories.consumer_requests import ConsumerRequestRepository
-from core.repositories.errors import (
-    ConsumerRequestNotFound,
-    NothingToRelease,
-    ProposalAlreadyDecided,
-    ProposalForAnotherRequirement,
-    ProposalNotFound,
-    RequirementAlreadyHasSource,
-    RequirementNotFound,
-    RequirementNotInStatus,
-    SourceAlreadyReleased,
-    UnknownGlossaryElement,
-)
+from core.repositories.errors import ConsumerRequestNotFound, RequirementNotFound, UnknownGlossaryElement
 from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
-from core.steps.errors import NotTheRequester, StepInputError
+from core.steps.errors import StepInputError
 from core.steps.known_source import KnownSourceResult, find_known_source
 from core.steps.release import Released, release_source
 from core.steps.request_data import RequestResult, request_data
@@ -59,7 +50,7 @@ from core.steps.s4_fetch import FetchResult, fetch_file, fetch_plan, record_fetc
 from core.steps.s17_discover import Assistance, Discovery, assist_input, discover, record_assist
 from ports.config import Settings
 from ports.connectors import SourceConnector
-from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
+from ports.connectors.catalogue import SourceCatalogue, SourceConditions
 from ports.identity import Identity, User
 from ports.notify import Notifier
 from ports.storage import BlobStore
@@ -202,8 +193,6 @@ Connectors = Annotated[Callable[[str], SourceConnector], Depends(get_connector_f
 ScopeAgent = Annotated[IntentAgent, Depends(get_intent_agent)]
 ListAgent = Annotated[SourceDiscoveryAgent, Depends(get_source_discovery_agent)]
 
-T = TypeVar("T")
-
 
 class FindSourceResponse(BaseModel):
     check: KnownSourceResult
@@ -224,40 +213,6 @@ def _own_requirement(session: Session, user: User, requirement_id: UUID) -> Requ
     if requirement is None or requirement.requester_id != user.id:
         raise HTTPException(status_code=404, detail="Requirement not found")
     return requirement
-
-
-CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyHasSource, NothingToRelease,
-             SourceAlreadyReleased, UnknownSource)  # UnknownSource: a listed source left the catalogue
-
-
-def _read(session: Session, work: Callable[[], T]) -> T:
-    """Read what a model call needs, then end the transaction (rollback: nothing was written), so the
-    connection goes back to the pool before the model is called (review fix 2). Errors as below."""
-    return _in_transaction(session, work, keep=False)
-
-
-def _in_transaction(session: Session, work: Callable[[], T], *, keep: bool = True) -> T:
-    """Run one step and commit it, or roll it back whole. Named errors become 409, 404 or 422; anything
-    else (a failed model call, a stub adapter) is rolled back and raised, never turned into an outcome."""
-    try:
-        result = work()
-        if keep:
-            session.commit()
-        else:
-            session.rollback()
-        return result
-    except CONFLICTS as exc:
-        session.rollback()
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    except (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound):
-        session.rollback()
-        raise HTTPException(status_code=404, detail="Not found") from None
-    except StepInputError as exc:
-        session.rollback()
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    except BaseException:
-        session.rollback()
-        raise
 
 
 def _first_fetch(session: Session, feed_id: UUID, *, identity: Identity, catalogue: SourceCatalogue,
