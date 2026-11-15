@@ -291,3 +291,56 @@ async def test_a_failed_request_leaves_nothing_behind(client, db_session):
 
     for table in ("requirement_elements", "requirement_terms"):
         assert db_session.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() == 0, table
+
+
+# ---- phase 3b: the DiscoveryAssistant beside the search (assumptions 38 to 40)
+
+
+@pytest.fixture
+def temporary_blobs(tmp_path):
+    from apps.api.deps import get_blob_store_port
+    from apps.api.main import app
+    from ports.storage.local import LocalBlobStore
+
+    blobs = LocalBlobStore(tmp_path / "blob")
+    app.dependency_overrides[get_blob_store_port] = lambda: blobs
+    return blobs
+
+
+async def assist(client, q, headers=RILEY, expect=200):
+    response = await client.post("/api/consumer/search/assist", headers=headers, json={"q": q})
+    assert response.status_code == expect, response.text
+    return response.json()
+
+
+def _log_rows(db_session):
+    from sqlalchemy import text
+
+    return db_session.execute(text("SELECT agent_name FROM proposal_log")).scalars().all()
+
+
+async def test_search_itself_makes_no_model_call(client, db_session):
+    found = await search(client, "closing prices")
+    assert found["match"]["terms"] == ["closing prices"]  # unmatched: the assistant's input
+    assert _log_rows(db_session) == []
+
+
+async def test_the_assistant_call_is_logged_without_a_proposal(client, db_session, temporary_blobs):
+    from sqlalchemy import text
+
+    body = await assist(client, "closing prices")
+    [suggestion] = body["suggestions"]
+    assert (suggestion["term"], suggestion["element_key"], suggestion["element_name"]) == (
+        "closing prices", "close_price", "Close price")
+    assert [h["product"]["code"] for h in suggestion["products"]]  # the demo products that hold close price
+    assert _log_rows(db_session) == ["DiscoveryAssistant"]
+    assert db_session.execute(text("SELECT count(*) FROM proposals")).scalar_one() == 0
+    log_input = db_session.execute(text("SELECT input_ref FROM proposal_log")).scalar_one()
+    assert temporary_blobs.exists(log_input)
+
+
+async def test_the_assistant_is_for_the_requester_only(client, temporary_blobs):
+    await assist(client, "closing prices", headers={"X-Dev-User": "dev-backend-team"}, expect=403)
+    await assist(client, "closing prices", headers={}, expect=401)
+    response = await client.post("/api/consumer/search/assist", headers=RILEY, json={"q": "x" * 501})
+    assert response.status_code == 422

@@ -171,6 +171,38 @@ class SourceDiscoveryOutput(BaseModel):
     ranked: list[RankedSource]
 
 
+class GlossaryRef(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    name: str
+    aliases: list[str]
+
+
+class AssistantInput(BaseModel):
+    """Step 17: what the DiscoveryAssistant sees."""
+
+    model_config = ConfigDict(frozen=True)
+
+    query: str
+    unmatched_terms: list[str]
+    glossary: list[GlossaryRef]
+
+
+class SuggestedElement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    term: str
+    element_key: str
+    reason: NonBlank
+
+
+class AssistantOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggestions: list[SuggestedElement]
+
+
 class RequirementScopeDraft(BaseModel):
     """S1: what the requester confirmed, exactly as the IntentAgent proposed it."""
 

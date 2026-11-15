@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.orm import Session
 
+from agents.discovery_assistant import DiscoveryAssistant
 from agents.intent import IntentAgent
 from agents.source_discovery import SourceDiscoveryAgent
 from apps.api.deps import (
@@ -22,6 +23,7 @@ from apps.api.deps import (
     get_blob_store_port,
     get_connector_factory,
     get_db_session,
+    get_discovery_assistant,
     get_identity_port,
     get_intent_agent,
     get_request_notifier,
@@ -51,7 +53,7 @@ from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, propos
 from core.steps.s2_sources import SourcesResult, list_sources
 from core.steps.s3_pick import ApprovalMissing, Declined, PickResult, SourcePicked, decline_source, pick_source
 from core.steps.s4_fetch import FetchResult, fetch_source
-from core.steps.s17_discover import Discovery, discover
+from core.steps.s17_discover import Assistance, Discovery, assist, discover
 from ports.config import Settings
 from ports.connectors import SourceConnector
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions
@@ -115,6 +117,27 @@ def _recipients(identity: Identity) -> dict[str, list[str]]:
 def search(session: DbSession, user: Requester, identity: IdentityPort,
            q: Annotated[str, Query(max_length=QUERY_LENGTH)] = "") -> Discovery:
     return discover(session, query=q, user_id=user.id, roles=list(user.roles), display_name=_display_name(identity))
+
+
+class AssistBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    q: Annotated[str, StringConstraints(max_length=QUERY_LENGTH)]
+
+
+@router.post("/search/assist", response_model=Assistance)
+def search_assist(body: AssistBody, session: DbSession, user: Requester, identity: IdentityPort,
+                  assistant: Annotated[DiscoveryAssistant, Depends(get_discovery_assistant)]) -> Assistance:
+    """The read-only DiscoveryAssistant beside the deterministic search. It changes nothing; its call is
+    logged in proposal_log (rule 4), so this endpoint commits that one row."""
+    try:
+        result = assist(session, query=body.q, agent=assistant, user_id=user.id, roles=list(user.roles),
+                        display_name=_display_name(identity))
+        session.commit()
+    except BaseException:
+        session.rollback()
+        raise
+    return result
 
 
 @router.post("/requests", response_model=RequestResult, status_code=201)

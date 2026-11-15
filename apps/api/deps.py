@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from agents.discovery_assistant import DiscoveryAssistant
 from agents.intent import IntentAgent
 from agents.source_discovery import SourceDiscoveryAgent
 from ports.config import Settings, get_settings
@@ -101,6 +102,11 @@ def get_llm_provider_port(settings: Annotated[Settings, Depends(get_app_settings
 def get_intent_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
                      blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> IntentAgent:
     return IntentAgent(provider=provider, blob_store=blob_store)
+
+
+def get_discovery_assistant(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                            blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> DiscoveryAssistant:
+    return DiscoveryAssistant(provider=provider, blob_store=blob_store)
 
 
 def get_source_discovery_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],

@@ -227,6 +227,16 @@ async def test_release_commits_the_released_row(own_schema, flow):
     assert _status(own_schema, f.id) == [("no_source_found",)]
 
 
+@pytest.mark.anyio
+async def test_assist_commits_the_log_row(own_schema, flow):
+    async with flow() as f:
+        body = await f.post("/api/consumer/search/assist", {"q": "closing prices"})
+        assert [s["element_key"] for s in body["suggestions"]] == ["close_price"]
+    assert committed(own_schema, "SELECT agent_name, prompt_id FROM proposal_log") == [
+        ("DiscoveryAssistant", "discovery_assistant")]
+    assert committed(own_schema, "SELECT count(*) FROM proposals") == [(0,)]
+
+
 def test_the_daily_job_commits_each_fetch(own_schema, tmp_path):
     sessions = get_sessionmaker(own_schema)  # the app's real session factory, on amaze_test
     with sessions() as session:

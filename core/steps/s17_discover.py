@@ -1,6 +1,7 @@
 """Step 17 Discover: search the products by element, domain or words of their name and description.
 
-Deterministic code, no model call (decision 1; the DiscoveryAssistant is phase 3). Read only.
+discover() is deterministic code, no model call (decision 1). Read only. Phase 3b adds assist(): an
+optional, separate call to the read-only DiscoveryAssistant, received as an argument (assumption 22).
 
 Outcomes, one per product (CLAUDE.md): found; not_entitled_visible (shown, with the route to access).
 Restricted products are shown to everyone. No hits is an empty list, not an outcome (decision 14).
@@ -16,11 +17,13 @@ Which products are hits (phase 2 plan, assumption 14):
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Protocol
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from core.domain.sourcing import AgentRun, AssistantInput, GlossaryRef
 from core.entitlement.decide import decide, route_to_access
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.grants import ProductGrantRepository
@@ -81,7 +84,13 @@ def discover(session: Session, *, query: str, user_id: str, roles: Sequence[str]
         if domains_only or wanted & set(product.element_keys) or term_words & text_words:
             products.append(product)
     products.sort(key=lambda p: (-len(matched & set(p.element_keys)), p.name, p.code))
+    return Discovery(match=found, hits=_hits(session, products, user_id, roles, display_name),
+                     element_names=element_names)
 
+
+def _hits(session: Session, products, user_id: str, roles: Sequence[str],
+          display_name: Callable[[str], str]) -> list[Found | NotEntitledVisible]:
+    """One typed result per product; entitlement is decided by core/entitlement, never by an agent."""
     events = ProductGrantRepository(session).events_by_product(p.id for p in products)
     hits: list[Found | NotEntitledVisible] = []
     for product in products:
@@ -94,4 +103,58 @@ def discover(session: Session, *, query: str, user_id: str, roles: Sequence[str]
         else:
             hits.append(NotEntitledVisible(product=summary,
                                            route=route_to_access(display_name(product.owner_id), product.name)))
-    return Discovery(match=found, hits=hits, element_names=element_names)
+    return hits
+
+
+# ---- phase 3b: the DiscoveryAssistant beside the search (phase 3 plan, assumptions 38 to 40)
+
+
+class RunsAgent(Protocol):
+    def run(self, session: Session, agent_input: BaseModel) -> AgentRun: ...
+
+
+class Suggestion(BaseModel):
+    """A glossary element the assistant thinks the requester means, shown unticked as "suggested"."""
+
+    model_config = ConfigDict(frozen=True)
+
+    term: str
+    element_key: str
+    element_name: str
+    reason: str
+    products: list[Hit]  # the products holding it, with entitlement as in the search
+
+
+class Assistance(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    log_id: UUID | None  # None when there was nothing to ask
+    suggestions: list[Suggestion]
+
+
+def assist(session: Session, *, query: str, agent: RunsAgent, user_id: str, roles: Sequence[str],
+           display_name: Callable[[str], str]) -> Assistance:
+    """Ask the DiscoveryAssistant about the words the deterministic search did not match. With none, no
+    model is called. Code keeps only suggestions for those words and for keys in the glossary, each
+    once. Writes nothing but the agent's proposal_log row; the caller commits it."""
+    glossary = GlossaryRepository(session).list_current()
+    unmatched = match(query, build_phrases(glossary)).terms if query.strip() else []
+    if not unmatched:
+        return Assistance(log_id=None, suggestions=[])
+    run = agent.run(session, AssistantInput(
+        query=query, unmatched_terms=unmatched,
+        glossary=[GlossaryRef(key=e.key, name=e.name, aliases=e.aliases) for e in glossary]))
+    names = {e.key: e.name for e in glossary}
+    products = ProductRepository(session).list_with_elements()
+    seen, suggestions = set(), []
+    for suggested in run.output.suggestions:
+        pair = (suggested.term, suggested.element_key)
+        if suggested.term not in unmatched or suggested.element_key not in names or pair in seen:
+            continue
+        seen.add(pair)
+        holding = sorted((p for p in products if suggested.element_key in p.element_keys),
+                         key=lambda p: (p.name, p.code))
+        suggestions.append(Suggestion(term=suggested.term, element_key=suggested.element_key,
+                                      element_name=names[suggested.element_key], reason=suggested.reason,
+                                      products=_hits(session, holding, user_id, roles, display_name)))
+    return Assistance(log_id=run.log_id, suggestions=suggestions)
