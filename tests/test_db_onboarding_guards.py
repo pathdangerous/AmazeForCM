@@ -211,12 +211,26 @@ def test_a_rejected_summary_needs_the_signoff_to_hold_another_outcome(world):
     world.signoff(profile, proposal, outcome="meets")
 
 
-def test_a_pending_summary_or_one_without_a_recommendation_cannot_be_signed_off(world, make_proposal):
+def test_a_pending_summary_has_no_signer(world):
+    """b_guard: nobody decided a pending summary, so no one can be the signer."""
     profile = world.profile()
-    # Both guards refuse a pending summary: b_guard first (nobody decided it, so no signer), and c_decision on
-    # its own (shown when b_guard is removed, phase 4 plan section 17).
-    refused(world.s, "the person who decided|a sign-off needs a decided summary", World.SIGNOFF,
-            **world.signoff_params(profile, world.proposal(profile, decision=None)))
+    refused(world.s, "the sign-off must name the person who decided proposal .* as backend_team, not dev-backend-team",
+            World.SIGNOFF, **world.signoff_params(profile, world.proposal(profile, decision=None)))
+
+
+def test_a_pending_summary_is_refused_by_the_decision_guard(world):
+    """c_decision on its own: an approvals row by the signer exists (so b_guard passes) while the proposal
+    stays pending, which only raw SQL can make."""
+    profile = world.profile()
+    proposal = world.proposal(profile, decision=None)
+    world.s.execute(text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+                         "VALUES (:p, 1, 'backend_team', :by, 'approved')"), {"p": proposal, "by": BACKEND})
+    refused(world.s, "proposal .* is pending: a sign-off needs a decided summary", World.SIGNOFF,
+            **world.signoff_params(profile, proposal))
+
+
+def test_a_summary_without_a_recommendation_cannot_be_signed_off(world, make_proposal):
+    profile = world.profile()
     bare = make_proposal(kind="profile_summary", roles=("backend_team",), feed_id=world.feed,
                          payload={"profile_id": str(profile)})
     ProposalRepository(world.s).record_decision(bare.id, user=dev_user_for("backend_team"), decision="approved")
