@@ -61,6 +61,12 @@ After a raise, Amaze looks for a known source in the synthetic catalogue (`fixtu
 in the feed registry, and the requester sees "Your data is getting onboarded; we will notify you once
 it is ready." `accrued interest` finds a known source whose file is missing on purpose: it waits, and
 the daily fetch (06:00 UTC, registered at every API start) tries again.
+`open price` has no known source: Amaze proposes where to look (confirm or reject it), then lists the
+fitting sources with their conditions. Tick "I accept these conditions" and Pick: the file is fetched
+and the requirement is onboarding. Picking "Backup end-of-day prices" (no file, on purpose) leaves it
+waiting; "Choose another source" releases it and you pick again. `esg score` (tick the term) finds an
+open-data source; `yield to maturity` with the purpose "internal desk data" finds none. Search
+`closing prices` and press "Ask the assistant" for a suggested glossary element.
 `/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
 Azure stub.
 
@@ -68,7 +74,7 @@ Check:
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0008 (head)
+.\.venv\Scripts\python -m alembic current     # expect: 0009 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```
@@ -79,6 +85,6 @@ defaults; the Azure ones are stubs until the move and raise `NotImplementedError
 The database protects its own rules: append-only tables (`proposal_log`, `approvals`,
 `glossary_elements`, `mappings`, `rules`, and from phase 2 `product_elements`, `product_grants`,
 `requirement_elements`, `requirement_terms`, `consumer_requests`, and from phase 3
-`source_choices`, `source_fetches`) refuse UPDATE, DELETE and
+`source_choices`, `source_fetches`, `requirement_scopes`) refuse UPDATE, DELETE and
 TRUNCATE, and configuration rows are accepted only for an approved proposal. Correct a mistake by
 adding a new version. Requests made in the marketplace therefore stay in the database for good.

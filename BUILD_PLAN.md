@@ -41,6 +41,7 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - `HttpConnector` closes its connections: it gets `close()` and works in a `with` block; a test asserts the connection is closed after a fetch, including a failed one.
 - Local scheduler jobs are kept in memory today: store them in PostgreSQL or re-register them from the database at start-up (phase 0 plan, risk 1).
 - DiscoveryAssistant (step 17): search by element, domain or purpose, on `agents/base.Agent.run()`, beside phase 2's deterministic search (moved from phase 2; phase 2 plan, section 17).
+- A selected source that stays down is released, by the requester or after `SOURCE_DOWN_RELEASE_DAYS` failed days in a row, and the requester picks again; every choice and release is a versioned `source_choices` row. The daily job fetches registered feeds always, and candidate feeds only while a requirement selects them (phase 3 plan, assumptions 49 to 55).
 - **Done when:** picking a source produces a fetched file handed to step 02.
 
 ## Phase 4 — Profile, sign-off, register (02–04)

@@ -50,16 +50,20 @@ core/
                           (result.py: a Pydantic union discriminated on `outcome`). Also matching.py (request
                           text to glossary elements), routing.py (routing checks), request_data.py (one
                           "Request this data", end to end) and errors.py (refused step input). Phase 3:
-                          known_source.py (Known source?), s4_fetch.py (S4) and requirement_page.py (what the
-                          requester sees). A step that needs an agent receives it as an argument, so
-                          core/steps never imports agents
+                          known_source.py (Known source?), s1_scope.py, s2_sources.py, s3_pick.py, s4_fetch.py
+                          (S1-S4), release.py (release a selected source) and requirement_page.py (what the
+                          requester sees, and every requester message). A step that needs an agent receives
+                          it as an argument, so core/steps never imports agents
   engine/                 Deterministic run engine (step 13). No AI imports allowed here.
   entitlement/            Rules-based entitlement decisions (decide.py). No AI imports allowed here.
 agents/
-  base.py                 Agent base class: inputs, output schema, autonomy level, proposal creation
-  registry.py             Agent registry and prompt versions
+  base.py                 Agent base class. Agent.run() is the only path to the model: it calls the
+                          LLMProvider, stores the input, logs the call, then creates the proposals. A
+                          subclass that defines run() is refused when the class is created
+  registry.py             Agent registry, current prompt versions and a hash of every prompt file
+  prompt_loader.py        Loads and renders prompts/<prompt_id>.<version>.yaml
   <agent_name>.py         One file per agent
-  prompts/                Versioned prompt templates (YAML)
+  prompts/                Versioned prompt templates (YAML). Never edit one: save a new version
 ports/                    Ports (interfaces) and adapters — see Placeholders. Named ports/, not
                           platform/, because a package named platform hides Python's own platform module.
                           ports/__init__.py stays empty; each port's factory lives in its own package.
@@ -173,7 +177,7 @@ Order of precedence when they disagree:
 ## How to work in this repo
 
 - Follow the Superpowers flow for each phase: brainstorm → plan in `docs/plans/` → tests for the step's negative outcomes first → implement → review.
-- Keep `core/engine/`, `core/entitlement/`, `core/domain/`, `core/repositories/` and `core/steps/` free of `agents` and `ports.llm` imports; a test enforces this. (Phase 3 decides how an agent-backed step fits; phase 2 plan, section 16.)
+- Keep `core/engine/`, `core/entitlement/`, `core/domain/`, `core/repositories/` and `core/steps/` free of `agents` and `ports.llm` imports; a test enforces this. An agent-backed step receives its agent as an argument; the API builds the agent (phase 3 plan, assumption 22). No file outside `agents/base.py` calls `.complete(`; a test enforces this too.
 - Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. Never work around these triggers; add a new version instead.
 - Edit files only with the file tools (Read, Edit, Write). Never rewrite or patch files through PowerShell, sed or other shell commands.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.
