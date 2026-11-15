@@ -53,7 +53,7 @@ from core.steps.release import Released, release_source
 from core.steps.request_data import RequestResult, request_data
 from core.steps.requirement_page import RequirementPage, approval_missing_message, requirement_page
 from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, record_scope, scope_input
-from core.steps.s2_sources import SourcesResult, record_sources, sources_input
+from core.steps.s2_sources import NoFit, SourcesResult, record_sources, sources_input
 from core.steps.s3_pick import ApprovalMissing, Declined, PickResult, SourcePicked, decline_source, pick_source
 from core.steps.s4_fetch import FetchResult, fetch_file, fetch_plan, record_fetch
 from core.steps.s17_discover import Assistance, Discovery, assist_input, discover, record_assist
@@ -208,7 +208,9 @@ T = TypeVar("T")
 class FindSourceResponse(BaseModel):
     check: KnownSourceResult
     fetch: FetchResult | None
-    scope: ScopeProposed | None  # 3b: with no known source, S1's proposal
+    # 3b: with no known source, S1's typed result: the proposed scope, or no_fit (no channel to search).
+    # None for a known source (independent review, fix 6).
+    scope: ScopeProposed | NoFit | None
     message: str
     requirement: RequirementPage
 
@@ -295,10 +297,9 @@ def find_source(requirement_id: UUID, session: DbSession, user: Requester, ident
     scope = None
     if found.feed is None:  # no_known_source wrote nothing: read S1's input, then the model call, then write
         agent_input = _read(session, lambda: scope_input(session, requirement_id=requirement_id, catalogue=catalogue))
-        proposed = _in_transaction(session, lambda: record_scope(
+        scope = _in_transaction(session, lambda: record_scope(
             session, agent=intent_agent, agent_input=agent_input, notifier=notifier,
             backend_team=_recipients(identity)["backend_team"]))
-        scope = proposed if isinstance(proposed, ScopeProposed) else None  # None: no_fit, no channel
     fetch = None
     if found.feed is not None:
         fetch = _first_fetch(session, found.feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
@@ -332,7 +333,7 @@ class DeclineBody(NoteBody):
 
 
 class ScopeResponse(BaseModel):
-    scope: ScopeProposed | None  # None: the proposed scope named no channel, so no_fit (review fix 5)
+    result: ScopeProposed | NoFit  # no_fit: the proposed scope named no channel (review fix 5; independent review, fix 6)
     message: str
     requirement: RequirementPage
 
@@ -376,12 +377,11 @@ def ask_for_scope(requirement_id: UUID, body: NoteBody, session: DbSession, user
     _own_requirement(session, user, requirement_id)
     agent_input = _read(session, lambda: scope_input(session, requirement_id=requirement_id, catalogue=catalogue,
                                                      note=body.note, again=True))
-    proposed = _in_transaction(session, lambda: record_scope(
+    result = _in_transaction(session, lambda: record_scope(
         session, agent=intent_agent, agent_input=agent_input, again=True, notifier=notifier,
         backend_team=_recipients(identity)["backend_team"]))
     page = _page(session, requirement_id, catalogue, settings)
-    scope = proposed if isinstance(proposed, ScopeProposed) else None
-    return ScopeResponse(scope=scope, message=page.message, requirement=page)
+    return ScopeResponse(result=result, message=page.message, requirement=page)
 
 
 @router.post("/requirements/{requirement_id}/scope/decision", response_model=ScopeDecisionResponse)

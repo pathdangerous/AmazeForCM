@@ -122,7 +122,8 @@ type FetchOutcome = { outcome: "fetched" | "source_down" } | null;
 export type FindSourceResponse = {
   check: { outcome: "known_source" | "no_known_source"; reason?: string };
   fetch: FetchOutcome;
-  scope: ScopeProposed | null;
+  // S1's typed result with no known source: the proposed scope, or no_fit (no channel to search)
+  scope: ScopeProposed | { outcome: "no_fit"; reason: string } | null;
   message: string;
   requirement: RequirementPage;
 };

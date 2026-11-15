@@ -244,9 +244,33 @@ async def test_row_h_a_rejected_scope_and_asking_again_with_a_note(client):
     assert rejected["message"] == SCOPE_NOT_CONFIRMED
     assert (await page(client, requirement_id))["next_action"] == "ask_for_scope"
     again = await post(client, requirement_id, "scope", {"note": "It is internal desk data"})
-    assert again["scope"]["visibility"] == "private"  # the note holds a private word
-    assert again["scope"]["proposal_id"] != first["scope"]["proposal_id"]
+    assert again["result"]["visibility"] == "private"  # the note holds a private word
+    assert again["result"]["proposal_id"] != first["scope"]["proposal_id"]
     assert (await page(client, requirement_id))["status"] == "awaiting_scope_confirmation"
+
+
+async def test_find_source_and_scope_return_s1s_no_fit(client):
+    """Independent review, fix 6: S1's typed result is returned, no_fit included (a proposed scope with no
+    channel to search, review fix 5). A catalogue with no private source makes a private scope empty."""
+    from apps.api.deps import get_source_catalogue
+    from apps.api.main import app
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+
+    public_only = SourceCatalogue([e for e in SourceCatalogue.load(DEFAULT_CATALOGUE).entries
+                                   if e.visibility == "public"])
+    app.dependency_overrides[get_source_catalogue] = lambda: public_only
+
+    internal = await raise_requirement(client, "yield to maturity", ["yield_to_maturity"], purpose="internal desk data")
+    found = await find_source(client, internal)
+    assert (found["scope"]["outcome"], found["scope"]["reason"]) == ("no_fit", "no_channel_in_scope")
+    assert found["message"] == NO_FIT
+
+    asked = await raise_requirement(client, "yield to maturity", ["yield_to_maturity"])
+    assert (await find_source(client, asked))["scope"]["visibility"] == "public"
+    await post(client, asked, "scope/decision", {"decision": "rejected", "note": "internal"})
+    again = await post(client, asked, "scope", {"note": "It is internal desk data"})
+    assert (again["result"]["outcome"], again["result"]["reason"]) == ("no_fit", "no_channel_in_scope")
+    assert (await page(client, asked))["status"] == "no_source_found"
 
 
 async def test_row_j_release_a_source_that_did_not_answer_and_pick_again(client):

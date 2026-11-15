@@ -17,7 +17,7 @@ The agent is an argument (assumption 22): this module never imports agents. It f
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Annotated, Literal, Protocol
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,6 +35,9 @@ from core.steps.result import StepResult
 from ports.connectors.catalogue import SourceCatalogue
 from ports.identity.base import User
 from ports.notify.base import Notifier
+
+if TYPE_CHECKING:  # s2_sources imports this module
+    from core.steps.s2_sources import NoFit
 
 FIRST_FROM = ("defined",)
 AGAIN_FROM = ("scope_not_confirmed", "no_source_found")
@@ -99,7 +102,7 @@ def scope_input(session: Session, *, requirement_id: UUID, catalogue: SourceCata
 
 
 def record_scope(session: Session, *, agent: RunsAgent, agent_input: IntentInput, again: bool = False,
-                 notifier: Notifier | None = None, backend_team: Sequence[str] = ()):
+                 notifier: Notifier | None = None, backend_team: Sequence[str] = ()) -> ScopeProposed | NoFit:
     """The model call (its call row committed at once by Agent.run()), then, with the requirement locked
     and its status checked again, the scope proposal and the move to awaiting_scope_confirmation. A
     status change during the call gives RequirementNotInStatus: the call gets a discard row, and nothing
