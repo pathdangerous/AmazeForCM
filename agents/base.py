@@ -5,7 +5,9 @@ A subclass declares what it is and how its output becomes proposal drafts:
     name, prompt_id, autonomy (A1 | A2), approver_roles (an ordered tuple of roles, each once; () for a
     read-only agent), input_schema, output_schema, and optionally to_proposals(agent_input, output).
 
-run() is defined here only; a subclass that defines run() is refused when the class is created. It does,
+run() is defined here only. A subclass may override only to_proposals: one that defines run() or any
+other method of this class (_log_call, _own_transaction, __init__ ...) is refused when the class is
+created (independent review, fix 9). It may add helpers of its own. run() does,
 in this order:
     1. render the prompt (agents/prompt_loader.py) with the input;
     2. call LLMProvider.complete();
@@ -27,6 +29,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
+from types import FunctionType
 from typing import Any, ClassVar
 from uuid import UUID
 
@@ -75,8 +78,11 @@ class Agent:
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        if "run" in cls.__dict__:
-            raise TypeError(f"{cls.__name__} defines run(): Agent.run() is the only path to the model")
+        overridden = sorted(name for name in cls.__dict__ if name in _SEALED)
+        if overridden:  # independent review, fix 9: _log_call or _own_transaction would make an unlogged call
+            name = "run" if "run" in overridden else overridden[0]
+            raise TypeError(f"{cls.__name__} overrides {name}(): a subclass may override only to_proposals; "
+                            "Agent.run() is the only path to the model")
         missing = [attr for attr in _DECLARED if not hasattr(cls, attr)]
         if missing:
             raise TypeError(f"{cls.__name__} must declare {', '.join(missing)}")
@@ -176,6 +182,12 @@ class Agent:
             outcome = work(ProposalLog(own))
             own.commit()
             return outcome
+
+
+# Every method of the base class but to_proposals: a subclass that defines one is refused at creation.
+_SEALED = frozenset(name for name, value in vars(Agent).items()
+                    if isinstance(value, (FunctionType, staticmethod, classmethod, property))
+                    and name != "to_proposals")
 
 
 def _reason(exc: Exception) -> str:

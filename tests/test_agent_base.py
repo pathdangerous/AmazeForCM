@@ -120,6 +120,22 @@ def test_a_subclass_that_defines_run_is_refused_at_class_creation():
                 return None
 
 
+@pytest.mark.parametrize("method", ["_log_call", "_own_transaction", "__init__", "__init_subclass__"])
+def test_a_subclass_may_override_only_to_proposals(method):
+    """Independent review, fix 9: overriding _log_call or _own_transaction would make an unlogged call,
+    and __init__ could swap the provider. Any override of a base method but to_proposals is refused."""
+    with pytest.raises(TypeError, match=f"overrides {method}"):
+        type("Sneaky", (EchoAgent,), {method: lambda *a, **k: None, "__module__": __name__})
+
+
+def test_a_subclass_may_add_its_own_helpers():
+    class Helpful(EchoAgent):
+        def _items(self, output):
+            return output.items
+
+    assert Helpful.to_proposals is EchoAgent.to_proposals
+
+
 def test_a_subclass_must_declare_every_attribute():
     with pytest.raises(TypeError, match="prompt_id"):
         class Incomplete(Agent):  # noqa: F841
