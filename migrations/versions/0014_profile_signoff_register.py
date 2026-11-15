@@ -169,7 +169,13 @@ DECLARE
     s_profile uuid;
     latest_signoff uuid;
     latest_profile uuid;
+    f_stage text;
 BEGIN
+    SELECT stage INTO f_stage FROM feeds WHERE id = NEW.feed_id;
+    IF f_stage IS DISTINCT FROM 'candidate' THEN
+        RAISE EXCEPTION 'feed % is %: only a candidate feed is registered', NEW.feed_id, f_stage
+            USING ERRCODE = 'check_violation';
+    END IF;
     SELECT feed_id, outcome, profile_id INTO s_feed, s_outcome, s_profile FROM feed_signoffs WHERE id = NEW.signoff_id;
     SELECT id INTO latest_signoff FROM feed_signoffs WHERE feed_id = NEW.feed_id ORDER BY version DESC LIMIT 1;
     SELECT id INTO latest_profile FROM feed_profiles WHERE feed_id = NEW.feed_id ORDER BY version DESC LIMIT 1;

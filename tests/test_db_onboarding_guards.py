@@ -263,6 +263,14 @@ def test_a_rejecting_signoff_does_not_register(world):
     refused(world.s, "does not accept the feed", World.REGISTRATION, **world.registration_params(rejecting))
 
 
+def test_a_registered_feed_gets_no_second_registration(world):
+    registered_feed(world.s, world.feed)
+    signoff = world.s.scalar(text("SELECT id FROM feed_signoffs WHERE feed_id = :f ORDER BY version DESC LIMIT 1"),
+                             {"f": world.feed})
+    refused(world.s, "feed .* is registered: only a candidate feed is registered", World.REGISTRATION,
+            **world.registration_params(signoff, owner="dev-checker"))
+
+
 def test_a_registration_version_and_visibility(world):
     _, signoff = world.accepted()
     refused(world.s, "is not the next version", World.REGISTRATION, **world.registration_params(signoff, version=2))
