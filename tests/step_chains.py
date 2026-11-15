@@ -57,6 +57,16 @@ def assist(session: Session, *, query: str, agent: RunsAgent, user_id: str, role
                          display_name=display_name)
 
 
+def profile_feed(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue, blob_store: BlobStore,
+                 profiled_by: str):
+    """Step 02: read the plan, end the transaction, run DuckDB with no session, then lock and write."""
+    from core.steps.s02_profile import profile_plan, record_profile, run_profile
+
+    plan = profile_plan(session, feed_id=feed_id, catalogue=catalogue)
+    end_read(session)
+    return record_profile(session, run_profile(plan, blob_store=blob_store), profiled_by=profiled_by)
+
+
 def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
                  blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
                  today: date | None = None, release_after_days: int | None = None,

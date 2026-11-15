@@ -82,6 +82,10 @@ class FeedHasNoSource(RepositoryError):
     """The feed has no connector, so its source cannot be fetched."""
 
 
+class FeedHasNoFile(RepositoryError):
+    """The feed has no fetched file yet, so there is nothing to profile (step 02; phase 4 plan, assumption 13)."""
+
+
 class RequirementNotInStatus(RepositoryError):
     """The requirement's status cannot move to the one asked for (REQUIREMENT_TRANSITIONS)."""
 

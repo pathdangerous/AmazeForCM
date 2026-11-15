@@ -343,3 +343,90 @@ async def test_a_notifier_failure_after_the_call_leaves_its_call_row(own_schema,
         ("IntentAgent",), ("SourceDiscoveryAgent",)]
     assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(0,)]
     assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("scope_confirmed",)]
+
+
+# ---------------------------------------------------------------- phase 4: steps 02 to 04 on real sessions
+
+
+def _lifecycle_with_a_file(engine, blobs):
+    """A candidate feed of syn_instrument_lifecycle with one fetched file, committed; returns its id."""
+    import uuid
+
+    from core.repositories.feeds import FeedRepository
+    from core.repositories.source_fetches import SourceFetchRepository
+    from ports.config import REPO_ROOT
+    from ports.db import get_sessionmaker
+
+    with get_sessionmaker(engine)() as session:
+        feed = FeedRepository(session).create_candidate(
+            code="syn_instrument_lifecycle", name="Instrument lifecycle", source_code="syn_instrument_lifecycle",
+            connector="local_file", source_ref="files/instrument_lifecycle.csv")
+        key = f"raw/{feed.code}/2026-11-15/{uuid.uuid4()}/instrument_lifecycle.csv"
+        content = (REPO_ROOT / "fixtures" / "sources" / "files" / "instrument_lifecycle.csv").read_bytes()
+        blobs.put(key, content)
+        SourceFetchRepository(session).record(feed_id=feed.id, outcome="fetched", blob_ref=key, size_bytes=len(content))
+        session.commit()
+        return feed.id
+
+
+class _WatchedBlobs:
+    """The local blob store, recording the pool on every get() and optionally waiting at a barrier."""
+
+    def __init__(self, inner, engine, barrier=None):
+        self.inner, self.engine, self.barrier, self.checked_out = inner, engine, barrier, []
+        self.name = "watched"
+
+    def put(self, key, data):
+        return self.inner.put(key, data)
+
+    def get(self, key):
+        self.checked_out.append(self.engine.pool.checkedout())
+        if self.barrier is not None:
+            self.barrier.wait(timeout=10)
+        return self.inner.get(key)
+
+
+def _profile_on_its_own_session(engine, feed_id, blobs, errors, results):
+    from core.steps.s02_profile import profile_plan, record_profile, run_profile
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.db import get_sessionmaker
+
+    try:
+        with get_sessionmaker(engine)() as session:
+            plan = profile_plan(session, feed_id=feed_id, catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE))
+            session.rollback()  # the read ends: no connection during DuckDB
+            attempt = run_profile(plan, blob_store=blobs)
+            results.append(record_profile(session, attempt, profiled_by="dev-backend-team").profile.version)
+            session.commit()
+    except Exception as exc:  # noqa: BLE001 (reported by the test)
+        errors.append(exc)
+
+
+def test_no_connection_is_held_during_a_profiling_run(own_schema, tmp_path):
+    from ports.storage.local import LocalBlobStore
+
+    blobs = _WatchedBlobs(LocalBlobStore(tmp_path / "blob"), own_schema)
+    feed_id = _lifecycle_with_a_file(own_schema, blobs)
+    errors, results = [], []
+    _profile_on_its_own_session(own_schema, feed_id, blobs, errors, results)
+    assert (errors, results, blobs.checked_out) == ([], [1], [0])
+
+
+def test_two_profiles_of_one_feed_at_once_take_the_next_versions(own_schema, tmp_path):
+    """Both runs meet at a barrier inside BlobStore.get(), then record at once. record_profile locks the feed
+    row before it reads the next version, so they write versions 1 and 2: two successes, never a unique
+    violation. (Two profiles are both legitimate, so neither is a 409.)"""
+    from ports.storage.local import LocalBlobStore
+
+    blobs = _WatchedBlobs(LocalBlobStore(tmp_path / "blob"), own_schema, barrier=threading.Barrier(2))
+    feed_id = _lifecycle_with_a_file(own_schema, blobs.inner)
+    errors, results = [], []
+    threads = [threading.Thread(target=_profile_on_its_own_session, args=(own_schema, feed_id, blobs, errors, results))
+               for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert errors == []
+    assert sorted(results) == [1, 2]
+    assert committed(own_schema, "SELECT version FROM feed_profiles ORDER BY version") == [(1,), (2,)]

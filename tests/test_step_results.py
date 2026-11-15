@@ -20,6 +20,12 @@ def claude_md_outcomes(label: str) -> list[str]:
     return re.findall(r"`([a-z_]+)`", lines[0])
 
 
+def test_step_02_outcomes_are_claude_mds():
+    from core.steps.s02_profile import ProfileResult
+
+    assert union_outcomes(ProfileResult) == claude_md_outcomes("02 Profile") == ["profiled", "spec_only_low_confidence"]
+
+
 def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("17 Discover") == ["found", "not_entitled_visible"]
     assert claude_md_outcomes("Routing checks") == ["reuse", "compose", "create_product", "raise_requirement"]
