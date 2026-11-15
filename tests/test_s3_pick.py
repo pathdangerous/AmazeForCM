@@ -91,7 +91,7 @@ def test_source_picked_when_the_requester_accepts_the_conditions(db_session, lis
     assert count(db_session, SourceFetchRow) == 0  # the first fetch is its own transaction (the API's)
 
 
-@pytest.mark.parametrize("accepted, reason", [(None, "not_accepted"), (BACKUP, "conditions_changed")])
+@pytest.mark.parametrize("accepted, reason", [(None, "not_accepted"), (BACKUP, "conditions_differ")])
 def test_approval_missing_when_the_conditions_are_not_accepted_and_nothing_is_fetched(db_session, listed,
                                                                                        accepted, reason):
     """None: no acceptance at all. BACKUP: another source's conditions, not the ones in force for VENDOR."""
@@ -115,7 +115,7 @@ def test_approval_missing_when_the_conditions_changed_since_the_list(db_session,
         for e in CATALOGUE.entries])
     before = snapshot(db_session)
     result = pick(db_session, req, proposals[VENDOR], shown, catalogue=changed)
-    assert isinstance(result, ApprovalMissing) and result.reason == "conditions_changed"
+    assert isinstance(result, ApprovalMissing) and result.reason == "conditions_differ"
     assert result.conditions == changed.get(VENDOR).conditions  # the ones in force, to accept again
     assert snapshot(db_session) == before
     assert isinstance(pick(db_session, req, proposals[VENDOR], result.conditions, catalogue=changed), SourcePicked)

@@ -5,7 +5,7 @@ Outcomes (CLAUDE.md): source_picked; approval_missing.
 
 - The pick carries accepted_conditions: the conditions the requester was shown. They must equal the
   catalogue's conditions for that source now. Missing: approval_missing (not_accepted); different:
-  approval_missing (conditions_changed), with the conditions in force to accept. Nothing is written
+  approval_missing (conditions_differ), with the conditions in force to accept. Nothing is written
   then: no approval, no feed, no choice, no fetch; the status stays awaiting_source_choice.
 - Accepted: the requester's approval of the source_list proposal (the only approval of a source), the
   source's candidate feed (one per source), the next source_choices version with the accepted
@@ -48,7 +48,7 @@ class ApprovalMissing(StepResult):
     outcome: Literal["approval_missing"] = "approval_missing"
     source: SourceSummary
     conditions: SourceConditions  # the conditions in force: accept these to continue
-    reason: Literal["not_accepted", "conditions_changed"]  # changed: what was accepted is not what is in force
+    reason: Literal["not_accepted", "conditions_differ"]  # differ: what was accepted is not what is in force
 
 
 PickResult = Annotated[SourcePicked | ApprovalMissing, Field(discriminator="outcome")]
@@ -87,7 +87,7 @@ def pick_source(session: Session, *, requirement_id: UUID, user: User, proposal_
     if accepted_conditions is None:
         return ApprovalMissing(source=source, conditions=entry.conditions, reason="not_accepted")
     if accepted_conditions != entry.conditions:
-        return ApprovalMissing(source=source, conditions=entry.conditions, reason="conditions_changed")
+        return ApprovalMissing(source=source, conditions=entry.conditions, reason="conditions_differ")
 
     ProposalRepository(session).record_decision(proposal.id, user=user, decision="approved")
     feed = feed_for(session, entry=entry, requirement_id=requirement_id)

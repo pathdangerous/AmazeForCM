@@ -397,7 +397,7 @@ class SourcePicked(StepResult):        # outcome "source_picked"
 class ApprovalMissing(StepResult):     # outcome "approval_missing"
     source: SourceSummary
     conditions: SourceConditions       # the conditions in force: licence, permitted use, redistribution, external approvals
-    reason: Literal["not_accepted", "conditions_changed"]
+    reason: Literal["not_accepted", "conditions_differ"]  # renamed from conditions_changed after the review
 
 # core/steps/release.py  (no outcome name: a plain model, like phase 2's request result)
 class Released(BaseModel):
@@ -1064,7 +1064,7 @@ Also `test_a_new_selection_wakes_the_feed` and `test_repo_feeds.py::test_list_to
 | Guard removed | Tests that failed |
 |---|---|
 | S2: dropping a source the agent invents | `test_a_source_the_agent_invents_is_dropped`, `test_an_invented_or_repeated_source_is_dropped` |
-| S3: accepted conditions must equal those in force | the `conditions_changed` case, `test_approval_missing_when_the_conditions_changed_since_the_list`, `test_picking_again_needs_a_new_acceptance` |
+| S3: accepted conditions must equal those in force | the `conditions_differ` case (then named `conditions_changed`), `test_approval_missing_when_the_conditions_changed_since_the_list`, `test_picking_again_needs_a_new_acceptance` |
 | `list_to_fetch()`: "currently selected" | `test_the_job_skips_a_candidate_feed_that_no_requirement_selects`, `test_a_new_selection_wakes_the_feed`, `test_list_to_fetch_leaves_out_a_candidate_feed_no_requirement_selects` |
 | N-day rule: only `source_selected` | `test_an_onboarding_requirement_is_never_released` |
 | N-day rule: counting from the selection | `test_days_before_the_selection_do_not_count` |
@@ -1090,7 +1090,7 @@ Also `test_a_new_selection_wakes_the_feed` and `test_repo_feeds.py::test_list_to
 1. **Each candidate the S2 agent sees carries its catalogue conditions and code-computed coverage;** the agent copies them from its input into each proposal. The output schema forbids extra fields, so a model cannot set them.
 2. **With no source in scope, S2 calls no model** (`no_fit`, `nothing_in_scope`, no log row).
 3. **Listed sources show the catalogue's conditions now** (the ones a pick must accept), not the copy in the proposal.
-4. **`approval_missing` with reason `conditions_changed` also covers an acceptance of other conditions**, not only a change since the list.
+4. **`approval_missing` with reason `conditions_differ` (named `conditions_changed` until the review) also covers an acceptance of other conditions**, not only a change since the list.
 5. **`Released` holds `source_code` and `source_name`** instead of a `SourceSummary`, so it survives a source leaving the catalogue; it also names the requirement.
 6. **`fetch_source` takes `release_after_days` and `catalogue`;** None means no rule, so 3a's callers are unchanged. `DailyFetch` gets both from the settings.
 7. **`FeedRepository.list_with_source()` is removed** for `list_to_fetch()`. 3a's `test_one_failing_feed_does_not_stop_the_others` now registers its broken feed, since an unselected candidate is no longer fetched.

@@ -212,7 +212,7 @@ def test_s3_results_round_trip():
     conditions = SourceConditions(licence="L", permitted_use="P", redistribution="R", external_approvals=["A"])
     source = SourceSummary(code="syn_x", name="X", provider="P", visibility="public", conditions=conditions)
     round_trips(PickResult, SourcePicked(source=source, feed_code="syn_x"))
-    round_trips(PickResult, ApprovalMissing(source=source, conditions=conditions, reason="conditions_changed"))
+    round_trips(PickResult, ApprovalMissing(source=source, conditions=conditions, reason="conditions_differ"))
 
 
 class Done(StepResult):
