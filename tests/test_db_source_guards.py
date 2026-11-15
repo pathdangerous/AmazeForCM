@@ -150,6 +150,16 @@ def test_a_pick_needs_an_approved_source_list_proposal_of_the_same_requirement_a
     world.insert(world.pick())
 
 
+def test_a_choice_names_the_source_its_feed_reads(world):
+    """Independent review, fix 2 (0013): fetches follow feed_id, so a row whose feed reads another source
+    would fetch a source nobody accepted. The approved proposal names syn_a; the feed is syn_b's."""
+    world.refused(world.pick(feed_id=world.feed["syn_b"]), "feed .* reads source syn_b, not syn_a")
+    world.refused(world.known(feed_id=world.feed["syn_b"]), "feed .* reads source syn_b, not syn_a")
+    world.insert(world.pick())
+    # a release is refused earlier, by the version trigger (_a_ runs before _e_)
+    world.refused(world.release(source="syn_a", feed_id=world.feed["syn_b"]), "must name the selected feed and source")
+
+
 def test_a_pick_needs_the_accepted_conditions_and_the_requester(world):
     world.refused(world.pick(accepted_conditions=None), "ck_source_choices_pick_has_its_acceptance")
     world.refused(world.pick(accepted_conditions=["not", "an", "object"]),
