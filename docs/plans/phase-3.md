@@ -821,6 +821,8 @@ Notes only; nothing here is built in phase 3.
 2. When a candidate feed is rejected, the known-source check and S2 must skip its source, and the requester must be told. The requirements that select it should be released with a third reason; `0009`'s reason list has only the two of phase 3.
 3. Registration copies the licence from the catalogue entry; `duplicate_linked` meets the "one feed per source" rule of assumption 11.
 4. The backend team's review of the data is where access is restricted (your decision 1). It should show the conditions the requester accepted (`source_choices.accepted_conditions`, on the requirement's current choice).
+4b. **Who a feed's requirements are: use `SourceChoiceRepository.requirements_selecting(feed_id)`, never `feeds.requirement_id`** (review of phase 3). `feeds.requirement_id` keeps the first requirement that selected the source, even after it released the feed. Telling requesters about a sign-off, a rejection or "Ready" must go through the current choices.
+4c. **A release reason for a rejected candidate feed goes in a new migration, never in `0009`** (an applied migration is never edited). The check `ck_source_choices_reason` is dropped and created again with the third reason, as `0008` and `0009` did for the status list.
 4a. **Registered feeds are regular feeds from phase 4 on** (Q4, assumption 54). The daily job already fetches a registered feed whether or not a requirement selects it; registration (step 04) is the moment a candidate feed stops depending on a requirement's selection. Phase 4 must keep `FeedRepository.list_to_fetch()`'s two cases and test registration against it.
 **Phase 5**
 
@@ -838,6 +840,7 @@ Notes only; nothing here is built in phase 3.
 10. The Azure Functions timer runs the same single daily job.
 11. `SOURCE_HTTP_ALLOWED_HOSTS` is widened only for approved sources.
 12. `AzureOpenAIProvider` uses the same prompt files; compare its answers with the mock's on rows E to K.
+13. **A cleanup sweep for orphan agent input files** (risk 22): remove `agent-inputs/` keys that no `proposal_log.input_ref` names, after a grace period. An orphan appears when a transaction rolls back after `Agent.run()` stored the input, including a refusal in `before_write` (review fix 2).
 
 ## 17. Results and deviations (recorded during implementation)
 
