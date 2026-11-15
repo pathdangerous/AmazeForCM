@@ -1177,3 +1177,23 @@ dev.ps1                     three OK lines; health {"status":"ok", ..., "unavail
 1. The orphan agent input file after a rollback (risk 22): a cleanup is a production task.
 2. The commit-visibility tests cost 6 to 14 s depending on the run (risk 21); the setup is unchanged, as you decided.
 3. Mock rules ignore the prompt version (checkpoint 4, deviation 5).
+
+### Fixes after the review of phase 3 (2026-11-15)
+
+Each with its tests written first and shown failing:
+
+| # | Fix | Tests (failing before) |
+|---|---|---|
+| 1 | Every step that changes a requirement locks its row first (`RequirementRepository.lock()`: Find a source, decide scope, the write half of S1 and S2, pick, decline, release, and each requirement in the fetch). `RequirementAlreadyHasSource`, `NothingToRelease` and `SourceAlreadyReleased` are 409 | `test_two_concurrent_picks_give_one_success_and_one_409` (was a bare `RequirementAlreadyHasSource`, a 500); `test_lock_returns_the_requirement_with_its_row_locked` |
+| 2 | No connection during a model call: `scope_input`, `sources_input`, `assist_input` read; the API ends the read transaction; `Agent.run(..., before_write=...)` calls the model, then locks and checks the status again before any write. Recorded in `CLAUDE.md` as the pattern for every later agent | `test_no_connection_is_held_during_any_model_call` (was 1 connection checked out on each of 5 calls, now 0); `test_before_write_runs_after_the_model_call_and_before_any_write`, `test_a_refusal_in_before_write_writes_nothing`; S1 and S2 `test_a_status_change_during_the_model_call_writes_nothing` |
+| 3 | Migration `0010`: a requester-role approval of a requirement's proposal must come from that requirement's requester (`trg_approvals_requester_of_requirement`). Applied to the application database; its 10 existing requester approvals all comply | `test_a_requester_approval_of_a_requirements_proposal_needs_its_own_requester` (3 cases), `test_the_requester_check_applies_only_to_requester_approvals_of_a_requirement` |
+| 4 | The daily job loads the catalogue at the start of each run, not at start-up | `test_the_job_reads_the_catalogue_on_each_run`, `test_building_the_job_does_not_read_the_catalogue` |
+| 5 | `approval_missing` reason `conditions_changed` renamed `conditions_differ` everywhere | the S3 and step-result tests |
+| 6 | Section 16: phase 4 uses `requirements_selecting()`; a rejected-feed release reason in a new migration; phase 8 cleanup sweep | documents |
+| 7 | `docs/ui-polish.md`, the end-of-phase rule in `CLAUDE.md`, phase 7.5 in `BUILD_PLAN.md` | documents |
+
+**Not shown failing:** the API-level `test_a_status_change_during_the_model_call_gives_409_and_writes_nothing` (find-source and sources) passed before the fix too: the old code re-read the row in `advance()` after the call, and the rollback discarded the log row. It stays as a regression test. The step-level versions did fail (the log row was flushed before the refusal).
+
+**A model call refused after it answered is not logged.** When the status changed during the call, nothing is written, so that call has no `proposal_log` row (it made no proposal and nobody saw its output); its input file is an orphan (section 16, phase 8 item 13).
+
+`alembic current`: `0010 (head)`.
