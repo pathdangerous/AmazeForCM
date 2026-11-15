@@ -1,6 +1,6 @@
 # Phase 3 plan — Custom data product ingestion (Known source?, S1–S4, DiscoveryAssistant)
 
-**Status:** approved on 2026-11-14 with four changes: source approval option A (the requester's acceptance is the only approval), a fetch id in the blob key, notifications only on a change, and one transition table for requirement statuses. Those changes are applied below. **3a is built and approved** (checkpoint 3, 2026-11-14; section 17). **The 3b part was approved on 2026-11-14** (versioned source choices and release, assumptions 49 to 55; the acceptance that names the conditions, 56; commit-visibility tests, 57; the option A re-check, section 5.6), with the open questions answered as recommended except Q4, which changed: registered feeds are always fetched (assumption 54).
+**Status:** approved on 2026-11-14 with four changes: source approval option A (the requester's acceptance is the only approval), a fetch id in the blob key, notifications only on a change, and one transition table for requirement statuses. Those changes are applied below. **3a is built and approved** (checkpoint 3, 2026-11-14; section 17). **3b is built** (checkpoint 6, 2026-11-15; section 17) and awaits your approval. **The 3b part was approved on 2026-11-14** (versioned source choices and release, assumptions 49 to 55; the acceptance that names the conditions, 56; commit-visibility tests, 57; the option A re-check, section 5.6), with the open questions answered as recommended except Q4, which changed: registered feeds are always fetched (assumption 54).
 **Date:** 2026-11-14. **Branch:** `phase-3`, created from `main` at `cab1a01`. **Scope:** phase 3 of `BUILD_PLAN.md` and its carried items. Local only; nothing is pushed.
 
 **Phase 3 is too big for one build.** This plan covers all of it, so the design is decided once, and splits the work into **3a** (no agent: known source, fetch, scheduler) and **3b** (agents: scope, source list, pick, DiscoveryAssistant). I stop for your approval between them.
@@ -1100,3 +1100,77 @@ Also `test_a_new_selection_wakes_the_feed` and `test_repo_feeds.py::test_list_to
 11. **`test_n_is_the_setting` also checks that `DailyFetch.from_settings` reads the setting**, and a bad value is refused by name (`test_a_bad_source_down_release_days_is_refused_by_name`).
 
 **Application database:** no migration in tasks 14 to 17; `alembic current` is `0009 (head)`. The catalogue gained `syn_backup_eod_prices` (no file, on purpose).
+
+### Tasks 18 to 21 (checkpoint 6)
+
+Tests: 1089 pass, none skipped, no warnings (61 s with `-v`). `pytest --durations=15` before task 18 (your request): the slowest are an HTTP connector failed-fetch test (2.2 s) and the health check with an unreachable database (2.0 s); each commit-visibility schema setup takes 0.55 to 0.88 s. The test setup was not changed.
+
+**Task 18, DiscoveryAssistant.** A read-only agent (`approver_role` None), `assist()` in `s17_discover.py` beside `discover()`, and `POST /api/consumer/search/assist`. Code keeps only suggestions for the words the search did not match and for keys in the glossary, each once, and lists the products that hold each suggestion with entitlement decided by `core/entitlement`. With no unmatched word, no model is called. The plain search still makes none (`test_search_itself_makes_no_model_call`). Shown failing, then restored: the endpoint's commit (only `test_assist_commits_the_log_row` failed) and the glossary-key check (`test_suggestions_are_glossary_elements_only`). One test mistake, fixed: "prices" matches the demo product "Daily close prices" by name, so that search has hits.
+
+**Requester messages, as you approved them on 2026-11-15** (`core/steps/requirement_page.py`; the API tests pin all four changed ones word for word):
+
+| When | Text |
+|---|---|
+| a scope to confirm | "No known source has this data yet. Confirm where Amaze should look for it." (unchanged) |
+| the scope rejected | "You didn't confirm where to look. Add a note and ask again." |
+| the scope confirmed | "Thanks. Amaze is now finding sources for this data." |
+| sources listed | "Pick a source and accept its conditions to start onboarding." |
+| every listed source declined | "You declined every listed source. Add a note and ask Amaze to look again." |
+
+**Task 19, consumer-ui.** The requirement page shows the proposed scope (Confirm, which then lists the sources; Reject with a note), the box to ask again, each listed source with its coverage, the agent's reason and its conditions in full, "I accept these conditions" with Pick disabled until it is ticked, Decline, "Choose another source" with an inline confirmation (no browser dialog), and the history of choices. Search shows "Ask the assistant" when words are unmatched; its suggestions are unticked and marked "suggested". No new npm package. Both builds exit 0.
+
+**Browser run, rows E to K**, on the application database as Riley Requester (screenshots `phase3b-E-conditions.png`, `phase3b-E.png` to `phase3b-K.png` in `.playwright-mcp/`; no console errors or warnings; no 4xx or 5xx in the API log):
+
+| Row | Seen |
+|---|---|
+| E | `open price`: the scope to confirm (outside the firm); two sources with their conditions in full, the vendor's external approval among them; **Pick disabled until the box is ticked**, then enabled; picking the vendor gives the onboarding message, status `onboarding`. `approval_missing` cannot be sent from the UI; the API test sends it |
+| F | `esg score`, term ticked: the open-data source listed, picked, onboarding |
+| G | `yield to maturity`, purpose "internal desk data": scope inside the firm; confirm; "No source fits this request. The backend team has been told." |
+| H | reject the scope with a note: "You didn't confirm where to look. Add a note and ask again."; asking again with the note proposes a private scope |
+| I | search `closing prices`, "Ask the assistant": "Close price, suggested, for 'closing prices'", held by "Daily close prices", unticked |
+| J | pick the backup: "It did not answer"; "Choose another source", confirmed: "You released Backup end-of-day prices. Pick another source.", the vendor still listed; pick it: onboarding. **History: version 1 selected Backup, version 2 released Backup (you asked), version 3 selected Vendor** |
+| K | `accrued interest` on its known source (no file): release: "You released Accrued interest feed. No other source is listed. Add a note and ask for a new scope."; ask again, confirm: no source fits, because the only one was released |
+
+**What the run left in the application database** (all append-only or real data, by design): requirements 5 `defined`, 5 `onboarding`, 2 `no_source_found`, 1 `source_selected` (3a's row B), 1 `awaiting_scope_confirmation` (row H); 10 source choices (4 known, 4 picks, 2 releases); 5 scopes; 7 `IntentAgent`, 3 `SourceDiscoveryAgent` and 1 `DiscoveryAssistant` log rows; 5 candidate feeds; 8 fetch rows (5 `fetched`, 3 `source_down`). `syn_backup_eod_prices` is now idle: no requirement selects it, so the daily job skips it.
+
+**Task 20, documents.** `CLAUDE.md`: the S1 to S3 and release step modules, `agents/base.py` as the only path to the model, `prompt_loader.py`, the prompt hashes, and the rule on `.complete(`. `BUILD_PLAN.md`: release and which feeds the daily job fetches. `README.md`: the 3b demo searches, `0009 (head)`, `requirement_scopes` among the append-only tables. `.env.example`: `SOURCE_DOWN_RELEASE_DAYS=3`.
+
+### Review of 3b (task 21)
+
+| Rule | 3b state |
+|---|---|
+| 1 AI proposes, people decide | Every agent output is a proposal or, for the read-only assistant, a suggestion that changes nothing. A confirmed scope and a pick are written only for a proposal the requirement's own requester approved; the database checks both, and that the scope is exactly what was proposed. Release by the N-day rule is a rule over recorded fetches |
+| 2 No model call in engine or entitlement | `core.steps` stays inside the import boundary; steps receive their agent. No `.complete(` outside `agents/base.py` (static test). The assistant's product list uses `core/entitlement.decide` |
+| 3 Explicit negative outcomes | The ten names of `CLAUDE.md`, each with a named test, read from `CLAUDE.md` in order. Wrong status 409, another's requirement or proposal 404, refused input 422. A failed model call is rolled back and raised (503 for a stub), never an outcome |
+| 4 Every proposal logged | `Agent.run()` logs every call before any proposal, the read-only assistant's too; each proposal points at its log row; who decided is in `approvals`. Open point: an orphan input file after a rollback (risk 22) |
+| 5 Azure behind interfaces | Agents call only `LLMProvider`; the API builds them through FastAPI dependencies. No Azure or OpenAI import anywhere |
+| 6 Synthetic data only | Six `syn_` sources; the sixth passes the real-data checks |
+| 7 Versioned, never edited | `source_choices` versioned, `requirement_scopes` versioned, both append-only; prompts versioned, with a hash test against editing in place |
+
+**Option A (section 5.6), re-checked against the code:** the only `approver_role` other than None is `requester` (IntentAgent, SourceDiscoveryAgent). `apps/api/routers/amaze.py` and `apps/backend-ui` are unchanged since `main`. Nothing is fetched before the requester's acceptance: `pick_source` writes nothing on `approval_missing`, and the first fetch runs only after the pick is committed. Consistent.
+
+**PostgreSQL 14:** `0009` uses check constraints, `text[]` with `cardinality` (9.4), `jsonb` with `->>`, `jsonb_typeof` and `jsonb_array_elements_text` (9.4), `to_jsonb(record)` (9.5), triggers with `WHEN` (9.0), a partial unique index, `ADD COLUMN` with a default (11) and plpgsql. A search for features of 15 or later (`MERGE`, `NULLS NOT DISTINCT`, SQL/JSON path, multiranges and others) finds none.
+
+**3b done-when (section 1):** all seven met. Item 1: the carried item 1 tests. Item 2: rows E and F, and the S1 and S2 tests. Item 3: the done-when test and row E. Item 4: `test_picking_again_adds_the_next_version`, the N-day tests and row J. Item 5: row I and the assistant tests. Item 6: the ten outcome tests and seven 3b commit-visibility tests. Item 7: 1089 pass.
+
+**Nothing from phases 4 to 8 was built:** no profiling, sign-off, registration, glossary builder, run engine, loads or Azure adapter.
+
+### Section 13 results for 3b
+
+```
+alembic upgrade head        no change (already at head)
+python -m core.seed         glossary seed: 0 inserted, 33 already present
+python -m core.seed --demo  demo seed: 0 inserted, 3 already present
+pytest -v                   1089 passed; 0 failed, 0 skipped, 0 warnings (61 s)
+alembic current             0009 (head)
+npm ... run build           backend-ui exit 0; consumer-ui exit 0
+dev.ps1                     three OK lines; health {"status":"ok", ..., "unavailable":[]}
+```
+
+`dev.ps1` failed once first: two Vite servers I had started for the browser run still held ports 5173 and 5174 after their shells were stopped. I stopped those two Node processes (started 12:29 by me) and ran it again. **The three `dev.ps1` windows are open now; close them before running it again.**
+
+**Findings left open (none blocks 3b):**
+
+1. The orphan agent input file after a rollback (risk 22): a cleanup is a production task.
+2. The commit-visibility tests cost 6 to 14 s depending on the run (risk 21); the setup is unchanged, as you decided.
+3. Mock rules ignore the prompt version (checkpoint 4, deviation 5).
