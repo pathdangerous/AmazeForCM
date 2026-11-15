@@ -50,7 +50,7 @@ class World:
     def profile_params(self, feed=None, *, version=None, fetch=None, outcome="profiled", rows=1, detail=None,
                        columns=COLUMNS):
         feed = feed or self.feed
-        return {"feed": feed, "version": version or self.next_version("feed_profiles", feed),
+        return {"feed": feed, "version": self.next_version("feed_profiles", feed) if version is None else version,
                 "fetch": fetch or fetched(self.s, feed).id, "outcome": outcome, "rows": rows, "detail": detail,
                 "columns": columns, "spec": SPEC}
 
@@ -72,7 +72,8 @@ class World:
     def signoff_params(self, profile, proposal, *, feed=None, version=None, outcome="meets", gaps=(), reasons=(),
                        by=BACKEND):
         feed = feed or self.feed
-        return {"feed": feed, "version": version or self.next_version("feed_signoffs", feed), "profile": profile,
+        return {"feed": feed, "version": self.next_version("feed_signoffs", feed) if version is None else version,
+                "profile": profile,
                 "proposal": proposal, "outcome": outcome, "gaps": list(gaps), "reasons": list(reasons), "by": by}
 
     def signoff(self, profile, proposal, **over):
@@ -84,7 +85,8 @@ class World:
 
     def registration_params(self, signoff, *, feed=None, version=None, owner="dev-data-owner", visibility="open"):
         feed = feed or self.feed
-        return {"feed": feed, "version": version or self.next_version("feed_registrations", feed),
+        return {"feed": feed,
+                "version": self.next_version("feed_registrations", feed) if version is None else version,
                 "signoff": signoff, "owner": owner, "visibility": visibility}
 
     def accepted(self, feed=None, outcome="meets", **over):
@@ -131,6 +133,59 @@ def test_a_profile_reads_a_fetched_file_of_its_own_feed(world):
 ])
 def test_null_never_passes_a_profile_check(world, over, constraint):
     refused(world.s, constraint, World.PROFILE, **world.profile_params(**over))
+
+
+PROFILE_RAW = ("INSERT INTO feed_profiles (feed_id, version, fetch_id, outcome, row_count, columns, coverage, spec, "
+               "detail, engine, profiled_by) VALUES (:feed, :version, :fetch, :outcome, 1, CAST(:columns AS jsonb), "
+               "CAST(:coverage AS jsonb), CAST(:spec AS jsonb), NULL, :engine, :by)")
+
+
+@pytest.mark.parametrize(("over", "constraint"), [
+    ({"outcome": "guessed"}, "ck_feed_profiles_outcome"),
+    ({"coverage": "{}"}, "ck_feed_profiles_json_shapes"),
+    ({"spec": "[]"}, "ck_feed_profiles_json_shapes"),
+    ({"engine": " "}, "ck_feed_profiles_text_present"),
+    ({"by": ""}, "ck_feed_profiles_text_present"),
+])
+def test_the_other_profile_checks(world, over, constraint):
+    params = {"feed": world.feed, "version": 1, "fetch": fetched(world.s, world.feed).id, "outcome": "profiled",
+              "columns": COLUMNS, "coverage": "[]", "spec": SPEC, "engine": "duckdb 1.5.6", "by": BACKEND, **over}
+    refused(world.s, constraint, PROFILE_RAW, **params)
+
+
+@pytest.mark.parametrize("column", ["owner_id", "licence", "permitted_use", "redistribution", "registered_by"])
+def test_a_registration_needs_every_text(world, column):
+    _, signoff = world.accepted()
+    values = {"owner_id": "'dev-data-owner'", "licence": "'L'", "permitted_use": "'U'", "redistribution": "'R'",
+              "registered_by": "'dev-backend-team'", column: "'  '"}
+    refused(world.s, "ck_feed_registrations_text_present",
+            "INSERT INTO feed_registrations (feed_id, version, signoff_id, owner_id, licence, permitted_use, "
+            "redistribution, visibility, registered_by) VALUES (:feed, 1, :signoff, "
+            f"{values['owner_id']}, {values['licence']}, {values['permitted_use']}, {values['redistribution']}, "
+            f"'open', {values['registered_by']})", feed=world.feed, signoff=signoff)
+
+
+def test_version_zero_is_refused_by_the_version_trigger_before_the_check(world):
+    """ck_<table>_version (version >= 1) stands behind trg_<table>_a_version, which answers first: a BEFORE
+    trigger runs before the check constraints."""
+    refused(world.s, "feed_profiles version 0 is not the next version", World.PROFILE,
+            **world.profile_params(version=0))
+    profile = world.profile()
+    proposal = world.proposal(profile)
+    refused(world.s, "feed_signoffs version 0 is not the next version", World.SIGNOFF,
+            **world.signoff_params(profile, proposal, version=0))
+    signoff = world.signoff(profile, proposal)
+    refused(world.s, "feed_registrations version 0 is not the next version", World.REGISTRATION,
+            **world.registration_params(signoff, version=0))
+
+
+def test_a_signoffs_outcome_and_signer_are_refused_by_its_triggers_before_the_checks(world):
+    """ck_feed_signoffs_outcome and ck_feed_signoffs_signed_off_by stand behind b_guard and c_decision."""
+    profile = world.profile()
+    proposal = world.proposal(profile)
+    refused(world.s, "agreed with its recommended outcome", World.SIGNOFF,
+            **world.signoff_params(profile, proposal, outcome="maybe"))
+    refused(world.s, "the person who decided", World.SIGNOFF, **world.signoff_params(profile, proposal, by=" "))
 
 
 def test_a_spec_only_profile_may_have_no_row_count(world):
