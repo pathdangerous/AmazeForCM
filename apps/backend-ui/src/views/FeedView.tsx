@@ -219,13 +219,6 @@ export default function FeedView({ feedId, devUser, canAct }: { feedId: string; 
             </p>
           )}
           <p className="muted" data-testid="shown-to-requester">Gaps and reasons are shown to the requester.</p>
-          <button type="button" onClick={() => {
-            const s = page.summary!;
-            setOutcome(s.recommended_outcome);
-            setText((s.recommended_outcome === "rejected" ? s.reasons : s.gaps).join("\n"));
-          }} disabled={specOnly && page.summary.recommended_outcome === "meets"}>
-            Start from the agent's recommendation
-          </button>{" "}
           <button type="submit" disabled={busy || !outcome || (outcome !== "meets" && lines(text).length === 0)}
                   data-testid="signoff">
             Sign off

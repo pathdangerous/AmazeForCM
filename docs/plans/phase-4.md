@@ -944,3 +944,7 @@ dev.ps1                               OK Amaze API / OK Amaze backend-ui / OK Am
 3. **The Feed view's actions show only for a user with `backend_team`**; other backend roles read the page.
 
 **Files changed outside section 11:** none.
+
+### After checkpoint 4 (your review, 2026-11-16)
+
+1. **The "Start from the agent's recommendation" button is removed from `FeedView.tsx`** (deviation 2 above is withdrawn). It was not in the plan, and filling the person's outcome from the agent's would make D1's record of agreement unreliable: the person now chooses and types every outcome, gap and reason. `npm --prefix apps/backend-ui run build`: exit 0; `npm --prefix apps/consumer-ui run build`: exit 0.
