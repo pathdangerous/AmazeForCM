@@ -96,6 +96,7 @@ async def test_find_source_commits_the_selection_and_the_fetch(own_schema, tmp_p
 # ---------------------------------------------------------------- 3b: one test per endpoint (assumption 57)
 
 RILEY = {"X-Dev-User": "dev-requester"}
+BLAKE = {"X-Dev-User": "dev-backend-team"}
 
 
 class Flow:
@@ -117,12 +118,20 @@ class Flow:
     async def step(self, action, body=None):
         return await self.post(f"/api/consumer/requirements/{self.id}/{action}", body)
 
-    async def listed(self):
-        await self.raised()
+    async def listed(self, query="open price"):
+        await self.raised(query)
         await self.step("find-source")
         await self.step("scope/decision", {"decision": "approved"})
         listed = await self.step("sources")
         return {c["source"]["code"]: c for c in listed["result"]["candidates"]}
+
+    async def amaze(self, feed_code, action, body=None):
+        """A phase 4 step on the feed of this source, as Blake Backend."""
+        feeds = (await self.client.get("/api/amaze/feeds", headers=BLAKE)).json()
+        self.feed_id = next(f["id"] for f in feeds if f["code"] == feed_code)
+        response = await self.client.post(f"/api/amaze/feeds/{self.feed_id}/{action}", headers=BLAKE, json=body or {})
+        assert response.status_code == 200, response.text
+        return response.json()
 
 
 @pytest.fixture
@@ -235,6 +244,101 @@ async def test_assist_commits_the_log_row(own_schema, flow):
     assert committed(own_schema, "SELECT agent_name, prompt_id FROM proposal_log") == [
         ("DiscoveryAssistant", "discovery_assistant")]
     assert committed(own_schema, "SELECT count(*) FROM proposals") == [(0,)]
+
+
+# ---------------------------------------------------------------- phase 4: one test per commit (plan, assumption 42)
+
+VOLUMES = "syn_exchange_volumes"
+
+
+async def _volumes_onboarding(f):
+    await f.raised("volume", ("volume",))
+    await f.step("find-source")
+
+
+async def _accepted_and_registered(f, source=VOLUMES):
+    for action, body in (("profile", {}), ("profile/summary", {}), ("signoff", {"outcome": "meets"}),
+                         ("register", {"owner_id": "dev-data-owner", "visibility": "open"})):
+        await f.amaze(source, action, body)
+
+
+@pytest.mark.anyio
+async def test_profile_commits_the_profile(own_schema, flow):
+    async with flow() as f:
+        await _volumes_onboarding(f)
+        await f.amaze(VOLUMES, "profile")
+    assert committed(own_schema, "SELECT version, outcome, row_count, profiled_by FROM feed_profiles") == [
+        (1, "profiled", 10, "dev-backend-team")]
+
+
+@pytest.mark.anyio
+async def test_summary_commits_the_proposal(own_schema, flow):
+    async with flow() as f:
+        await _volumes_onboarding(f)
+        await f.amaze(VOLUMES, "profile")
+        await f.amaze(VOLUMES, "profile/summary")
+    assert committed(own_schema, "SELECT agent_name FROM proposal_log WHERE agent_name = 'ProfilerAgent'") == [
+        ("ProfilerAgent",)]
+    assert committed(own_schema, "SELECT kind, status, payload->>'recommended_outcome' FROM proposals "
+                                 "WHERE feed_id = :f", f=f.feed_id) == [("profile_summary", "pending", "meets")]
+
+
+@pytest.mark.anyio
+async def test_signoff_commits_the_decision(own_schema, flow):
+    async with flow() as f:
+        await _volumes_onboarding(f)
+        await f.amaze(VOLUMES, "profile")
+        await f.amaze(VOLUMES, "profile/summary")
+        await f.amaze(VOLUMES, "signoff", {"outcome": "meets"})
+    assert committed(own_schema, "SELECT a.decision, a.decided_by FROM approvals a JOIN proposals p "
+                                 "ON p.id = a.proposal_id WHERE p.kind = 'profile_summary'") == [
+        ("approved", "dev-backend-team")]
+    assert committed(own_schema, "SELECT version, outcome, signed_off_by FROM feed_signoffs") == [
+        (1, "meets", "dev-backend-team")]
+
+
+@pytest.mark.anyio
+async def test_register_commits_the_registration(own_schema, flow):
+    async with flow() as f:
+        await _volumes_onboarding(f)
+        await _accepted_and_registered(f)
+    assert committed(own_schema, "SELECT version, owner_id, visibility FROM feed_registrations") == [
+        (1, "dev-data-owner", "open")]
+    assert committed(own_schema, "SELECT stage, owner_id FROM feeds WHERE code = :c", c=VOLUMES) == [
+        ("registered", "dev-data-owner")]
+
+
+@pytest.mark.anyio
+async def test_find_source_commits_the_link_to_a_registered_feed(own_schema, flow):
+    async with flow() as f:
+        await _volumes_onboarding(f)
+        await _accepted_and_registered(f)
+        fetches = committed(own_schema, "SELECT count(*) FROM source_fetches")
+        await f.raised("volume again", ("volume",))
+        linked = await f.step("find-source")
+        assert linked["registration"]["outcome"] == "duplicate_linked"
+    assert _status(own_schema, f.id) == [("onboarding",)]
+    assert committed(own_schema, "SELECT count(*) FROM source_fetches") == fetches
+
+
+@pytest.mark.anyio
+async def test_pick_commits_the_link_to_a_registered_feed(own_schema, flow):
+    vendor_code = "syn_vendor_eod_prices"
+    async with flow() as f:
+        vendor = (await f.listed())[vendor_code]
+        await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
+        await _accepted_and_registered(f, vendor_code)
+        fetches = committed(own_schema, "SELECT count(*) FROM source_fetches")
+        vendor = (await f.listed("open price again"))[vendor_code]
+        picked = await f.step("pick", {"proposal_id": vendor["proposal_id"],
+                                       "accepted_conditions": vendor["source"]["conditions"]})
+        assert picked["registration"]["outcome"] == "duplicate_linked"
+    assert committed(own_schema, "SELECT a.decision FROM approvals a WHERE a.proposal_id = :p",
+                     p=vendor["proposal_id"]) == [("approved",)]
+    assert committed(own_schema, "SELECT version, basis FROM source_choices WHERE requirement_id = :id",
+                     id=f.id) == [(1, "requester_pick")]
+    assert _status(own_schema, f.id) == [("onboarding",)]
+    assert committed(own_schema, "SELECT count(*) FROM source_fetches") == fetches
 
 
 def test_the_daily_job_commits_each_fetch(own_schema, tmp_path):

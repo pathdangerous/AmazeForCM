@@ -12,11 +12,12 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import uuid
 
 import pytest
 
 from ports.llm.mock import MockProvider
-from tests.test_commit_visibility import RILEY, committed, flow, own_schema  # noqa: F401 (fixtures)
+from tests.test_commit_visibility import BLAKE, RILEY, committed, flow, own_schema  # noqa: F401 (fixtures)
 
 pytestmark = pytest.mark.anyio
 
@@ -258,7 +259,36 @@ async def test_no_connection_is_held_during_any_model_call(own_schema, flow):
         await f.step("scope/decision", {"decision": "rejected"})
         await f.step("scope", {"note": "internal desk data"})  # S1 again
         await f.post("/api/consumer/search/assist", {"q": "closing prices"})
-    assert provider.checked_out == [0, 0, 0, 0, 0]  # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant
+        await f.raised("volume", ("volume",))  # phase 4: the ProfilerAgent's call
+        await f.step("find-source")
+        await f.amaze("syn_exchange_volumes", "profile")
+        await f.amaze("syn_exchange_volumes", "profile/summary")
+    # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant, ProfilerAgent
+    assert provider.checked_out == [0, 0, 0, 0, 0, 0]
+
+
+async def test_a_new_profile_during_the_summary_gives_409_and_a_discard_row(own_schema, flow):
+    """Phase 4 plan, assumption 16: the summary's before_write locks the feed and finds a newer profile."""
+    from ports.db import get_sessionmaker
+    from tests.onboarded import profiled
+
+    async with flow() as f:
+        await f.raised("volume", ("volume",))
+        await f.step("find-source")
+        await f.amaze("syn_exchange_volumes", "profile")
+
+        def newer_profile():  # another person profiles the feed while the model answers, on its own session
+            with get_sessionmaker(own_schema)() as session:
+                profiled(session, f.feed_id)
+                session.commit()
+
+        use_provider(WatchingProvider(own_schema, during_call=newer_profile))
+        response = await f.client.post(f"/api/amaze/feeds/{f.feed_id}/profile/summary",
+                                       headers={"X-Dev-User": "dev-backend-team"}, json={})
+    assert response.status_code == 409, response.text
+    [(reason,)] = committed(own_schema, "SELECT reason FROM proposal_log_discards")
+    assert reason.startswith("ProfileSuperseded")
+    assert committed(own_schema, "SELECT count(*) FROM proposals WHERE kind = 'profile_summary'") == [(0,)]
 
 
 @pytest.mark.parametrize("action", ["find-source", "sources"])
@@ -495,15 +525,223 @@ def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path,
     assert committed(own_schema, "SELECT version, outcome FROM feed_signoffs") == [(1, "meets")]
 
 
-def _slow(monkeypatch, cls, method, seconds=0.3):
-    """Make one read slow, so two requests that are not kept apart by a lock both pass it before either writes."""
+def _slow(monkeypatch, cls, method, seconds=0.3, *, after=False):
+    """Make one read slow, so two requests that are not kept apart by a lock both pass it before either writes.
+    after: sleep after the read, so what it read can go stale before the write."""
     original = getattr(cls, method)
 
     def slow(self, *args, **kwargs):
-        time.sleep(seconds)
-        return original(self, *args, **kwargs)
+        if not after:
+            time.sleep(seconds)
+        result = original(self, *args, **kwargs)
+        if after:
+            time.sleep(seconds)
+        return result
 
     monkeypatch.setattr(cls, method, slow)
+
+
+def _first_then_second(first, second, delay=0.1):
+    """Run first() on a thread, then second() on another `delay` seconds later; returns {name: result or error}."""
+    out = {}
+
+    def run(name, work):
+        try:
+            out[name] = work()
+        except Exception as exc:  # noqa: BLE001 (returned to the test)
+            out[name] = exc
+
+    threads = [threading.Thread(target=run, args=("first", first)), threading.Thread(target=run, args=("second", second))]
+    threads[0].start()
+    time.sleep(delay)
+    threads[1].start()
+    for thread in threads:
+        thread.join(timeout=30)
+    return out
+
+
+def _in_session(engine, work):
+    from ports.db import get_sessionmaker
+
+    def run():
+        with get_sessionmaker(engine)() as session:
+            result = work(session)
+            session.commit()
+            return result
+
+    return run
+
+
+def _reject(engine, feed_id, reasons=("No vendor agreement on file",)):
+    from core.steps.s03_signoff import sign_off
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.notify.inapp import InAppNotifier
+    from tests.conftest import dev_user_for
+
+    return _in_session(engine, lambda s: sign_off(
+        s, feed_id=feed_id, user=dev_user_for("backend_team"), outcome="rejected", gaps=[], reasons=list(reasons),
+        catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE), notifier=InAppNotifier(s),
+        backend_team=["dev-backend-team"]).outcome)
+
+
+def _summarise_for_rejection(engine, feed_id):
+    from ports.db import get_sessionmaker
+    from tests.onboarded import profiled, summary
+
+    with get_sessionmaker(engine)() as session:
+        summary(session, profiled(session, uuid.UUID(str(feed_id))), recommended="rejected")
+        session.commit()
+
+
+async def test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_rejected_feed(own_schema, flow,
+                                                                                           monkeypatch):
+    """The rejection holds the source lock and the feed (its profile read slowed); a pick of the same source
+    by another requirement waits for the source lock, then finds it rejected (SourceRejected, 409)."""
+    from core.repositories.errors import SourceRejected
+    from core.repositories.feed_profiles import FeedProfileRepository
+    from core.steps.s3_pick import pick_source
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from tests.conftest import dev_user_for
+
+    vendor_code = "syn_vendor_eod_prices"
+    async with flow() as f:
+        vendor = (await f.listed())[vendor_code]
+        await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
+        later = (await f.listed("open price again"))[vendor_code]
+        await f.amaze(vendor_code, "profile")
+    _summarise_for_rejection(own_schema, f.feed_id)
+    _slow(monkeypatch, FeedProfileRepository, "latest", seconds=0.5)
+    pick = _in_session(own_schema, lambda s: pick_source(
+        s, requirement_id=uuid.UUID(f.id), user=dev_user_for("requester"), proposal_id=uuid.UUID(later["proposal_id"]),
+        accepted_conditions=_conditions(later), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).outcome)
+    out = _first_then_second(_reject(own_schema, f.feed_id), pick)
+    assert out["first"] == "rejected", out
+    assert isinstance(out["second"], SourceRejected), out
+    assert committed(own_schema, "SELECT stage FROM feeds WHERE code = :c", c=vendor_code) == [("rejected",)]
+    assert committed(own_schema, """
+        SELECT count(*) FROM source_choices c
+         WHERE c.version = (SELECT max(version) FROM source_choices x WHERE x.requirement_id = c.requirement_id)
+           AND c.action = 'selected' AND c.feed_id = (SELECT id FROM feeds WHERE code = :c)""", c=vendor_code) == [(0,)]
+
+
+def _conditions(candidate):
+    from ports.connectors.catalogue import SourceConditions
+
+    return SourceConditions.model_validate(candidate["source"]["conditions"])
+
+
+def _daily_fetch(engine, tmp_path):
+    from ports.config import REPO_ROOT
+    from ports.connectors.local_file import LocalFileConnector
+
+    job = _daily(engine, tmp_path, lambda name: LocalFileConnector(REPO_ROOT / "fixtures" / "sources"))
+    return lambda: job.run()
+
+
+async def test_a_rejection_and_the_daily_fetch_of_one_feed_at_once_do_not_deadlock(own_schema, flow, tmp_path,
+                                                                                   monkeypatch):
+    """The fetch holds the feed (slowed just after its lock); the rejection starts, waits for the feed, and
+    runs after. Both take the feed before any requirement, so neither deadlocks; both commit."""
+    from core.repositories.source_fetches import SourceFetchRepository
+
+    vendor_code = "syn_vendor_eod_prices"
+    async with flow() as f:
+        vendor = (await f.listed())[vendor_code]
+        await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
+        await f.amaze(vendor_code, "profile")
+    _summarise_for_rejection(own_schema, f.feed_id)
+    _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)  # record_fetch: after the feed lock
+    out = _first_then_second(_daily_fetch(own_schema, tmp_path), _reject(own_schema, f.feed_id))
+    assert out == {"first": {vendor_code: "fetched"}, "second": "rejected"}, out
+    # released by the rejection; the backup is still listed
+    assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("awaiting_source_choice",)]
+
+
+async def test_a_rejection_and_a_requester_release_of_one_requirement_at_once_do_not_deadlock(own_schema, flow,
+                                                                                             monkeypatch):
+    """The requester releases the source (slowed while the requirement is locked); the rejection waits for
+    that requirement, finds it released meanwhile and skips it. Both commit; the feed is rejected."""
+    from core.repositories.source_choices import SourceChoiceRepository
+    from core.steps.release import release_source
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.notify.inapp import InAppNotifier
+    from tests.conftest import dev_user_for
+
+    backup_code = "syn_backup_eod_prices"
+    async with flow() as f:
+        backup = (await f.listed())[backup_code]  # its file is missing: source_down, source_selected
+        await f.step("pick", {"proposal_id": backup["proposal_id"], "accepted_conditions": backup["source"]["conditions"]})
+        feeds = (await f.client.get("/api/amaze/feeds", headers=BLAKE)).json()
+    feed_id = next(x["id"] for x in feeds if x["code"] == backup_code)
+    _summarise_for_rejection(own_schema, feed_id)  # a profile on a fetched row written for the test
+    _slow(monkeypatch, SourceChoiceRepository, "record_release", seconds=0.5)
+    release = _in_session(own_schema, lambda s: release_source(
+        s, requirement_id=uuid.UUID(f.id), reason="requester_asked", user=dev_user_for("requester"),
+        catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE), notifier=InAppNotifier(s),
+        backend_team=["dev-backend-team"]).reason)
+    out = _first_then_second(release, _reject(own_schema, feed_id))
+    assert out == {"first": "requester_asked", "second": "rejected"}, out
+    assert committed(own_schema, "SELECT stage FROM feeds WHERE id = :id", id=feed_id) == [("rejected",)]
+    assert committed(own_schema, "SELECT version, action, reason FROM source_choices WHERE requirement_id = :id "
+                                 "ORDER BY version", id=f.id) == [(1, "selected", None), (2, "released", "requester_asked")]
+
+
+async def test_a_profile_during_a_signoff_gives_a_success_or_a_409_never_a_500(own_schema, tmp_path, monkeypatch):
+    """The sign-off's profile read is slowed. A profile of the same feed at once: with the feed locked first,
+    the sign-off either succeeds (the profile is then version 2) or finds the newer profile unsummarised
+    (ProfileNotSummarised, 409). Without the lock it signs off a profile that is no longer the latest, and
+    the database refuses it (a raw IntegrityError: a 500)."""
+    from core.repositories.errors import ProfileNotSummarised
+    from core.repositories.feed_profiles import FeedProfileRepository
+    from core.steps.s02_profile import profile_plan, record_profile, run_profile
+    from core.steps.s03_signoff import sign_off
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from ports.notify.inapp import InAppNotifier
+    from ports.storage.local import LocalBlobStore
+    from tests.conftest import dev_user_for
+
+    feed_id = _summarised_feed(own_schema, tmp_path)
+    blobs = LocalBlobStore(tmp_path / "blob")
+    catalogue = SourceCatalogue.load(DEFAULT_CATALOGUE)
+    _slow(monkeypatch, FeedProfileRepository, "latest", after=True)
+
+    def profile(session):
+        plan = profile_plan(session, feed_id=feed_id, catalogue=catalogue)
+        session.rollback()
+        return record_profile(session, run_profile(plan, blob_store=blobs), profiled_by="dev-backend-team").profile.version
+
+    signoff = _in_session(own_schema, lambda s: sign_off(
+        s, feed_id=feed_id, user=dev_user_for("backend_team"), outcome="meets", gaps=[], reasons=[],
+        catalogue=catalogue, notifier=InAppNotifier(s), backend_team=["dev-backend-team"]).outcome)
+    out = _first_then_second(signoff, _in_session(own_schema, profile), delay=0.05)
+    assert out["second"] == 2, out
+    assert out["first"] == "meets" or isinstance(out["first"], ProfileNotSummarised), out
+
+
+async def test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_schema, flow, tmp_path, monkeypatch):
+    """The daily fetch holds the feed (FOR NO KEY UPDATE, slowed just after its lock); another requirement
+    picks the same source: its source_choices insert takes FOR KEY SHARE on the feed, which does not wait.
+    No deadlock; both commit."""
+    from core.repositories.source_fetches import SourceFetchRepository
+    from core.steps.s3_pick import pick_source
+    from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
+    from tests.conftest import dev_user_for
+
+    vendor_code = "syn_vendor_eod_prices"
+    async with flow() as f:
+        vendor = (await f.listed())[vendor_code]
+        await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
+        later = (await f.listed("open price again"))[vendor_code]
+    _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)
+    pick = _in_session(own_schema, lambda s: pick_source(
+        s, requirement_id=uuid.UUID(f.id), user=dev_user_for("requester"), proposal_id=uuid.UUID(later["proposal_id"]),
+        accepted_conditions=_conditions(later), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).outcome)
+    started = time.monotonic()
+    out = _first_then_second(_daily_fetch(own_schema, tmp_path), pick)
+    assert out == {"first": {vendor_code: "fetched"}, "second": "source_picked"}, out
+    # the pick committed while the fetch waited; the fetch then read who selects the feed, so it is onboarding
+    assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("onboarding",)]
+    assert time.monotonic() - started < 5
 
 
 def test_two_registrations_at_once_give_one_success_and_one_409(own_schema, tmp_path, monkeypatch):
