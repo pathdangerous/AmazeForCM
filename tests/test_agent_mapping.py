@@ -110,6 +110,20 @@ def test_through_agent_run_with_the_mock(db_session, tmp_path):
         ("date", ["issue_date", "maturity_date", "price_date"], None, ["data_steward"])]
 
 
+def test_the_log_row_names_mappingagent(db_session, tmp_path):
+    """Note 6 (assumption 21): the agent's name is written to the append-only proposal_log."""
+    from core.repositories.feeds import FeedRepository
+    from core.repositories.tables import ProposalLogEntry
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_bond_terms", name="Bond terms")
+    end_read(db_session)
+    run = MappingAgent(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "blob")).run(
+        db_session, mapping_input(feed.id, column("coupon", "DOUBLE")))
+    entry = db_session.get(ProposalLogEntry, run.log_id)
+    assert (entry.agent_name, entry.prompt_id, entry.prompt_version) == ("MappingAgent", "mapping", "v1")
+    assert run.proposals[0].proposal_log_id == entry.id
+
+
 def test_the_evaluator_logs_its_call_and_creates_no_proposal(db_session, tmp_path):
     agent = MappingEvaluator(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "blob"))
     end_read(db_session)

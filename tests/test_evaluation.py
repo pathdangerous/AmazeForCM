@@ -75,3 +75,79 @@ def test_candidate_recall_counts_each_expected_or_must_offer_element_in_the_list
 def test_the_score_names_the_fraction():
     s = score(CASES[:2], {1: ["isin"]}, {})
     assert s.fraction == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------- task 9: the evaluator on the gold set
+
+
+@pytest.fixture
+def evaluated(db_session, tmp_path):
+    from agents.evaluate_mappings import evaluate
+    from agents.mapping import MappingEvaluator
+    from ports.llm.mock import MockProvider
+    from ports.storage.local import LocalBlobStore
+    from tests.step_chains import end_read
+
+    end_read(db_session)
+    return evaluate(db_session, MappingEvaluator(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "b")))
+
+
+def test_the_mock_scores_as_measured_and_misses_these(evaluated):
+    """Phase 5 plan, assumption 38: the prototype predicted 25 of 31 under the approved rule; pinned here."""
+    s = evaluated.score
+    assert (s.right, s.total) == (25, 31)
+    assert [(m.case, m.column) for m in s.misses] == [(8, "ccy"), (14, "price"), (15, "quote_ccy"),
+                                                     (16, "instrument"), (17, "trade_date"), (19, "high")]
+    assert [(w.case, w.column, w.named) for w in s.wrong_maps] == [(15, "quote_ccy", "currency"),
+                                                                   (19, "high", "high_price")]
+
+
+def test_the_mock_reports_its_tie_size_and_candidate_recall(evaluated):
+    s = evaluated.score
+    assert s.mean_tie_size is not None and s.mean_tie_size > 2
+    assert s.recall_total == 22 + 2 * 3  # one element per mapped case, two must-offer elements per tie
+    assert s.recall_found <= s.recall_total
+
+
+def test_an_evaluation_creates_no_proposal_and_logs_every_call(db_session, evaluated):
+    from sqlalchemy import func, select
+
+    from core.repositories.tables import ProposalLogEntry, ProposalRow
+
+    names = db_session.scalars(select(ProposalLogEntry.agent_name)).all()
+    assert names == ["MappingEvaluator"] * 4  # one call per gold source
+    assert db_session.scalar(select(func.count()).select_from(ProposalRow)) == 0
+
+
+def test_the_report_prints_score_tie_size_recall_and_wrong_maps(evaluated):
+    from agents.evaluate_mappings import format_report
+
+    text = format_report(evaluated, provider="mock")
+    for line in ("Score: 25 of 31 (80.6%)", "Mean tie size:", "Candidate recall:", "Wrong maps: 2"):
+        assert line in text, line
+    assert "15 quote_ccy -> currency" in text and "19 high -> high_price" in text
+
+
+def _secrets(tmp_path, **values):
+    from ports.secrets.env import EnvSecrets
+
+    env = tmp_path / "eval.env"
+    env.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    return EnvSecrets(env)
+
+
+APP = "postgresql+psycopg://amaze:pw@localhost:5432/amaze"
+
+
+@pytest.mark.parametrize("values", [
+    {"DATABASE_URL": APP},  # EVAL_DATABASE_URL not set
+    {"DATABASE_URL": APP, "EVAL_DATABASE_URL": APP},
+    {"DATABASE_URL": APP, "EVAL_DATABASE_URL": "postgresql+psycopg://other:pw2@127.0.0.1/amaze"},  # same database
+])
+def test_the_script_refuses_without_its_own_database(tmp_path, monkeypatch, capsys, values):
+    from agents.evaluate_mappings import main
+
+    for key in ("DATABASE_URL", "EVAL_DATABASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    assert main([], secrets=_secrets(tmp_path, **values)) == 2
+    assert "EVAL_DATABASE_URL" in capsys.readouterr().err

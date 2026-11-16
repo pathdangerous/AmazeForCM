@@ -87,6 +87,26 @@ npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```
 
+Evaluate the mapping prompt on the gold set (`fixtures/gold/mappings.json`, phase 5). Its model calls are
+logged to a database of their own, `amaze_eval`, owned by the same `amaze` user; the script refuses to
+run when `EVAL_DATABASE_URL` is not set or names the application database. One-time set-up, as the
+PostgreSQL superuser:
+
+```powershell
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -U postgres -c "CREATE DATABASE amaze_eval OWNER amaze"
+# in .env: EVAL_DATABASE_URL=postgresql+psycopg://amaze:<password>@localhost:5432/amaze_eval
+# bring it to the migration head: DATABASE_URL points at amaze_eval for this one command only
+$env:DATABASE_URL = 'postgresql+psycopg://amaze:<password>@localhost:5432/amaze_eval'
+.\.venv\Scripts\python -m alembic upgrade head
+Remove-Item Env:DATABASE_URL
+```
+
+Then, after every migration (the evaluation database must be at the same head), run:
+
+```powershell
+.\.venv\Scripts\python -m agents.evaluate_mappings   # LLM_PROVIDER selects the provider; prints the score
+```
+
 Adapters are chosen in `.env` (`LLM_PROVIDER`, `STORAGE_PROVIDER`, ...). The local ones are the
 defaults; the Azure ones are stubs until the move and raise `NotImplementedError`.
 
