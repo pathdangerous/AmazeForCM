@@ -341,6 +341,19 @@ async def test_pick_commits_the_link_to_a_registered_feed(own_schema, flow):
     assert committed(own_schema, "SELECT count(*) FROM source_fetches") == fetches
 
 
+def test_the_daily_job_commits_the_broken_catalogue_notification(own_schema, tmp_path):
+    """Phase 4 plan, assumption 36: with a catalogue that fails to load, the backend team's notification is
+    committed in its own transaction (independent review, finding 9)."""
+    def broken():
+        raise ValueError("source code 'vendor_x' must start with 'syn_'")
+
+    DailyFetch(session_factory=get_sessionmaker(own_schema), blob_store=LocalBlobStore(tmp_path / "blob"),
+               connector_factory=lambda name: get_connector(name, Settings(_env_file=None)),
+               backend_team=lambda: ["dev-backend-team"], catalogue_loader=broken).run()
+    assert committed(own_schema, "SELECT recipient FROM notifications "
+                                 "WHERE subject = 'Source catalogue could not be read'") == [("dev-backend-team",)]
+
+
 def test_the_daily_job_commits_each_fetch(own_schema, tmp_path):
     sessions = get_sessionmaker(own_schema)  # the app's real session factory, on amaze_test
     with sessions() as session:
