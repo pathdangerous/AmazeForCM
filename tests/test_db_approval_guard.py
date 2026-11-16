@@ -25,7 +25,8 @@ STEWARD_THEN_CHECKER = ("data_steward", "checker")
 def test_a_proposal_changes_only_in_status_and_decided_at(db_session, make_proposal, change):
     from sqlalchemy.exc import DBAPIError
 
-    proposal = make_proposal(payload={"recommended_outcome": "meets"})
+    # a profile_summary: from 0016 a mapping proposal must name its column (ck_proposals_names_a_column)
+    proposal = make_proposal(kind="profile_summary", roles=("backend_team",), payload={"recommended_outcome": "meets"})
     with pytest.raises(DBAPIError, match="only status and decided_at change"):
         with db_session.begin_nested():
             db_session.execute(text(f"UPDATE proposals SET {change} WHERE id = :id"), {"id": proposal.id})

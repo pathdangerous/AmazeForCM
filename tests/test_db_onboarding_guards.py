@@ -225,7 +225,8 @@ def test_the_proposal_is_the_profile_summary_of_that_profile(world, make_proposa
     refused(world.s, "is not the profile_summary proposal of profile", World.SIGNOFF,
             **world.signoff_params(second, of_first))
     mapping = make_proposal(kind="mapping", roles=("backend_team",), feed_id=world.feed,
-                            payload={"profile_id": str(second), "recommended_outcome": "meets"})
+                            payload={"profile_id": str(second), "recommended_outcome": "meets",
+                                     "source_field": "qty"})  # 0016: a mapping proposal names its column
     ProposalRepository(world.s).record_decision(mapping.id, user=dev_user_for("backend_team"), decision="approved")
     refused(world.s, "is not the profile_summary proposal of profile", World.SIGNOFF,
             **world.signoff_params(second, mapping.id))

@@ -71,6 +71,10 @@ BEGIN
 END $$;
 """
 
+# jsonb_typeof first: '"source_field"'::jsonb ? 'source_field' is true for a JSON string
+NAMES_A_COLUMN = ("kind NOT IN ('glossary_element', 'mapping') "
+                  "OR (jsonb_typeof(payload) = 'object' AND payload ? 'source_field')")
+
 REFUSE_TRUNCATE = """
 CREATE FUNCTION amaze_refuse_truncate() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -265,6 +269,8 @@ def upgrade() -> None:
     op.create_index("uq_proposals_one_pending_per_feed_column", "proposals",
                     ["kind", "feed_id", sa.text("(payload ->> 'source_field')")], unique=True,
                     postgresql_where=sa.text("status = 'pending' AND kind IN ('glossary_element', 'mapping')"))
+    # the index above and both configuration guards read the payload's source_field: it must be there
+    op.create_check_constraint(op.f("ck_proposals_names_a_column"), "proposals", NAMES_A_COLUMN)
 
     op.create_index("uq_glossary_elements_proposal_id", "glossary_elements", ["proposal_id"], unique=True,
                     postgresql_where=sa.text("proposal_id IS NOT NULL"))
@@ -293,6 +299,7 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER trg_glossary_elements_b_option ON glossary_elements")
     op.execute("DROP FUNCTION amaze_require_glossary_option()")
     op.drop_index("uq_glossary_elements_proposal_id", table_name="glossary_elements")
+    op.drop_constraint(op.f("ck_proposals_names_a_column"), "proposals", type_="check")
     op.drop_index("uq_proposals_one_pending_per_feed_column", table_name="proposals")
     op.execute(PROPOSAL_CHANGE_0015)
     op.execute("DROP TRIGGER trg_proposals_no_truncate ON proposals")

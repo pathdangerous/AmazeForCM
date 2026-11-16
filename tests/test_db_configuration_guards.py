@@ -79,6 +79,28 @@ def test_one_pending_proposal_per_kind_feed_and_column(s, feed):
                 "DROP INDEX uq_proposals_one_pending_per_feed_column")
 
 
+PROPOSAL = ("INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles, feed_id) "
+            "VALUES (:log, :kind, CAST(:payload AS jsonb), 'A2', ARRAY[:role], :feed)")
+
+
+@pytest.mark.parametrize(("kind", "role"), [("mapping", "data_steward"), ("glossary_element", "glossary_owner")])
+@pytest.mark.parametrize("payload", ['{"candidates": ["close_price"]}', '{}', 'null', '"source_field"'])
+def test_a_glossary_or_mapping_proposal_names_its_column(s, feed, kind, role, payload):
+    from tests.configured import logged_call
+
+    log = logged_call(s, "MappingAgent", "mapping").id
+    answered_by(s, "ck_proposals_names_a_column", PROPOSAL,
+                {"log": log, "kind": kind, "payload": payload, "role": role, "feed": feed},
+                "ALTER TABLE proposals DROP CONSTRAINT ck_proposals_names_a_column")
+
+
+def test_other_kinds_need_no_column(s, feed):
+    from tests.configured import logged_call
+
+    s.execute(text(PROPOSAL), {"log": logged_call(s, "ProfilerAgent", "profiler").id, "kind": "profile_summary",
+                               "payload": '{"recommended_outcome": "meets"}', "role": "backend_team", "feed": feed})
+
+
 def test_another_column_another_kind_or_a_decided_one_may_be_pending_beside_it(s, feed):
     mapping_proposal(s, feed, "px", ["close_price"], decision="rejected")
     mapping_proposal(s, feed, "px", ["close_price"])
@@ -234,10 +256,10 @@ def test_a_mapping_from_a_proposal_with_no_feed_is_refused(s, feed, approved_pro
                 _branch_off(MATCHES, "mapping: proposal % is for feed %, not %"))
 
 
-@pytest.mark.parametrize("payload", [{"source_field": "qty", "candidates": ["close_price"]},
-                                     {"candidates": ["close_price"]}])  # another column; none (NULL)
-def test_a_mapping_of_another_column_is_refused(s, feed, approved_proposal, payload):
-    proposal = approved_proposal(kind="mapping", feed_id=feed, payload=payload)
+def test_a_mapping_of_another_column_is_refused(s, feed, approved_proposal):
+    """A proposal with no source_field (the NULL case) cannot exist: ck_proposals_names_a_column (fix B)."""
+    proposal = approved_proposal(kind="mapping", feed_id=feed, payload={"source_field": "qty",
+                                                                        "candidates": ["close_price"]})
     answered_by(s, "mapping: proposal .* is for column", MAP, map_row(feed, proposal.id),
                 _branch_off(MATCHES, "mapping: proposal % is for column %, not %"))
 

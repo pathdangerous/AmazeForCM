@@ -10,6 +10,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import uuid
+
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -148,8 +150,12 @@ def make_proposal(db_session, logged_call):
     from core.repositories.proposals import ProposalRepository
 
     def _make(kind="mapping", roles=("data_steward",), autonomy="A2", payload=None, **links):
+        if payload is None:  # 0016: a glossary_element or mapping proposal names its column
+            payload = {"note": "synthetic"}
+            if kind in ("glossary_element", "mapping"):
+                payload["source_field"] = f"synthetic_{uuid.uuid4().hex[:8]}"
         return ProposalRepository(db_session).create(
-            proposal_log_id=logged_call.id, kind=kind, payload=payload or {"note": "synthetic"},
+            proposal_log_id=logged_call.id, kind=kind, payload=payload,
             autonomy=autonomy, required_approver_roles=list(roles), **links,
         )
 
