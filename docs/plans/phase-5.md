@@ -690,3 +690,30 @@ Notes only; nothing here is built in phase 5.
   - `test_db_onboarding_guards.py::test_the_proposal_is_the_profile_summary_of_that_profile` and `test_concurrency.py` (the lock-check setup): their mapping payloads name a column;
   - `test_db_configuration_guards.py::test_a_mapping_of_another_column_is_refused`: its NULL `source_field` case cannot be built any more, so it is dropped (the trigger's `IS DISTINCT FROM` stays).
 
+### Checkpoint 2 (tasks 5 to 9)
+
+**Deviations**
+
+1. Assumptions 12 to 15 of task 5, not in the plan: the builder's input carries `run_id` and `source_domain` (the most common domain of the source's declared elements); a column to map carries `current`; the steward's rejected elements are left out of a column's candidates when the input is built; `MappingInput.feed_id` is optional (gold sources have no feed); one pure `kept_elements()` decides the kept keys for both the agent and the step.
+2. `classify_element()` returns `clashes` and the glossary payload stores them, so `ConflictToOwner.clashes` names every clashing element, types that do not fit included.
+3. `Registered` (step 04) gains `glossary_run_id`.
+4. **`LocalScheduler.run_soon` is not an APScheduler job** (the plan said "an APScheduler job with no trigger"). Root cause of the failure that forced it, reproduced 1 in 3 runs of `test_the_worker_is_kicked_at_every_start_up`: APScheduler 3's `shutdown()` sets its state to stopped before it takes the job-store lock; a one-off job finishing at that moment calls `remove_job()`, which in the stopped state looks only among pending jobs and raises `JobLookupError` in the scheduler's thread. Each call now runs on a daemon thread of its own (calls before `start()` wait and run at start); an exception is logged. Five runs in a row afterwards: `100 passed` each.
+5. `.env.example` gained `GLOSSARY_RUN_LEASE_SECONDS` in task 7 and `EVAL_DATABASE_URL` in task 9, and `README.md` the evaluation section in task 9 (both files are task 13's in section 11).
+6. **`EVAL_DATABASE_URL` is read through the Secrets port**, as `DATABASE_URL` is (it holds a password), not through `ports/config.py` as task 0 wrote; `test_settings.py` has no change for it. "Equals `DATABASE_URL`" is judged as the same database: same host (`localhost`, `127.0.0.1` and `::1` are one), port and name.
+7. The gold set is scored against the seed glossary file, not the evaluation database's glossary (section 8.1: "against the 33 seed elements"), so `amaze_eval` needs the schema only.
+8. `test_step_results.py::claude_md_outcomes()` read backticked names with `[a-z_]+`, which cannot match `no_element_back_to_05`; now `[a-z][a-z0-9_]*`.
+9. Limitation: a column sent back by step 06 joins the feed's active glossary run only while it is queued; while a run is running, the column is not asked about in that run, and is sent again the next time the steward proposes.
+10. Named tests: section 5.5's names for tasks 1, 3 and 4 differ from the tests built; the cases are covered under other names (for example `test_candidates.py::test_new_columns_are_undeclared_or_declared_as_other_fields` covers both plan names for note 1; `test_db_configuration_guards.py::test_a_decided_proposal_never_changes_again` and `test_a_pending_proposal_moves_only_to_approved_or_rejected` cover the six moves). `test_agent_mapping.py::test_the_log_row_names_mappingagent` (note 6) was missing and is added.
+
+**Unexpected failures and their root causes**
+
+1. `test_s05_glossary.py`, the late-answer test: my test called `db_session.rollback()`, which rolled back the savepoint holding the committed discard row; phase 4's step tests do not roll back, nor does this one now.
+2. `test_s05_glossary.py`, the conflict test took `results[0]` (a `duplicate_alias`); it now picks the conflict.
+3. The APScheduler race (deviation 4).
+
+**Proof for the candidate cap:** `MAX_CANDIDATES` set to 1000 with the Edit tool: `test_no_agent_input_holds_the_whole_glossary.py`: `3 failed`; restored: `39 passed` (with `test_candidates.py`).
+
+**The evaluation, built code** (`python -m agents.evaluate_mappings`, provider mock): `Score: 25 of 31 (80.6%)`, as predicted by the prototype under the approved rule; misses 8, 14, 15, 16, 17, 19; mean tie size 5.0; candidate recall 27 of 28 (case 8: `price_currency` was never a candidate of `ccy`: the filter's miss); wrong maps 15 `quote_ccy -> currency`, 19 `high -> high_price`. Pinned by `test_evaluation.py::test_the_mock_scores_as_measured_and_misses_these`. `amaze_eval` does not exist yet: the `amaze` user has no CREATEDB right, so it needs the PostgreSQL superuser (README); the run shown was logged to `amaze_test`, a separate database rebuilt by every pytest session. With `EVAL_DATABASE_URL` equal to `DATABASE_URL`: refused, exit code 2.
+
+**Full suite at checkpoint 2:** `1662 passed in 128.17s`, nothing skipped, no warnings. Then `alembic upgrade head` on the application database: `0015` → `0016 (head)`; any later fix is `0017`.
+
