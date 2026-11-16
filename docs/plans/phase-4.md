@@ -852,3 +852,95 @@ Six tests, five commits: find-source and pick share one link commit. The pick's 
 0.67s setup    tests/test_concurrency.py::test_a_status_change_during_the_model_call_gives_409_and_logs_it_as_discarded[find-source]
 1359 passed in 100.92s (0:01:40)
 ```
+
+### Tasks 12 to 16 (checkpoint 4)
+
+Tests: 1360 (the endpoint-level profiling test added after checkpoint 3). `pytest -v`: `1360 passed in 99.69s`, none skipped, no warnings.
+
+| Task | Check | Commit |
+|---|---|---|
+| 12 backend-ui: Feed view, the registry's link and Rejected filter | `npm --prefix apps/backend-ui run build`: `✓ built`, exit 0 | `34d2bcc` |
+| 13 consumer-ui: the gaps under the onboarding message; the history label of a rejection | build exit 0 (first a `TS2367`: the choice's `reason` type lacked `candidate_rejected`; added) | `a80ebdf` |
+| 14 documents | `test_step_results.py` (reads `CLAUDE.md`): `22 passed` | `8caf1e4` |
+| 15 UI polish | five lines appended | `6d51aeb` |
+| 16 review | below | this section |
+
+**Browser run** on the application database (API and both Vite servers started for the run and stopped after it), Blake Backend in backend-ui, Riley Requester in consumer-ui. Screenshots in `.playwright-mcp/`. Console: 24 messages, **0 errors, 0 warnings**. API log: 100 requests, **96 × 200 and 4 × 201; no 4xx or 5xx**.
+
+| Row | Seen | Screenshot |
+|---|---|---|
+| L | `syn_exchange_volumes` (two `volume` requirements, known source): Profile 1, 10 rows, `instr_id` VARCHAR, `trade_date` DATE, `traded_qty` BIGINT, 0% empty; the summary recommends meets; sign-off form with "Gaps and reasons are shown to the requester."; signed off meets; Register with no owner: "Not registered: name a data owner." (`no_owner`); with Devon Owner, open: Registered | `phase4-signoff-form.png`, `phase4-L.png` |
+| M | `issue date`: scope confirmed, Instrument lifecycle picked, onboarding. Profile: `issued_on` DATE 20% empty; the agent recommends meets with gaps "issue_date is empty in 2 of 10 rows"; signed off with it; registered restricted. Riley: "Your data is getting onboarded; we will notify you once it is ready." and under it "The backend team accepted Instrument lifecycle with gaps: issue_date is empty in 2 of 10 rows." | `phase4-M.png` |
+| N | `lot size`: Listing details picked. Profile: "Low confidence: spec only. The file has a header and no data rows."; **Meets disabled** ("Meets is not offered: no data rows were profiled."); signed off rejected, "No data to check". Riley: "The backend team rejected Listing details: No data to check. No other source is listed. Add a note and ask for a new scope."; history "released Listing details (rejected by the backend team)" | `phase4-N-meets-disabled.png`, `phase4-N.png` |
+| O | `syn_vendor_eod_prices` (two `open price` requirements): signed off rejected, "No vendor agreement on file". The one with Backup still listed: "... Pick another source." and Backup offered; the one that had released Backup: "... No other source is listed. Add a note and ask for a new scope." A new `open price` request lists Backup only | `phase4-O.png`, `phase4-O-pick-another.png`, `phase4-O-none-left.png` |
+| P | `volume` again: the onboarding message at once; the backend team got "Linked to a registered feed: syn_exchange_volumes"; the requirement is `onboarding`, `known_source`. **No new file** (below) | `phase4-P.png` |
+
+**Row P, `data/blob/raw/syn_exchange_volumes/` before and after** (`find ... -type f | sort`; `diff` printed nothing):
+
+```
+data/blob/raw/syn_exchange_volumes/2026-11-14/1a32d46a-7005-46a6-a2f0-00782b9ea293/exchange_volumes.csv
+data/blob/raw/syn_exchange_volumes/2026-11-14/2128f69e-56bd-4ab3-a08d-9ec9dde85ce9/exchange_volumes.csv
+```
+
+**What the run left in the application database** (append-only or real data, by design):
+
+| Table | Rows |
+|---|---|
+| requirements by status | 5 `defined`, 5 `onboarding`, 4 `no_source_found`, 2 `awaiting_source_choice`, 1 `source_selected`, 1 `awaiting_scope_confirmation` |
+| feeds by stage | 3 `candidate`, 2 `registered` (`syn_exchange_volumes`, `syn_instrument_lifecycle`, owner `dev-data-owner`), 2 `rejected` (`syn_listing_details`, `syn_vendor_eod_prices`) |
+| feed_profiles | 4, each version 1: three `profiled` (10 rows), one `spec_only_low_confidence` (0 rows) |
+| feed_signoffs | 4: `meets`; `meets_with_gaps` ("issue_date is empty in 2 of 10 rows"); `rejected` ("No data to check"); `rejected` ("No vendor agreement on file") |
+| feed_registrations | 2: `syn_exchange_volumes` open; `syn_instrument_lifecycle` restricted |
+| profile_summary proposals | 4: 2 approved (the person kept the recommendation), 2 rejected (the person chose rejected over meets, and over meets with gaps: decision D1) |
+| `candidate_rejected` releases | 3 |
+
+**Task 14, `CLAUDE.md` lines changed** (`git show -U0 8caf1e4 -- CLAUDE.md`):
+1. Tech stack, Data: DuckDB is `duckdb==1.5.6`, in memory.
+2. Layout, `core/steps/`: the phase 4 modules `profiling.py`, `s02_profile.py`, `s03_signoff.py`, `s04_register.py`, `feed_page.py`.
+3. Layout, `ports/connectors/`: each catalogue entry's `columns`.
+4. **Plugin section:** "In this setup the plugins do not load. The Superpowers and Karpathy method below is followed by hand, task by task: ..." (assumptions first, only the plan's files, RED and GREEN pasted, root cause before a fix, every claim backed by output; Octopus reviews by hand too).
+5. How to work: the 409 line names `apps/api/transactions.py`; **new** the lock order (source code, feed row, requirements in id order; the next version read only after the feed lock); **new** step 02 through `BlobStore.get()` with no connection held; the database-guard line gains the `0014` guards and `tests/onboarded.py`.
+
+`BUILD_PLAN.md` phase 4: how DuckDB reads the file, who signs off and what approving the summary means, what a rejection does, `duplicate_linked`. `README.md`: the feed page URL, the phase 4 demo, `0014 (head)`, the three new append-only tables.
+
+**Task 15, UI polish lines added** (`docs/ui-polish.md`): "Profile the latest file" stays offered after the file is profiled; two requirements with one title look identical; the registration shows the owner's id; the next form appears out of view after an action; the mock's summary says "1 of 1 requested items are". Plus the three found while planning (registry owner id, source reference, "(phase 3)" in the empty state).
+
+**Task 16, review against `CLAUDE.md`'s seven rules:**
+
+| Rule | Phase 4 state |
+|---|---|
+| 1 AI proposes, people decide | The ProfilerAgent writes one `profile_summary` proposal; a named `backend_team` person decides it at the sign-off (D1). The database refuses a sign-off whose proposal is pending, decided by someone else, or whose outcome contradicts the decision; a registration without the latest accepting sign-off; a stage change without them |
+| 2 No model call in engine or entitlement | Steps 02 to 04 make none (DuckDB is fixed code). `.complete(` outside `agents/base.py`: none (`test_no_direct_llm_calls.py`); the import boundary holds `core.steps` (`test_import_boundaries.py`) |
+| 3 Explicit negative outcomes | Eight typed outcomes, read from `CLAUDE.md` in order (`test_step_results.py`); nine named conflicts are 409, `FeedNotFound` 404, `SignoffDoesNotFit` 422, `LLMUnavailable` 503; the concurrency tests show no race gives a 500 |
+| 4 Every proposal logged | The ProfilerAgent runs only through `Agent.run()`: one call row each, a discard row when superseded during the call |
+| 5 Azure behind interfaces | Step 02 uses only `BlobStore.get()`; no `azure` or `openai` import in `core`, `apps`, `agents`; `duckdb` is imported in `core/steps/profiling.py` only |
+| 6 Synthetic data only | Two new `syn_` sources and files pass the real-data checks (`test_source_catalogue.py`) |
+| 7 Versioned, never edited | `feed_profiles`, `feed_signoffs`, `feed_registrations` versioned and append-only (UPDATE, DELETE, TRUNCATE refused); `0014` was edited only before it reached the application database; the new prompt is `profiler.v1.yaml` with its hash |
+
+**PostgreSQL 14:** `0014` uses check constraints with `cardinality` (9.4), `jsonb_typeof` and `jsonb_array_length` (9.4), `COALESCE` and `IS DISTINCT FROM`, plpgsql with `EXECUTE format(... %I ...) USING` (9.1), `unnest ... WITH ORDINALITY` (9.4), BEFORE INSERT row triggers, an AFTER `INSERT OR UPDATE OF` row trigger (9.0), statement-level BEFORE TRUNCATE triggers. A search for 15+ features (`MERGE`, `NULLS NOT DISTINCT`, `UNIQUE NULLS`, `JSON_TABLE`, `JSON_EXISTS`, `JSON_QUERY`, `jsonb_path`, multiranges, `ANY_VALUE`, `SECURITY INVOKER`, `CREATE OR REPLACE TRIGGER`) finds none.
+
+**Done-when (section 1):** all eight met. 1: `test_s02_profile.py` and rows L to O. 2: the step 03 tests and rows L to O. 3: `test_done_when_a_rejected_candidate_keeps_its_reasons_and_the_requester_is_told` and rows N, O. 4: `test_done_when_an_accepted_candidate_is_registered`, the step 04 tests, rows L, M, P. 5: the eight outcome tests; six commit-visibility tests. 6: the guard proofs (checkpoints 1 and 2). 7: the profiling and model-call connection tests, endpoint and step level. 8: `1360 passed`.
+
+**Section 13 results** (Windows PowerShell, from `F:\amaze-cm-poc`):
+
+```
+pip install -r requirements-dev.txt   ... Requirement already satisfied ...          exit 0
+alembic upgrade head                  INFO ... Will assume transactional DDL.        exit 0
+                                      (PowerShell 5.1 shows alembic's INFO lines on stderr as NativeCommandError; exit 0)
+python -m core.seed                   glossary seed: 0 inserted, 33 already present  exit 0
+pytest -v                             1360 passed in 99.69s (0:01:39)                exit 0
+alembic current                       0014 (head)
+npm --prefix apps\backend-ui run build   ✓ built in 126ms                            exit 0
+npm --prefix apps\consumer-ui run build  ✓ built in 118ms                            exit 0
+dev.ps1                               OK Amaze API / OK Amaze backend-ui / OK Amaze consumer-ui
+                                      OK API health {"status":"ok","database":"ok",...,"unavailable":[]}
+```
+
+`dev.ps1`'s three windows were closed after the check by stopping the processes it started (11 listed by start time and command line, then one more: uvicorn's `--reload` multiprocessing child, which kept answering on port 8000 until stopped). Ports 8000, 5173 and 5174 are free.
+
+**Deviations:**
+1. **The browser run used the API and Vite servers started by hand** (the commands `dev.ps1` runs, without `--reload`), so they could be stopped cleanly; `dev.ps1` itself was run for section 13.
+2. **The sign-off form has "Start from the agent's recommendation"**, which fills the outcome and the gaps or reasons from the summary for the person to keep or change. Nothing is filled without the click.
+3. **The Feed view's actions show only for a user with `backend_team`**; other backend roles read the page.
+
+**Files changed outside section 11:** none.
