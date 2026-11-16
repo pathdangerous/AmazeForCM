@@ -87,6 +87,36 @@ def test_the_job_closes_a_list_whose_sources_left_the_catalogue(db_session, dail
     assert (statuses[gone.id], statuses[kept.id]) == ("no_source_found", "awaiting_source_choice")
 
 
+def test_the_job_closes_a_list_whose_only_source_was_rejected(db_session, daily, glossary, make_proposal):
+    """Phase 4 plan, assumption 25: a requirement that waits on a list whose only source the backend team
+    rejected is closed by the daily job, and the backend team is told it was rejected, not that it left
+    the catalogue (independent review, finding 5)."""
+    import dataclasses
+
+    from sqlalchemy import text
+
+    from core.repositories.feeds import FeedRepository
+    from core.repositories.notifications import NotificationRepository
+    from tests.onboarded import rejected_feed
+
+    req = RequirementRepository(db_session).create(requester_id="dev-requester", title="open price",
+                                                   element_keys=["open_price"])
+    make_proposal(kind="source_list", roles=("requester",), payload={"source_code": "syn_vendor_eod_prices"},
+                  requirement_id=req.id)
+    db_session.execute(text("UPDATE requirements SET status = 'awaiting_source_choice' WHERE id = :id"), {"id": req.id})
+    vendor = FeedRepository(db_session).create_candidate(
+        code="syn_vendor_eod_prices", name="Vendor end-of-day prices", source_code="syn_vendor_eod_prices",
+        connector="local_file", source_ref="files/vendor_eod_prices.csv")
+    rejected_feed(db_session, vendor.id)  # rejected for another requirement
+    db_session.commit()
+    dataclasses.replace(daily(), catalogue_loader=lambda: CATALOGUE).run()
+    assert RequirementRepository(db_session).get(req.id).status == "no_source_found"
+    [told] = [n for n in NotificationRepository(db_session).list_for("dev-backend-team")
+              if n.subject == "No source left: open price"]
+    assert told.body == (f"Requirement {req.id} (open price): every listed source was rejected by the backend "
+                         "team. It is now no_source_found; the requester can ask for a new scope.")
+
+
 async def start_and_stop(daily_fetch):
     """One API start-up and shutdown with this job; returns the jobs the scheduler held while running."""
     from apps.api.main import app

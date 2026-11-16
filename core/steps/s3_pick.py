@@ -132,8 +132,9 @@ def decline_source(session: Session, *, requirement_id: UUID, user: User, propos
 
 def close_if_nothing_to_pick(session: Session, *, requirement_id: UUID, catalogue: SourceCatalogue,
                              notifier: Notifier, backend_team: Sequence[str]) -> bool:
-    """A listed source that left the catalogue cannot be picked or declined. When no listed source is left,
-    the requirement becomes no_source_found and the backend team is told; the requester adds a note and
+    """A listed source that left the catalogue, or whose feed the backend team rejected (phase 4), cannot be
+    picked or declined. When no listed source is left,
+    the requirement becomes no_source_found and the backend team is told why; the requester adds a note and
     asks for a new scope (independent review, fix 7). Rules execute: nobody decides, and the proposals of
     the sources that left stay pending (assumption 37). True when it closed the list. Flushes only."""
     requirements = RequirementRepository(session)
@@ -141,8 +142,16 @@ def close_if_nothing_to_pick(session: Session, *, requirement_id: UUID, catalogu
     if requirement.status != "awaiting_source_choice" or listed_sources(session, requirement_id, catalogue):
         return False
     requirements.advance(requirement_id, "no_source_found")
+    # Why none is left (phase 4, independent review finding 5): rejected at step 03, gone from the catalogue,
+    # or some of each.
+    listed = {p.payload["source_code"]
+              for p in ProposalRepository(session).list_for_requirement(requirement_id, "source_list", "pending")}
+    rejected = listed & FeedRepository(session).rejected_source_codes()
+    why = ("was rejected by the backend team" if listed and rejected == listed
+           else "was rejected by the backend team or has left the catalogue" if rejected
+           else "has left the catalogue")
     for user_id in backend_team:
         notifier.notify(recipient=user_id, subject=f"No source left: {requirement.title}",
-                        body=f"Requirement {requirement_id} ({requirement.title}): every listed source has left "
-                             "the catalogue. It is now no_source_found; the requester can ask for a new scope.")
+                        body=f"Requirement {requirement_id} ({requirement.title}): every listed source {why}. "
+                             "It is now no_source_found; the requester can ask for a new scope.")
     return True
