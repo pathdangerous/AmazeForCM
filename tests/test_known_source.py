@@ -149,6 +149,31 @@ def test_a_rejected_source_is_not_a_known_source(db_session, requirement):
     assert result.check.reason == "no_known_source_covers"
 
 
+def test_a_source_rejected_between_the_check_and_the_lock_is_409(db_session, requirement, monkeypatch):
+    """The check is made unlocked, then the source code is locked. A rejection that commits in between is
+    found once the lock is held: SourceRejected (409), and nothing is written for the requirement."""
+    import core.steps.known_source as known_source
+    from core.repositories.errors import SourceRejected
+    from core.repositories.source_choices import SourceChoiceRepository
+    from tests.onboarded import rejected_feed
+
+    feed = find_known_source(db_session, requirement_id=requirement(["volume"]).id, catalogue=CATALOGUE).feed
+    later = requirement(["volume"])
+    original, done = known_source.lock_source, []
+
+    def rejected_meanwhile(session, code):  # the backend team's rejection commits just before this lock
+        if not done:  # once: feed_for takes the same lock again later
+            rejected_feed(session, feed.id)
+            done.append(code)
+        original(session, code)
+
+    monkeypatch.setattr(known_source, "lock_source", rejected_meanwhile)
+    with pytest.raises(SourceRejected, match="syn_exchange_volumes"):
+        find_known_source(db_session, requirement_id=later.id, catalogue=CATALOGUE)
+    assert SourceChoiceRepository(db_session).current(later.id) is None
+    assert RequirementRepository(db_session).get(later.id).status == "defined"
+
+
 def test_a_second_click_is_refused(db_session, requirement):
     req = requirement(["volume"])
     find_known_source(db_session, requirement_id=req.id, catalogue=CATALOGUE)

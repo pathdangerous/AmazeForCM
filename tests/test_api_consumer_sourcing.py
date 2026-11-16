@@ -452,8 +452,9 @@ async def test_the_requirement_page_shows_the_gaps_under_the_onboarding_message(
         ONBOARDING, "The backend team accepted Exchange daily volumes with gaps: Volumes before 2026-11-02 are missing.")
 
 
-async def test_a_rejected_source_is_409_on_find_source_and_pick(client):
-    """Listed before its rejection: the page no longer offers it, and a pick is 409."""
+async def test_a_rejected_source_is_no_longer_listed_and_its_pick_is_409(client):
+    """Listed before its rejection: the page no longer offers it, and a pick is 409. (Find a source never
+    offers a rejected known source; its 409 is a race, test_known_source.py's step test.)"""
     first, listed, _ = await scoped_and_listed(client)
     later, later_listed, _ = await scoped_and_listed(client, "open price again")
     vendor = listed[VENDOR]
