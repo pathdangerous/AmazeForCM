@@ -79,7 +79,7 @@ def _release_after_n_days(session: Session, feed_id: UUID, n: int, *, catalogue:
                                       RequirementRepository(session))
     last_fetched = fetches.latest_fetched(feed_id)
     released = []
-    for requirement_id in choices.requirements_selecting(feed_id):
+    for requirement_id in sorted(choices.requirements_selecting(feed_id)):  # id order (CLAUDE.md lock order)
         if requirements.lock(requirement_id).status != "source_selected":
             continue
         since = choices.current(requirement_id).created_at
@@ -176,7 +176,7 @@ def record_fetch(session: Session, attempt: FetchAttempt, *, notifier: Notifier,
                    size_bytes=attempt.size_bytes)
     requirements = RequirementRepository(session)
     moved = []
-    for requirement_id in SourceChoiceRepository(session).requirements_selecting(feed.id):
+    for requirement_id in sorted(SourceChoiceRepository(session).requirements_selecting(feed.id)):  # id order
         if requirements.lock(requirement_id).status == "source_selected":
             requirements.advance(requirement_id, "onboarding")
             moved.append(requirement_id)

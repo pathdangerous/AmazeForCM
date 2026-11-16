@@ -241,6 +241,34 @@ def fetch_with_rule(db_session, sources, blobs, feed, n):
                         release_after_days=n, catalogue=CATALOGUE)
 
 
+def test_both_loops_lock_the_requirements_in_id_order(db_session, requirement, sources, blobs, monkeypatch):
+    """CLAUDE.md's lock order: the feed row, then the requirements in id order (independent review, finding
+    7). The requirement selected first is given the larger id, so selection order is not id order."""
+    from sqlalchemy import text
+
+    feed, reqs = the_feed(db_session), sorted((requirement("volume a"), requirement("volume b")), key=lambda r: r.id)
+    for req, days in ((reqs[1], 5), (reqs[0], 3)):  # the larger id selected first
+        db_session.execute(text(
+            "INSERT INTO source_choices (requirement_id, version, action, feed_id, source_code, basis, created_at) "
+            "VALUES (:r, 1, 'selected', :f, 'syn_exchange_volumes', 'known_source', :at)"),
+            {"r": req.id, "f": feed.id, "at": ago(days)})
+        db_session.execute(text("UPDATE requirements SET status = 'source_selected' WHERE id = :id"), {"id": req.id})
+    db_session.expire_all()
+    locked, original = [], RequirementRepository.lock
+
+    def spy(self, requirement_id):
+        locked.append(requirement_id)
+        return original(self, requirement_id)
+
+    monkeypatch.setattr(RequirementRepository, "lock", spy)
+    remove_file(sources)
+    fetch_with_rule(db_session, sources, blobs, feed, 30)  # source_down: the N-day loop (nobody is released)
+    put_file(sources)
+    fetch_with_rule(db_session, sources, blobs, feed, 30)  # fetched: the onboarding loop
+    ids = [r.id for r in reqs]
+    assert locked == ids + ids
+
+
 def test_released_after_n_failed_days_in_a_row(db_session, requirement, sources, blobs):
     req, feed = selected_days_ago(db_session, requirement, 10)
     past_fetch(db_session, feed, ago(2))
