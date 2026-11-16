@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from core.domain.configuration import Mapping, MappingDraft, Rule, RuleDraft
 from core.domain.proposal import ProposalKind
-from core.repositories.errors import FeedNotFound, ProposalForAnotherFeed
+from core.repositories.errors import (
+    FeedNotFound,
+    FeedNotRegistered,
+    NotAProposalOption,
+    ProposalForAnotherFeed,
+    ProposalForAnotherField,
+)
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.tables import FeedRow, MappingRow, RuleRow
@@ -30,8 +36,23 @@ class MappingRepository:
         self._session = session
 
     def add_version(self, *, feed_id: UUID, source_field: str, element_key: str, proposal_id: UUID) -> Mapping:
+        """The column's next version, from an approved mapping proposal of this feed and column naming this
+        element among its candidates, on a registered feed (phase 5 plan, assumption 32; trigger
+        trg_mappings_b_matches_proposal checks the same). The caller holds the feed row lock."""
         draft = MappingDraft(source_field=source_field, element_key=element_key)
-        _check_feed_and_proposal(self._session, feed_id, proposal_id, "mapping")
+        feed = self._session.get(FeedRow, feed_id)
+        if feed is None:
+            raise FeedNotFound(f"No feed with id {feed_id}")
+        proposal = ProposalRepository(self._session).require_approved(proposal_id, kind="mapping")
+        if proposal.feed_id != feed_id:
+            raise ProposalForAnotherFeed(f"Proposal {proposal_id} is for feed {proposal.feed_id}, not {feed_id}")
+        if proposal.payload.get("source_field") != draft.source_field:
+            raise ProposalForAnotherField(f"Proposal {proposal_id} is for column "
+                                          f"{proposal.payload.get('source_field')!r}, not {draft.source_field!r}")
+        if draft.element_key not in proposal.payload.get("candidates", []):
+            raise NotAProposalOption(f"{draft.element_key} is not a candidate of proposal {proposal_id}")
+        if feed.stage != "registered":
+            raise FeedNotRegistered(f"Feed {feed_id} is {feed.stage}, not registered")
         GlossaryRepository(self._session).get_current(draft.element_key)  # raises UnknownGlossaryElement
         latest = self._session.scalar(
             select(func.max(MappingRow.version)).where(
@@ -60,6 +81,12 @@ class MappingRepository:
             .order_by(MappingRow.version)
         )
         return [Mapping.model_validate(r) for r in self._session.scalars(query)]
+
+    def rejected_elements(self, feed_id: UUID, source_field: str) -> set[str]:
+        """Every element a rejected mapping proposal of this column offered: not proposed again (assumption 27)."""
+        rejected = ProposalRepository(self._session).list_for_feed_column("mapping", feed_id, source_field,
+                                                                          status="rejected")
+        return {key for p in rejected for key in p.payload.get("candidates", [])}
 
 
 class RuleRepository:

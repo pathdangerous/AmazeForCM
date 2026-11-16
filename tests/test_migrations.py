@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0015"
+HEAD = "0016"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -23,7 +23,8 @@ PHASE_2_TABLES = {  # migration 0006
 PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes",  # migrations 0008 and 0009
                   "proposal_log_discards"}  # 0012
 PHASE_4_TABLES = {"feed_profiles", "feed_signoffs", "feed_registrations"}  # 0014
-TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES
+PHASE_5_TABLES = {"glossary_runs"}  # 0016
+TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES
 
 
 def _tables(url: str) -> set[str]:
@@ -205,6 +206,13 @@ REVIEWED_NULLABLE_CHECKS = {
         "row_count IS NOT NULL and detail IS NULL spelt out; outcome is NOT NULL: never NULL",
     "feed_profiles.ck_feed_profiles_spec_only_has_a_reason":
         "COALESCE(row_count, 0) and detail IS NOT NULL spelt out before btrim: never NULL",
+    # 0016 (phase 5 plan, section 6). Each has its NULL cases in test_db_configuration_guards.py.
+    "glossary_runs.ck_glossary_runs_running_has_a_lease": "IS NOT NULL on lease_until; status is NOT NULL: never NULL",
+    "glossary_runs.ck_glossary_runs_failed_has_an_error": "IS NOT NULL on error; status is NOT NULL: never NULL",
+    "glossary_runs.ck_glossary_runs_done_has_results": "IS NOT NULL on results; status is NOT NULL: never NULL",
+    "glossary_runs.ck_glossary_runs_finished_at_matches_status":
+        "IS NOT NULL on finished_at; status is NOT NULL: never NULL",
+    "glossary_runs.ck_glossary_runs_call_only_when_done": "IS NULL on proposal_log_id; status is NOT NULL: never NULL",
 }
 
 
@@ -391,6 +399,42 @@ def test_0014_downgrade_refuses_when_phase_4_rows_exist(scratch_schema):
             "'No data rows.', 'duckdb', 'b')"), {"f": feed, "x": fetch})
     with pytest.raises(DBAPIError, match="migration 0014"):
         command.downgrade(config, "0013")
+
+
+def test_0016_downgrade_refuses_when_a_glossary_run_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0016")
+    with engine.begin() as connection:
+        feed = connection.execute(text("INSERT INTO feeds (code, name) VALUES ('syn_a', 'A') RETURNING id")).scalar_one()
+        fetch = connection.execute(text("INSERT INTO source_fetches (feed_id, outcome, blob_ref, size_bytes) "
+                                        "VALUES (:f, 'fetched', 'raw/a.csv', 1) RETURNING id"), {"f": feed}).scalar_one()
+        profile = connection.execute(text(
+            "INSERT INTO feed_profiles (feed_id, version, fetch_id, outcome, row_count, columns, coverage, spec, "
+            "detail, engine, profiled_by) VALUES (:f, 1, :x, 'spec_only_low_confidence', 0, '[]', '[]', '{}', "
+            "'No data rows.', 'duckdb', 'b') RETURNING id"), {"f": feed, "x": fetch}).scalar_one()
+        connection.execute(text("INSERT INTO glossary_runs (feed_id, profile_id, reason, requested_by) "
+                                "VALUES (:f, :p, 'requested', 'dev-glossary-owner')"), {"f": feed, "p": profile})
+    with pytest.raises(DBAPIError, match="migration 0016 cannot be downgraded"):
+        command.downgrade(config, "0015")
+
+
+def test_0016_downgrade_restores_the_0015_guards(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0016")
+    command.downgrade(config, "0015")
+    with engine.connect() as connection:
+        body = connection.execute(text(
+            "SELECT prosrc FROM pg_proc WHERE proname = 'amaze_guard_proposal_change' "
+            "AND pronamespace = current_schema()::regnamespace")).scalar_one()
+        triggers = set(connection.execute(text(
+            "SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+            "WHERE c.relnamespace = current_schema()::regnamespace")).scalars())
+    assert "never changes again" not in body and "only status and decided_at change" in body
+    assert not {"trg_proposals_no_truncate", "trg_glossary_elements_b_option", "trg_mappings_b_matches_proposal"} & triggers
+    assert "glossary_runs" not in set(inspect(engine).get_table_names())
+    command.upgrade(config, "0016")
 
 
 def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_schema):

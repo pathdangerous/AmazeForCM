@@ -297,15 +297,15 @@ def test_a_summary_without_a_recommendation_cannot_be_signed_off(world, make_pro
 
 def test_the_signers_own_decision_must_be_the_one_d1_needs(world):
     """The independent review's scenario: the signer approved the summary; a second, rejected decision by
-    someone else is written by hand and the status set to rejected; then a sign-off that differs from the
-    recommendation. 0014 accepts it (a rejected decision exists); the signer's own row says approved."""
+    someone else is written by hand and the status set to rejected. From 0016 that forgery stops at the
+    proposal (approved -> rejected is refused), so the sign-off behind it is never reached (phase 5 plan,
+    assumption 34); trg_feed_signoffs_d_signer keeps its other tests."""
     profile = world.profile()
     proposal = world.proposal(profile, recommended="meets_with_gaps")  # the signer approved it
     world.s.execute(text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
                          "VALUES (:p, 2, 'data_steward', 'dev-data-steward', 'rejected')"), {"p": proposal})
-    world.s.execute(text("UPDATE proposals SET status = 'rejected' WHERE id = :p"), {"p": proposal})
-    refused(world.s, "the signer dev-backend-team decided proposal .* as approved; a sign-off of meets needs rejected",
-            World.SIGNOFF, **world.signoff_params(profile, proposal, outcome="meets"))
+    refused(world.s, "a decided proposal never changes again", "UPDATE proposals SET status = 'rejected' WHERE id = :p",
+            p=proposal)
 
 
 def test_the_d1_paths_still_sign_off(world):
@@ -376,13 +376,12 @@ def test_an_approved_summary_with_a_required_role_missing_cannot_be_signed_off(w
 
 
 def test_a_rejected_summary_with_no_rejected_approval_cannot_be_signed_off(world):
+    """From 0016 an approved summary cannot be forged to rejected at all (phase 5 plan, assumption 34): the
+    proposal guard refuses it before amaze_require_signoff_decision's branch could be reached."""
     profile = world.profile()
     proposal = world.proposal(profile, recommended="meets_with_gaps", decision="approved")
-    world.s.execute(text("UPDATE proposals SET status = 'rejected' WHERE id = :p"), {"p": proposal})
-    answered_by(world.s, "is rejected with no rejected decision in approvals", World.SIGNOFF,
-                world.signoff_params(profile, proposal),
-                _branch_off("amaze_require_signoff_decision",
-                            "proposal % is rejected with no rejected decision in approvals"))
+    refused(world.s, "a decided proposal never changes again", "UPDATE proposals SET status = 'rejected' WHERE id = :p",
+            p=proposal)
 
 
 def test_a_summary_of_another_feed_cannot_be_signed_off(world):

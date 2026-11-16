@@ -1,8 +1,8 @@
 """GlossaryRepository: versioned glossary elements.
 
 - add_seed_element: version 1 of a key that does not exist yet, created_by "seed", no proposal.
-- add_version: the next version of a key (or version 1 of a new key), only from an approved
-  glossary_element proposal (rule 1). Nothing is ever updated or deleted (rule 7).
+- add_version: one option of an approved glossary_element proposal (rule 1): a new element at version 1,
+  or an alias as the next version of its key (phase 5). Nothing is ever updated or deleted (rule 7).
 """
 
 from __future__ import annotations
@@ -16,11 +16,14 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 from core.domain.glossary import GlossaryElement, GlossaryElementDraft
-from core.repositories.errors import UnknownGlossaryElement
+from core.domain.mapping import ElementOption
+from core.repositories.errors import NotAProposalOption, PhraseTaken, UnknownGlossaryElement
 from core.repositories.proposals import ProposalRepository
 from core.repositories.tables import GlossaryElementRow as Row
+from core.steps.matching import words
 
 SEED = "seed"
+GLOSSARY_LOCK = "amaze:glossary"
 
 
 class GlossaryRepository:
@@ -89,13 +92,41 @@ class GlossaryRepository:
         self._insert(draft, version=1, created_by=SEED, proposal_id=None)
         return True
 
-    def add_version(self, *, proposal_id: UUID, created_by: str, **fields: Any) -> GlossaryElement:
-        draft = GlossaryElementDraft(**fields)
+    def lock(self) -> None:
+        """The advisory lock on the glossary, held until the transaction ends. Last in the lock order (phase 5
+        plan, assumption 49); the next element version and phrases_taken() are read after it."""
+        self._session.execute(select(func.pg_advisory_xact_lock(func.hashtext(GLOSSARY_LOCK))))
+
+    def phrases_taken(self, draft: GlossaryElementDraft) -> list[tuple[str, str]]:
+        """Each (phrase, owner key) where another current element owns a key, name or alias of draft, by
+        words (matching.words), so "Close price" and close_price are one phrase."""
+        wanted = {words(p): p for p in (draft.key, draft.name, *draft.aliases)}
+        taken = []
+        for element in self.list_current():
+            if element.key == draft.key:
+                continue
+            for p in (element.key, element.name, *element.aliases):
+                if words(p) in wanted:
+                    taken.append((wanted[words(p)], element.key))
+        return sorted(set(taken))
+
+    def add_version(self, *, proposal_id: UUID, created_by: str, option: ElementOption) -> GlossaryElement:
+        """Write one option of an approved glossary_element proposal (phase 5 plan, assumption 17): a new
+        element at version 1, or an alias as the key's next version, equal to the last but for the alias.
+        The caller holds lock() and has checked phrases_taken()."""
         if not created_by.strip() or created_by == SEED:
             raise ValueError("created_by must name the person, and cannot be 'seed'")
-        ProposalRepository(self._session).require_approved(proposal_id, kind="glossary_element")
-        latest = self._session.scalar(select(func.max(Row.version)).where(Row.key == draft.key))
-        return self._insert(draft, version=(latest or 0) + 1, created_by=created_by, proposal_id=proposal_id)
+        proposal = ProposalRepository(self._session).require_approved(proposal_id, kind="glossary_element")
+        if option.model_dump(mode="json") not in proposal.payload.get("options", []):
+            raise NotAProposalOption(f"Proposal {proposal_id} does not offer {option.kind} {option.key}")
+        if option.kind == "new_element":
+            if self.exists(option.key):
+                raise PhraseTaken(f"The key {option.key!r} is already a glossary element")
+            return self._insert(option.element, version=1, created_by=created_by, proposal_id=proposal_id)
+        last = self.get_current(option.key)
+        draft = GlossaryElementDraft(key=last.key, name=last.name, domain=last.domain, data_type=last.data_type,
+                                     definition=last.definition, aliases=[*last.aliases, option.alias])
+        return self._insert(draft, version=last.version + 1, created_by=created_by, proposal_id=proposal_id)
 
     # ---- helpers
 

@@ -32,6 +32,7 @@ from core.domain.consumer_request import ROUTING_OUTCOMES
 from core.domain.feed import CONNECTORS, FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.load import LOAD_STATUSES
+from core.domain.mapping import GLOSSARY_RUN_REASONS, GLOSSARY_RUN_STATUSES
 from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
@@ -102,6 +103,9 @@ class ProposalRow(Base):
         CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="status"),
         CheckConstraint("(status = 'pending') = (decided_at IS NULL)", name="decided_at_matches_status"),
         Index("ix_proposals_status", "status"),
+        # 0016: one pending proposal of these kinds per feed and column
+        Index("uq_proposals_one_pending_per_feed_column", "kind", "feed_id", text("(payload ->> 'source_field')"),
+              unique=True, postgresql_where=text("status = 'pending' AND kind IN ('glossary_element', 'mapping')")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -153,6 +157,8 @@ class GlossaryElementRow(Base):
         CheckConstraint("length(btrim(name)) > 0 AND length(btrim(definition)) > 0", name="text_present"),
         # Rule 1: only the seed may create an element without an approved proposal.
         CheckConstraint("(proposal_id IS NULL) = (created_by = 'seed')", name="proposal_unless_seed"),
+        Index("uq_glossary_elements_proposal_id", "proposal_id", unique=True,
+              postgresql_where=text("proposal_id IS NOT NULL")),  # 0016: one row per proposal
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -445,6 +451,45 @@ class FeedRegistrationRow(Base):
     registered_by: Mapped[str] = mapped_column(Text)
 
 
+class GlossaryRunRow(Base):
+    """Step 05: one GlossaryBuilderAgent run for one feed (migration 0016). Operational state, not
+    append-only: its status moves queued -> running -> done or failed (running again on a new attempt),
+    a finished run never changes, DELETE and TRUNCATE are refused. One queued or running run per feed."""
+
+    __tablename__ = "glossary_runs"
+    __table_args__ = (
+        CheckConstraint(_in("reason", GLOSSARY_RUN_REASONS), name="reason"),
+        CheckConstraint(_in("status", GLOSSARY_RUN_STATUSES), name="status"),
+        CheckConstraint("attempt >= 0", name="attempt"),
+        CheckConstraint("length(btrim(requested_by)) > 0", name="requested_by"),
+        CheckConstraint("status <> 'running' OR lease_until IS NOT NULL", name="running_has_a_lease"),
+        CheckConstraint("(status = 'failed') = (error IS NOT NULL)", name="failed_has_an_error"),
+        CheckConstraint("(status = 'done') = (results IS NOT NULL)", name="done_has_results"),
+        CheckConstraint("(status IN ('done', 'failed')) = (finished_at IS NOT NULL)",
+                        name="finished_at_matches_status"),
+        CheckConstraint("proposal_log_id IS NULL OR status = 'done'", name="call_only_when_done"),
+        Index("ix_glossary_runs_feed_id", "feed_id"),
+        Index("uq_glossary_runs_one_active_per_feed", "feed_id", unique=True,
+              postgresql_where=text("status IN ('queued', 'running')")),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feed_profiles.id"))
+    reason: Mapped[str] = mapped_column(Text)
+    columns: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
+    requested_by: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="queued", server_default="queued")
+    attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    proposal_log_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposal_log.id"))
+    results: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class MappingRow(Base):
     """Level 1 mapping: one source field to one glossary element. Append-only.
 
@@ -456,6 +501,7 @@ class MappingRow(Base):
         UniqueConstraint("feed_id", "source_field", "version"),
         CheckConstraint("length(btrim(source_field)) > 0", name="source_field"),
         CheckConstraint("version >= 1", name="version"),
+        Index("uq_mappings_proposal_id", "proposal_id", unique=True),  # 0016: one row per proposal
     )
 
     id: Mapped[uuid.UUID] = _id()

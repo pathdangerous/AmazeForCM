@@ -39,14 +39,10 @@ def _feed_with_glossary(db_session, request):
 
 
 def _mappings_row(db_session, request):
-    from core.repositories.configuration import MappingRepository
+    from tests.configured import approved_mapping
 
     feed = _feed_with_glossary(db_session, request)
-    proposal = request.getfixturevalue("approved_proposal")(kind="mapping")
-    mapping = MappingRepository(db_session).add_version(
-        feed_id=feed.id, source_field="Probe", element_key="append_only_probe", proposal_id=proposal.id
-    )
-    return "mappings", mapping.id
+    return "mappings", approved_mapping(db_session, feed.id, "Probe", "append_only_probe").id
 
 
 def _rules_row(db_session, request):

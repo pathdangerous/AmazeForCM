@@ -157,8 +157,7 @@ async def test_done_when_missing_data_raises_a_requirement_and_shows_its_status(
 # ---- requests: listing, ownership, terms
 
 
-async def test_my_requests_lists_every_outcome(client, db_session, approved_proposal):
-    from core.repositories.configuration import MappingRepository
+async def test_my_requests_lists_every_outcome(client, db_session):
     from core.repositories.feeds import FeedRepository
     from core.repositories.loads import LoadRepository
 
@@ -166,8 +165,9 @@ async def test_my_requests_lists_every_outcome(client, db_session, approved_prop
     from tests.onboarded import registered_feed
 
     feed = registered_feed(db_session, feeds.create_candidate(code="synthetic_feed", name="Synthetic").id)
-    MappingRepository(db_session).add_version(feed_id=feed.id, source_field="Vol", element_key="volume",
-                                              proposal_id=approved_proposal(kind="mapping").id)
+    from tests.configured import approved_mapping
+
+    approved_mapping(db_session, feed.id, "Vol", "volume")
     loads = LoadRepository(db_session)
     loads.set_status(loads.create(feed_id=feed.id, file_ref="local://raw/x.csv").id, "released")
     db_session.commit()

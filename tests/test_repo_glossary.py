@@ -63,31 +63,73 @@ def test_unknown_element(repo):
     assert repo.exists("no_such_key") is False
 
 
-def test_new_version_needs_an_approved_glossary_proposal(seeded, make_proposal, approved_proposal):
-    changed = {**ISIN, "definition": "ISO 6166 identifier of the instrument. Synthetic test wording."}
-    pending = make_proposal(kind="glossary_element", roles=("glossary_owner",))
+GLENN = "dev-glossary-owner"
+
+
+def test_new_version_needs_an_approved_glossary_proposal(seeded, db_session, make_proposal, approved_proposal):
+    from tests.configured import alias, glossary_proposal
+
+    option = alias("isin", "isin_number")
+    pending = glossary_proposal(db_session, [option])
     with pytest.raises(ProposalNotApproved):
-        seeded.add_version(**changed, proposal_id=pending.id, created_by="dev-glossary-owner")
+        seeded.add_version(option=option, proposal_id=pending.id, created_by=GLENN)
     wrong_kind = approved_proposal(kind="mapping", roles=("data_steward",))
     with pytest.raises(WrongProposalKind):
-        seeded.add_version(**changed, proposal_id=wrong_kind.id, created_by="dev-glossary-owner")
+        seeded.add_version(option=option, proposal_id=wrong_kind.id, created_by=GLENN)
     assert seeded.get_current("isin").version == 1
 
 
-def test_approved_change_adds_a_version_and_keeps_history(seeded, approved_proposal):
-    proposal = approved_proposal(kind="glossary_element", roles=("glossary_owner",))
-    changed = {**ISIN, "definition": "ISO 6166 identifier of the instrument. Synthetic test wording."}
-    element = seeded.add_version(**changed, proposal_id=proposal.id, created_by="dev-glossary-owner")
-    assert (element.version, element.proposal_id) == (2, proposal.id)
-    assert seeded.get_current("isin").definition == changed["definition"]
-    assert [(e.version, e.created_by) for e in seeded.history("isin")] == [(1, "seed"), (2, "dev-glossary-owner")]
+def test_an_approved_alias_adds_the_next_version_equal_but_for_the_alias(seeded, db_session):
+    from tests.configured import alias, approved_element
+
+    element = approved_element(db_session, alias("isin", "isin_number"))
+    assert (element.version, element.aliases, element.created_by) == (2, ["isin_code", "isin_number"], GLENN)
+    assert (element.name, element.definition) == (ISIN["name"], ISIN["definition"])
+    assert [(e.version, e.created_by) for e in seeded.history("isin")] == [(1, "seed"), (2, GLENN)]
     assert [e.key for e in seeded.list_current()] == ["close_price", "isin"]  # still one row per key
 
 
-def test_approved_new_element_starts_at_version_1(repo, approved_proposal):
-    proposal = approved_proposal(kind="glossary_element", roles=("glossary_owner",))
-    element = repo.add_version(**CLOSE, proposal_id=proposal.id, created_by="dev-glossary-owner")
-    assert element.version == 1
+def test_an_approved_new_element_starts_at_version_1(repo, db_session):
+    from tests.configured import approved_element, new_element
+
+    element = approved_element(db_session, new_element("score_year", data_type="integer"))
+    assert (element.key, element.version, element.data_type) == ("score_year", 1, "integer")
+
+
+def test_only_an_option_the_proposal_offers_is_written(seeded, db_session):
+    from core.repositories.errors import NotAProposalOption
+    from tests.configured import alias, glossary_proposal
+
+    proposal = glossary_proposal(db_session, [alias("isin", "isin_number")], decision="approved")
+    with pytest.raises(NotAProposalOption):
+        seeded.add_version(option=alias("isin", "something_else"), proposal_id=proposal.id, created_by=GLENN)
+
+
+def test_a_new_element_whose_key_exists_is_phrase_taken(seeded, db_session):
+    from core.repositories.errors import PhraseTaken
+    from tests.configured import glossary_proposal, new_element
+
+    option = new_element("isin")
+    proposal = glossary_proposal(db_session, [option], decision="approved")
+    with pytest.raises(PhraseTaken):
+        seeded.add_version(option=option, proposal_id=proposal.id, created_by=GLENN)
+
+
+def test_phrases_taken_names_each_phrase_another_element_owns(seeded):
+    from core.domain.glossary import GlossaryElementDraft
+
+    draft = GlossaryElementDraft(key="closing", name="Close Price", domain="pricing", data_type="decimal",
+                                 definition="d", aliases=["isin_code", "fresh_alias"])
+    assert seeded.phrases_taken(draft) == [("Close Price", "close_price"), ("isin_code", "isin")]
+    own = GlossaryElementDraft(**{**ISIN, "aliases": ["isin_code", "isin_number"]})
+    assert seeded.phrases_taken(own) == []  # an element's own phrases are not taken
+
+
+def test_the_glossary_lock_is_an_advisory_lock_held_to_the_end_of_the_transaction(repo, db_session):
+    repo.lock()
+    held = db_session.execute(text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                                   "AND pid = pg_backend_pid()")).scalar_one()
+    assert held == 1
 
 
 def test_database_refuses_a_non_seed_element_without_a_proposal(db_session):

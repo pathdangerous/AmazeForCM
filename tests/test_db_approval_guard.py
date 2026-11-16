@@ -73,15 +73,30 @@ TABLES = {
 }
 OTHER_KIND = {"mapping": ("rule", STEWARD_THEN_CHECKER), "rule": ("mapping", ("data_steward",)),
               "glossary_element": ("mapping", ("data_steward",))}
+# From 0016 an accepted row must also match its proposal (trg_..._b_...; test_db_configuration_guards.py):
+# the proposal of the accepted case has the real payload and, for a mapping, the feed.
+REAL_PAYLOAD = {
+    "mapping": {"source_field": "GuardField", "column_type": None, "candidates": ["close_price"],
+                "recommended": "close_price", "reason": "Synthetic."},
+    "rule": {"note": "synthetic"},
+    "glossary_element": {"source_field": "guard", "outcome": "proposed", "recommended": 0, "reason": "Synthetic.",
+                         "run_id": "00000000-0000-0000-0000-000000000000", "options": [
+                             {"kind": "new_element", "key": "guard_element", "alias": None, "element": {
+                                 "key": "guard_element", "name": "Guard", "domain": "pricing", "data_type": "string",
+                                 "definition": "Synthetic.", "aliases": []}}]},
+}
 
 
 @pytest.fixture
 def feed(db_session):
+    from tests.onboarded import registered_feed
+
     GlossaryRepository(db_session).add_seed_element(
         key="close_price", name="Close price", domain="pricing", data_type="decimal",
         definition="Synthetic definition.", aliases=[],
     )
-    return FeedRepository(db_session).create_candidate(code="guard_feed", name="Guard feed")
+    return registered_feed(db_session, FeedRepository(db_session).create_candidate(code="guard_feed",
+                                                                                   name="Guard feed").id)
 
 
 def _insert(db_session, table, feed, proposal_id):
@@ -91,7 +106,8 @@ def _insert(db_session, table, feed, proposal_id):
 @pytest.mark.parametrize("table", sorted(TABLES))
 def test_accepts_a_properly_approved_proposal(db_session, feed, approved_proposal, table):
     kind, roles, _ = TABLES[table]
-    _insert(db_session, table, feed, approved_proposal(kind=kind, roles=roles).id)
+    links = {"feed_id": feed.id} if kind == "mapping" else {}
+    _insert(db_session, table, feed, approved_proposal(kind=kind, roles=roles, payload=REAL_PAYLOAD[kind], **links).id)
     assert db_session.execute(text(f"SELECT count(*) FROM {table} WHERE proposal_id IS NOT NULL")).scalar_one() == 1
 
 
@@ -151,9 +167,11 @@ def test_refuses_a_proposal_rejected_at_step_two_and_forced_approved(db_session,
     repo = ProposalRepository(db_session)
     repo.record_decision(proposal.id, user=dev_user_for(roles[0]), decision="approved")
     repo.record_decision(proposal.id, user=dev_user_for("operations"), decision="rejected")
-    _force_approved(db_session, proposal.id)
-    with pytest.raises(IntegrityError, match="has a rejected decision"):
-        _insert(db_session, table, feed, proposal.id)
+    # From 0016 the forgery itself is refused (phase 5 plan, assumption 34); 0005's "has a rejected
+    # decision" branch keeps test_refuses_a_fully_approved_proposal_with_an_extra_rejected_row.
+    from sqlalchemy.exc import DBAPIError
+    with pytest.raises(DBAPIError, match="a decided proposal never changes again"):
+        _force_approved(db_session, proposal.id)
 
 
 @pytest.mark.parametrize("table", sorted(TABLES))

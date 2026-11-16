@@ -37,14 +37,12 @@ def feed(db_session, glossary):
 
 
 @pytest.fixture
-def map_field(db_session, approved_proposal):
-    """Add the next mapping version of a source field, from its own approved proposal."""
+def map_field(db_session):
+    """Add the next mapping version of a source field, from its own approved proposal (tests/configured.py)."""
+    from tests.configured import approved_mapping
 
     def _map(feed, source_field, element_key):
-        return MappingRepository(db_session).add_version(
-            feed_id=feed.id, source_field=source_field, element_key=element_key,
-            proposal_id=approved_proposal(kind="mapping").id,
-        )
+        return approved_mapping(db_session, feed.id, source_field, element_key)
 
     return _map
 
@@ -69,11 +67,18 @@ def test_registered_feed_with_a_released_load_and_a_current_mapping(coverage, fe
     assert coverage.in_domains([]) == set()
 
 
-def test_a_feed_that_is_not_registered_does_not_count(coverage, feed, map_field, db_session):
+def test_a_feed_that_is_not_registered_does_not_count(coverage, feed, db_session, approved_proposal):
+    """From 0016 a candidate feed cannot be mapped at all (FeedNotRegistered); a released load written by
+    hand still does not make it count: the stage check holds on its own."""
+    from core.repositories.errors import FeedNotRegistered
+
     candidate = feed(registered=False)
-    map_field(candidate, "ClosePx", "close_price")
-    # The repository gives loads only to registered feeds, so the released load is written by hand:
-    # the stage check must hold on its own.
+    proposal = approved_proposal(kind="mapping", feed_id=candidate.id, payload={
+        "source_field": "ClosePx", "column_type": None, "candidates": ["close_price"],
+        "recommended": "close_price", "reason": "Synthetic."})
+    with pytest.raises(FeedNotRegistered):
+        MappingRepository(db_session).add_version(feed_id=candidate.id, source_field="ClosePx",
+                                                  element_key="close_price", proposal_id=proposal.id)
     db_session.execute(
         text("INSERT INTO loads (feed_id, file_ref, status) VALUES (:f, 'local://raw/x.csv', 'released')"),
         {"f": candidate.id},

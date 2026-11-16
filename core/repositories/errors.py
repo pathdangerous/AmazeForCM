@@ -134,6 +134,41 @@ class SourceNotInProposal(RepositoryError):
     """The proposal does not name this source."""
 
 
+# ---- phase 5: glossary runs, glossary proposals and mappings (all 409 unless said)
+
+
+class ProposalForAnotherField(RepositoryError):
+    """The proposal is for another column of the feed than the configuration being created."""
+
+
+class NotAProposalOption(RepositoryError):
+    """The element, alias or candidate is not one the proposal offers (the step answers 422 first)."""
+
+
+class PhraseTaken(RepositoryError):
+    """Another current glossary element already owns a key, name or alias of the new version."""
+
+
+class NothingToMap(RepositoryError):
+    """The feed's latest profile has no column to look at."""
+
+
+class MappingAlreadyProposed(RepositoryError):
+    """A column of the request got a pending mapping proposal while the agent was answering."""
+
+
+class ElementAlreadyMapped(RepositoryError):
+    """Another column of the feed is currently mapped to this element."""
+
+
+class RunSuperseded(RepositoryError):
+    """The glossary run is no longer running on this attempt: its lease passed and another worker took it."""
+
+
+class GlossaryRunNotFound(RepositoryError, LookupError):
+    """No glossary run has this id."""
+
+
 # ---- loads and products
 
 

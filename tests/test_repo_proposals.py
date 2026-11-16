@@ -186,3 +186,20 @@ def test_database_refuses_a_pending_proposal_with_a_decision_time(db_session, ma
     proposal = make_proposal()
     with pytest.raises(IntegrityError, match="ck_proposals_decided_at_matches_status"):
         db_session.execute(text("UPDATE proposals SET decided_at = now() WHERE id = :id"), {"id": proposal.id})
+
+
+# ---------------------------------------------------------------- phase 5: proposals of one column of a feed
+
+
+def test_proposals_of_one_column_and_the_pending_one(repo, db_session):
+    from tests.configured import a_registered_feed, mapping_proposal
+
+    feed = a_registered_feed(db_session)
+    rejected = mapping_proposal(db_session, feed, "px", ["close_price"], decision="rejected")
+    pending = mapping_proposal(db_session, feed, "px", ["mid_price"])
+    mapping_proposal(db_session, feed, "qty", ["volume"])
+    assert [p.id for p in repo.list_for_feed_column("mapping", feed, "px")] == [rejected.id, pending.id]
+    assert [p.id for p in repo.list_for_feed_column("mapping", feed, "px", status="rejected")] == [rejected.id]
+    assert repo.pending_for_column("mapping", feed, "px").id == pending.id
+    assert repo.pending_for_column("glossary_element", feed, "px") is None
+    assert repo.pending_for_column("mapping", feed, "other") is None

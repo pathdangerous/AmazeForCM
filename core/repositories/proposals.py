@@ -71,6 +71,22 @@ class ProposalRepository:
             query = query.where(ProposalRow.status == status)
         return [Proposal.model_validate(row) for row in self._session.scalars(query)]
 
+    def list_for_feed_column(self, kind: ProposalKind, feed_id: UUID, source_field: str,
+                             status: ProposalStatus | None = None) -> list[Proposal]:
+        """This feed's proposals of one kind for one column (the payload's source_field), oldest first."""
+        query = (select(ProposalRow)
+                 .where(ProposalRow.kind == kind, ProposalRow.feed_id == feed_id,
+                        ProposalRow.payload["source_field"].astext == source_field)
+                 .order_by(ProposalRow.created_at, ProposalRow.id))
+        if status is not None:
+            query = query.where(ProposalRow.status == status)
+        return [Proposal.model_validate(row) for row in self._session.scalars(query)]
+
+    def pending_for_column(self, kind: ProposalKind, feed_id: UUID, source_field: str) -> Proposal | None:
+        """The one pending proposal of this kind for this column (uq_proposals_one_pending_per_feed_column)."""
+        found = self.list_for_feed_column(kind, feed_id, source_field, status="pending")
+        return found[0] if found else None
+
     def approvals(self, proposal_id: UUID) -> list[Approval]:
         rows = self._session.scalars(
             select(ApprovalRow).where(ApprovalRow.proposal_id == proposal_id).order_by(ApprovalRow.step)

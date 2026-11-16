@@ -311,3 +311,74 @@ def test_source_fetch_draft_validates(valid, bad):
     SourceFetchDraft(**valid)
     with pytest.raises(ValidationError):
         SourceFetchDraft(**{**valid, **bad})
+
+
+# ---- phase 5, task 4: glossary runs and the two proposal payloads
+
+from core.domain.mapping import (  # noqa: E402
+    GLOSSARY_OUTCOMES,
+    GLOSSARY_RUN_REASONS,
+    GLOSSARY_RUN_STATUSES,
+    ElementOption,
+    GlossaryProposalPayload,
+    MappingProposalPayload,
+)
+
+NEW_ELEMENT = {"key": "score_year", "name": "Score year", "domain": "pricing", "data_type": "integer",
+               "definition": "Synthetic."}
+
+
+def test_the_phase_5_lists_are_the_plans():
+    assert GLOSSARY_OUTCOMES == ("proposed", "duplicate_alias", "conflict_to_owner")
+    assert GLOSSARY_RUN_REASONS == ("registered", "requested", "sent_back")
+    assert GLOSSARY_RUN_STATUSES == ("queued", "running", "done", "failed")
+
+
+@pytest.mark.parametrize("bad", [
+    {"kind": "new_element", "key": "score_year"},  # no element
+    {"kind": "new_element", "key": "other_key", "element": NEW_ELEMENT},  # element under another key
+    {"kind": "new_element", "key": "score_year", "element": NEW_ELEMENT, "alias": "x"},
+    {"kind": "alias", "key": "isin"},  # no alias
+    {"kind": "alias", "key": "isin", "alias": "Bad Alias"},
+    {"kind": "alias", "key": "isin", "alias": "x", "element": NEW_ELEMENT},
+])
+def test_an_element_option_has_one_shape_per_kind(bad):
+    ElementOption(kind="new_element", key="score_year", element=NEW_ELEMENT)
+    ElementOption(kind="alias", key="isin", alias="isin_number")
+    with pytest.raises(ValidationError):
+        ElementOption(**bad)
+
+
+def _glossary_payload(**more):
+    option = {"kind": "new_element", "key": "score_year", "element": NEW_ELEMENT}
+    return {"source_field": "score_year", "outcome": "proposed", "options": [option], "recommended": 0,
+            "reason": "r", "run_id": "00000000-0000-0000-0000-000000000000", **more}
+
+
+@pytest.mark.parametrize("bad", [
+    {"recommended": None},  # proposed recommends its one option
+    {"outcome": "conflict_to_owner"},  # a conflict recommends nothing
+    {"source_field": " "},
+    {"outcome": "mapped"},
+    {"extra": 1},
+])
+def test_a_glossary_payload_recommends_by_its_outcome(bad):
+    GlossaryProposalPayload(**_glossary_payload())
+    GlossaryProposalPayload(**_glossary_payload(outcome="conflict_to_owner", recommended=None, options=[]))
+    with pytest.raises(ValidationError):
+        GlossaryProposalPayload(**_glossary_payload(**bad))
+
+
+@pytest.mark.parametrize("bad", [
+    {"candidates": []}, {"candidates": ["isin", "isin"], "recommended": None}, {"candidates": [f"k{n}" for n in range(11)]},
+    {"recommended": None},  # one candidate is recommended
+    {"candidates": ["isin", "cusip"]},  # a tie recommends nothing
+    {"source_field": ""},
+])
+def test_a_mapping_payload_recommends_its_one_candidate_and_never_a_tie(bad):
+    valid = {"source_field": "isin", "column_type": "VARCHAR", "candidates": ["isin"], "recommended": "isin",
+             "reason": "r"}
+    MappingProposalPayload(**valid)
+    MappingProposalPayload(**{**valid, "candidates": ["isin", "cusip"], "recommended": None})
+    with pytest.raises(ValidationError):
+        MappingProposalPayload(**{**valid, **bad})

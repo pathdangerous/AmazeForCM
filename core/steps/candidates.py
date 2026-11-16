@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from core.domain.glossary import GlossaryElementDraft
-from core.domain.mapping import Candidate, ElementOption, NewColumn
+from core.domain.mapping import Candidate, ElementOption, GlossaryOutcome, NewColumn
 from core.domain.profiling import FileColumn, SourceSpec
 from core.steps.matching import Words, words
 
@@ -180,9 +180,6 @@ def covered_by(column: NewColumn, elements: Iterable[Element], *, mapped: Iterab
 
 
 # ---------------------------------------------------------------- classify (assumption 14)
-
-GlossaryOutcome = Literal["proposed", "duplicate_alias", "conflict_to_owner"]
-
 
 @dataclass(frozen=True)
 class Classified:

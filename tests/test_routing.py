@@ -164,9 +164,8 @@ def test_restricted_product_still_counts():
 
 
 @pytest.fixture
-def in_the_domains(db_session, approved_proposal):
+def in_the_domains(db_session):
     """Put elements in the domains: a registered feed with a released load and current mappings."""
-    from core.repositories.configuration import MappingRepository
     from core.repositories.feeds import FeedRepository
     from core.repositories.loads import LoadRepository
 
@@ -175,9 +174,10 @@ def in_the_domains(db_session, approved_proposal):
         from tests.onboarded import registered_feed
 
         feed = registered_feed(db_session, feeds.create_candidate(code="synthetic_feed", name="Synthetic feed").id)
+        from tests.configured import approved_mapping
+
         for key in keys:
-            MappingRepository(db_session).add_version(feed_id=feed.id, source_field=key.upper(), element_key=key,
-                                                      proposal_id=approved_proposal(kind="mapping").id)
+            approved_mapping(db_session, feed.id, key.upper(), key)
         loads = LoadRepository(db_session)
         loads.set_status(loads.create(feed_id=feed.id, file_ref="local://raw/synthetic.csv").id, "released")
 
