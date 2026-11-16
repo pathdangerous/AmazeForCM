@@ -37,7 +37,8 @@ class GlossaryBuilderAgent(Agent):
                 continue
             payload = GlossaryProposalPayload(source_field=column.name, outcome=classified.outcome,
                                               options=classified.options, recommended=classified.recommended,
-                                              reason=answer.reason, run_id=agent_input.run_id)
+                                              clashes=classified.clashes, reason=answer.reason,
+                                              run_id=agent_input.run_id)
             drafts.append(AgentProposal(kind="glossary_element", feed_id=agent_input.feed_id,
                                         payload=payload.model_dump(mode="json")))
         return drafts

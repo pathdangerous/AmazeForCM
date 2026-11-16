@@ -45,6 +45,11 @@ class ProposalRepository:
     def get(self, proposal_id: UUID) -> Proposal:
         return Proposal.model_validate(self._row(proposal_id))
 
+    def lock(self, proposal_id: UUID) -> Proposal:
+        """The proposal, its row locked until the transaction ends and read fresh (phase 5 lock order: after
+        the feed row, before the glossary lock)."""
+        return Proposal.model_validate(self._row(proposal_id, lock=True))
+
     def list(self, status: ProposalStatus | None = None, kind: ProposalKind | None = None) -> list[Proposal]:
         query = select(ProposalRow).order_by(ProposalRow.created_at.desc(), ProposalRow.id)
         if status is not None:

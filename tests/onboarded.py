@@ -38,11 +38,13 @@ def fetched(session, feed_id: UUID):
                                                  blob_ref=f"raw/test/{feed_id}/f.csv", size_bytes=10)
 
 
-def profiled(session, feed_id: UUID, *, outcome: str = "profiled") -> FeedProfile:
-    fields = ({"row_count": 1, "columns": [COLUMN]} if outcome == "profiled"
+def profiled(session, feed_id: UUID, *, outcome: str = "profiled", spec: SourceSpec = SPEC,
+             columns: Sequence[FileColumn] = (COLUMN,)) -> FeedProfile:
+    """spec and columns: what the profile says (phase 5: the columns steps 05 and 06 look at)."""
+    fields = ({"row_count": 1, "columns": list(columns)} if outcome == "profiled"
               else {"row_count": 0, "columns": [], "detail": "The file has a header and no data rows."})
     return FeedProfileRepository(session).add_version(
-        feed_id=feed_id, fetch_id=fetched(session, feed_id).id, outcome=outcome, coverage=[], spec=SPEC,
+        feed_id=feed_id, fetch_id=fetched(session, feed_id).id, outcome=outcome, coverage=[], spec=spec,
         engine="duckdb 1.5.6", profiled_by=BACKEND, **fields)
 
 
@@ -60,9 +62,9 @@ def summary(session, profile: FeedProfile, *, recommended: str = "meets"):
 
 
 def signed_off(session, feed_id: UUID, *, outcome: str = "meets", gaps: Sequence[str] = (),
-               reasons: Sequence[str] = ()) -> FeedSignoff:
+               reasons: Sequence[str] = (), **profile) -> FeedSignoff:
     """A profile, its summary recommending this outcome, the backend team agreeing (D1), the sign-off."""
-    profile = profiled(session, feed_id)
+    profile = profiled(session, feed_id, **profile)
     proposal = summary(session, profile, recommended=outcome)
     ProposalRepository(session).record_decision(proposal.id, user=dev_user_for("backend_team"), decision="approved")
     return FeedSignoffRepository(session).add_version(
@@ -70,15 +72,16 @@ def signed_off(session, feed_id: UUID, *, outcome: str = "meets", gaps: Sequence
         reasons=list(reasons), signed_off_by=BACKEND)
 
 
-def registration(session, feed_id: UUID, *, owner_id: str = "dev-data-owner", visibility: str = "open"):
-    signoff = signed_off(session, feed_id)
+def registration(session, feed_id: UUID, *, owner_id: str = "dev-data-owner", visibility: str = "open", **profile):
+    signoff = signed_off(session, feed_id, **profile)
     return FeedRegistrationRepository(session).add_version(
         feed_id=feed_id, signoff_id=signoff.id, owner_id=owner_id, licence="Synthetic licence",
         permitted_use="Internal analysis", redistribution="Not allowed", visibility=visibility, registered_by=BACKEND)
 
 
-def registered_feed(session, feed_id: UUID, *, owner_id: str = "dev-data-owner") -> Feed:
-    registration(session, feed_id, owner_id=owner_id)
+def registered_feed(session, feed_id: UUID, *, owner_id: str = "dev-data-owner", **profile) -> Feed:
+    """profile: spec= and columns= for the signed-off profile (default: one column qty, declared volume)."""
+    registration(session, feed_id, owner_id=owner_id, **profile)
     return FeedRepository(session).register(feed_id, owner_id=owner_id)
 
 

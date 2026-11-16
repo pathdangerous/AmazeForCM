@@ -32,6 +32,20 @@ def end_read(session: Session) -> None:
     session.commit()
 
 
+def run_glossary(session: Session, *, agent, notifier: Notifier, owners: Sequence[str], lease_seconds: int = 300):
+    """Step 05 as the worker runs it (apps/api/jobs.py): claim and commit, read and end the read, then the
+    call and the locked write. None when no run waits."""
+    from core.steps.s05_glossary import builder_input, claim_run, record_run
+
+    run = claim_run(session, lease_seconds=lease_seconds)
+    end_read(session)
+    if run is None:
+        return None
+    plan = builder_input(session, run)
+    end_read(session)
+    return record_run(session, plan=plan, agent=agent, notifier=notifier, owners=owners)
+
+
 def propose_scope(session: Session, *, requirement_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
                   note: str | None = None, again: bool = False, notifier: Notifier | None = None,
                   backend_team: Sequence[str] = ()):

@@ -37,12 +37,19 @@ def catalogue():
     return SourceCatalogue.load(DEFAULT_CATALOGUE)
 
 
-def test_the_eight_synthetic_sources(catalogue):
+def test_the_nine_synthetic_sources(catalogue):
     assert [s.code for s in catalogue.entries] == [
         "syn_exchange_volumes", "syn_offline_accruals", "syn_vendor_eod_prices", "syn_open_esg_scores",
         "syn_internal_desk_marks", "syn_backup_eod_prices",
         "syn_instrument_lifecycle", "syn_listing_details",  # phase 4 plan, section 8
+        "syn_bond_terms",  # phase 5 plan, section 8.2
     ]
+    bonds = catalogue.get("syn_bond_terms")
+    assert (bonds.name, bonds.visibility, bonds.channel, bonds.known, bonds.conditions.external_approvals) == (
+        "Bond terms", "public", "market_data_vendors", False, [])
+    assert (bonds.elements, bonds.other_fields, bonds.columns) == (
+        ["instrument_id", "maturity_date", "coupon_rate"], [],
+        {"instr_id": "instrument_id", "matures_on": "maturity_date", "cpn": "coupon_rate"})
     for code in ("syn_instrument_lifecycle", "syn_listing_details"):
         source = catalogue.get(code)
         assert (source.visibility, source.known, source.conditions.external_approvals) == ("public", False, [])
@@ -78,8 +85,19 @@ def test_each_file_header_is_its_spec_columns(catalogue):
         if not path.is_file():
             continue
         header = path.read_text(encoding="utf-8").splitlines()[0].split(",")
-        extra = ["score_year"] if source.code == "syn_open_esg_scores" else []
+        extra = {"syn_open_esg_scores": ["score_year"],  # phase 5: the undeclared columns step 05 looks at
+                 "syn_bond_terms": ["date", "venue_mic_code", "rating", "maturity"]}.get(source.code, [])
         assert sorted(header) == sorted([*source.columns, *extra]), source.code
+
+
+def test_the_bond_terms_file_has_ten_rows_and_profiles_with_the_types_step_05_needs(catalogue):
+    from core.steps.profiling import profile_csv
+
+    profile = profile_csv(SOURCES / catalogue.get("syn_bond_terms").source_ref)
+    assert profile.row_count == 10
+    assert {c.name: c.type for c in profile.columns} == {
+        "instr_id": "VARCHAR", "matures_on": "DATE", "cpn": "DOUBLE", "date": "DATE", "venue_mic_code": "VARCHAR",
+        "rating": "VARCHAR", "maturity": "VARCHAR"}
 
 
 def test_the_new_files_show_a_null_rate_and_no_rows():

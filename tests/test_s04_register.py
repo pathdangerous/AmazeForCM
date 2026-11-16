@@ -50,6 +50,27 @@ def register(db_session, feed, owner_id="dev-data-owner", visibility="open"):
                          catalogue=CATALOGUE, identity=DevIdentity(), notifier=InAppNotifier(db_session))
 
 
+def test_registering_queues_a_glossary_run_for_the_feed(db_session, volumes):
+    """Phase 5 plan, assumptions 3 and 10: in the same transaction, reason registered, by the registrant."""
+    from core.repositories.glossary_runs import GlossaryRunRepository
+
+    req, feed = volumes
+    signoff = signed_off(db_session, feed.id)
+    result = register(db_session, feed)
+    run = GlossaryRunRepository(db_session).active(feed.id)
+    assert (result.glossary_run_id, run.status, run.reason, run.requested_by, run.profile_id) == (
+        run.id, "queued", "registered", "dev-backend-team", signoff.profile_id)
+
+
+def test_no_owner_queues_no_glossary_run(db_session, volumes):
+    from core.repositories.glossary_runs import GlossaryRunRepository
+
+    req, feed = volumes
+    signed_off(db_session, feed.id)
+    assert isinstance(register(db_session, feed, owner_id="dev-requester"), NoOwner)
+    assert GlossaryRunRepository(db_session).active(feed.id) is None
+
+
 def test_registered_with_owner_licence_and_visibility(db_session, volumes):
     req, feed = volumes
     signoff = signed_off(db_session, feed.id, outcome="meets_with_gaps", gaps=["g"])

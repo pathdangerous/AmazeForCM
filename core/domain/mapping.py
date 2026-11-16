@@ -171,6 +171,7 @@ class GlossaryProposalPayload(BaseModel):
     outcome: GlossaryOutcome
     options: list[ElementOption]
     recommended: int | None
+    clashes: list[str] = Field(default_factory=list)  # the existing elements it hits
     reason: str
     run_id: UUID
 

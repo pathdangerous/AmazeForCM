@@ -74,6 +74,15 @@
                     "redistribution": "Not allowed outside the firm", "external_approvals": []},
      "elements": ["instrument_id", "exchange_mic", "lot_size"], "other_fields": [],
      "columns": {"instr_id": "instrument_id", "venue_code": "exchange_mic", "board_lot": "lot_size"},
-     "connector": "local_file", "source_ref": "files/listing_details.csv"}
+     "connector": "local_file", "source_ref": "files/listing_details.csv"},
+
+    {"code": "syn_bond_terms", "name": "Bond terms", "provider": "Synthetic Reference Data Co",
+     "description": "Maturity date and coupon rate per bond. Its file also holds four columns the spec does not declare (date, venue_mic_code, rating, maturity), on purpose, for the glossary builder.",
+     "visibility": "public", "channel": "market_data_vendors", "known": false,
+     "conditions": {"licence": "Synthetic reference data licence", "permitted_use": "Internal analysis and reporting",
+                    "redistribution": "Not allowed", "external_approvals": []},
+     "elements": ["instrument_id", "maturity_date", "coupon_rate"], "other_fields": [],
+     "columns": {"instr_id": "instrument_id", "matures_on": "maturity_date", "cpn": "coupon_rate"},
+     "connector": "local_file", "source_ref": "files/bond_terms.csv"}
   ]
 }

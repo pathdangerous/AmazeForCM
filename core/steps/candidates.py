@@ -186,6 +186,7 @@ class Classified:
     outcome: GlossaryOutcome
     options: list[ElementOption]
     recommended: int | None  # index into options; None for a conflict
+    clashes: list[str]  # the existing elements it hits (any type), by key
 
 
 def kept_elements(column: ColumnToMap, keys: Iterable[str]) -> list[str]:
@@ -212,15 +213,17 @@ def classify_element(column: NewColumn, candidates: Sequence[Candidate], *, same
         names |= {words(new_element.key), words(new_element.name)}
     hits = [x for x in candidates if x.key == same_as or any(p in names for p in phrases(x))]
     alias = alias_of(column.name)
+    clashes = sorted(x.key for x in hits)
     if not hits:
         assert new_element is not None
-        return Classified("proposed", [ElementOption(kind="new_element", key=new_element.key, element=new_element)], 0)
+        return Classified("proposed", [ElementOption(kind="new_element", key=new_element.key, element=new_element)], 0,
+                          [])
     if len(hits) == 1 and hits[0].type_fits:
-        return Classified("duplicate_alias", [ElementOption(kind="alias", key=hits[0].key, alias=alias)], 0)
+        return Classified("duplicate_alias", [ElementOption(kind="alias", key=hits[0].key, alias=alias)], 0, clashes)
     options = [ElementOption(kind="alias", key=x.key, alias=alias)
                for x in hits if x.type_fits and words(alias) not in phrases(x)]
     if new_element is not None:
         taken = {p for x in candidates for p in phrases(x)}
         if words(new_element.key) not in taken and words(new_element.name) not in taken:
             options.append(ElementOption(kind="new_element", key=new_element.key, element=new_element))
-    return Classified("conflict_to_owner", options, None)
+    return Classified("conflict_to_owner", options, None, clashes)

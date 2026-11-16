@@ -23,3 +23,11 @@ class NotTheRequester(Exception):
 
 class NothingToDecide(StepInputError):
     """There is no pending proposal of this kind for the requirement."""
+
+
+class ChoiceNeeded(StepInputError):
+    """The proposal recommends nothing (a conflict or a tie): the person must choose one option (phase 5)."""
+
+
+class ChoiceNotOffered(StepInputError):
+    """The option or candidate chosen is not one the proposal offers (phase 5)."""

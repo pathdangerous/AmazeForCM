@@ -7,7 +7,8 @@ Outcomes (CLAUDE.md): registered; duplicate_linked; no_owner.
   the owner (a user who holds data_owner) and the visibility (open or restricted), writes the
   feed_registrations row, then the feed becomes registered. The owner is told. The requirements stay
   onboarding. no_owner: none named and none on the feed, or the named user is not a data owner; nothing
-  is written.
+  is written. Phase 5: a registration also queues the feed's glossary run (step 05) in the same
+  transaction; the API starts the worker after the commit.
 - link_to_registered_feed(): a requirement handed to a source whose feed is already registered (one feed
   per source). By rule, at once: it moves to onboarding; nothing is fetched, profiled, signed off or
   registered again. The backend team is told. People decided when the feed was registered.
@@ -35,6 +36,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.steps.result import StepResult
+from core.steps.s05_glossary import queue_run
 from ports.connectors.catalogue import SourceCatalogue
 from ports.identity.base import Identity, User
 from ports.notify.base import Notifier
@@ -44,6 +46,7 @@ class Registered(StepResult):
     outcome: Literal["registered"] = "registered"
     feed: Feed
     registration: FeedRegistration
+    glossary_run_id: UUID  # phase 5: the glossary run queued in the same transaction
 
 
 class DuplicateLinked(StepResult):
@@ -85,10 +88,11 @@ def register_feed(session: Session, *, feed_id: UUID, user: User, owner_id: str 
         permitted_use=conditions.permitted_use, redistribution=conditions.redistribution, visibility=visibility,
         registered_by=user.id)
     registered = feeds.register(feed.id, owner_id=owner)
+    run, _ = queue_run(session, feed_id=feed.id, reason="registered", requested_by=user.id)  # phase 5, step 05
     notifier.notify(recipient=owner, subject=f"Feed registered: {feed.code}",
                     body=f"Feed {feed.code} ({feed.name}) is registered, {visibility}, under {conditions.licence}. "
                          "You are its owner.")
-    return Registered(feed=registered, registration=registration)
+    return Registered(feed=registered, registration=registration, glossary_run_id=run.id)
 
 
 def link_to_registered_feed(session: Session, *, requirement_id: UUID, feed_id: UUID, notifier: Notifier,

@@ -39,6 +39,13 @@ def test_step_04_outcomes_are_claude_mds():
         "registered", "duplicate_linked", "no_owner"]
 
 
+def test_step_05_outcomes_are_claude_mds():
+    from core.steps.s05_glossary import GlossaryResult
+
+    assert union_outcomes(GlossaryResult) == claude_md_outcomes("05 Glossary") == [
+        "proposed", "duplicate_alias", "conflict_to_owner"]
+
+
 def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("17 Discover") == ["found", "not_entitled_visible"]
     assert claude_md_outcomes("Routing checks") == ["reuse", "compose", "create_product", "raise_requirement"]

@@ -18,6 +18,29 @@ from core.repositories.proposals import ProposalRepository
 from ports.llm.base import LLMResult
 
 
+class FixedProvider:
+    """An LLMProvider for step tests of a real agent: answers with output (a dict, or a function of the input
+    dict that ends the user message), or raises error. Agent.run() still logs, stores and creates proposals."""
+
+    name = "fixed"
+
+    def __init__(self, output: dict[str, Any] | Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+                 error: Exception | None = None):
+        self.output, self.error, self.calls = output, error, 0
+
+    def complete(self, *, prompt_id, prompt_version, messages, response_schema, temperature=0.0):
+        import json
+
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        data = json.loads(messages[-1].content.rsplit("```json\n", 1)[1].rsplit("\n```", 1)[0])
+        raw = self.output(data) if callable(self.output) else self.output
+        return LLMResult(output=response_schema.model_validate(raw), provider="fixed", model="fixed",
+                         model_version="0", prompt_id=prompt_id, prompt_version=prompt_version, latency_ms=0,
+                         raw_ref=None)
+
+
 class StandInAgent:
     def __init__(self, *, name: str, output_schema: type[BaseModel], output: dict[str, Any] | Callable,
                  proposals: Callable[[BaseModel, BaseModel], list[dict[str, Any]]] = lambda i, o: [],
