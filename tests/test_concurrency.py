@@ -511,10 +511,11 @@ def _summarised_feed(engine, tmp_path, recommended="meets"):
 
 
 def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path, monkeypatch):
-    """sign_off locks the source code, then the feed row, then reads the latest version and the summary's
-    status: the second waits, then finds the summary decided (ProposalAlreadyDecided, 409). Never a unique
-    violation on (feed_id, version). The profile read is made slow, so both reach the decision together
-    when nothing keeps them apart."""
+    """What keeps two sign-offs apart is record_decision's lock on the summary's proposal row (FOR UPDATE):
+    the second finds the summary decided (ProposalAlreadyDecided, 409). Never a unique violation on
+    (feed_id, version). sign_off's source and feed locks are there for the lock order and the stage change,
+    not for this race: with both removed this test still passes (plan, section 17, checkpoint 2). The
+    profile read is made slow, so both reach the decision together when nothing else keeps them apart."""
     from core.repositories.errors import ProposalAlreadyDecided
     from core.repositories.feed_profiles import FeedProfileRepository
 
@@ -541,38 +542,47 @@ def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path,
     assert committed(own_schema, "SELECT version, outcome FROM feed_signoffs") == [(1, "meets")]
 
 
-def _slow(monkeypatch, cls, method, seconds=0.3, *, after=False):
+def _slow(monkeypatch, cls, method, seconds=0.3, *, after=False) -> threading.Event:
     """Make one read slow, so two requests that are not kept apart by a lock both pass it before either writes.
-    after: sleep after the read, so what it read can go stale before the write."""
+    after: sleep after the read, so what it read can go stale before the write. Returns an event set inside
+    the slowed read (just before the sleep): whoever calls it first is there, holding its locks."""
     original = getattr(cls, method)
+    entered = threading.Event()
 
     def slow(self, *args, **kwargs):
         if not after:
+            entered.set()
             time.sleep(seconds)
         result = original(self, *args, **kwargs)
         if after:
+            entered.set()
             time.sleep(seconds)
         return result
 
     monkeypatch.setattr(cls, method, slow)
+    return entered
 
 
-def _first_then_second(first, second, delay=0.1):
-    """Run first() on a thread, then second() on another `delay` seconds later; returns {name: result or error}."""
-    out = {}
+def _first_then_second(first, second, entered: threading.Event):
+    """Run first() on a thread; start second() on another once `entered` is set inside first's slowed read.
+    Returns {name: result or error, "overlap": second started while first was still running}."""
+    out, finished = {}, {}
 
     def run(name, work):
         try:
             out[name] = work()
         except Exception as exc:  # noqa: BLE001 (returned to the test)
             out[name] = exc
+        finished[name] = time.monotonic()
 
     threads = [threading.Thread(target=run, args=("first", first)), threading.Thread(target=run, args=("second", second))]
     threads[0].start()
-    time.sleep(delay)
+    assert entered.wait(timeout=10), "the first never reached its slowed read"
+    second_started = time.monotonic()
     threads[1].start()
     for thread in threads:
         thread.join(timeout=30)
+    out["overlap"] = "first" in finished and second_started < finished["first"]
     return out
 
 
@@ -626,11 +636,12 @@ async def test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_re
         later = (await f.listed("open price again"))[vendor_code]
         await f.amaze(vendor_code, "profile")
     _summarise_for_rejection(own_schema, f.feed_id)
-    _slow(monkeypatch, FeedProfileRepository, "latest", seconds=0.5)
+    entered = _slow(monkeypatch, FeedProfileRepository, "latest", seconds=0.5)
     pick = _in_session(own_schema, lambda s: pick_source(
         s, requirement_id=uuid.UUID(f.id), user=dev_user_for("requester"), proposal_id=uuid.UUID(later["proposal_id"]),
         accepted_conditions=_conditions(later), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).outcome)
-    out = _first_then_second(_reject(own_schema, f.feed_id), pick)
+    out = _first_then_second(_reject(own_schema, f.feed_id), pick, entered)
+    assert out["overlap"], out
     assert out["first"] == "rejected", out
     assert isinstance(out["second"], SourceRejected), out
     assert committed(own_schema, "SELECT stage FROM feeds WHERE code = :c", c=vendor_code) == [("rejected",)]
@@ -638,6 +649,70 @@ async def test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_re
         SELECT count(*) FROM source_choices c
          WHERE c.version = (SELECT max(version) FROM source_choices x WHERE x.requirement_id = c.requirement_id)
            AND c.action = 'selected' AND c.feed_id = (SELECT id FROM feeds WHERE code = :c)""", c=vendor_code) == [(0,)]
+
+
+async def _second_while_first_runs(first_request, second_request, entered):
+    """Send the first request; send the second once `entered` is set inside the first's slowed read, while
+    the first is still running. Returns (first response, second response)."""
+    first = asyncio.create_task(first_request())
+    assert await asyncio.to_thread(entered.wait, 10), "the first request never reached its slowed read"
+    assert not first.done(), "no overlap: the first request had already finished"
+    second = await second_request()
+    return await first, second
+
+
+async def test_two_signoffs_at_once_through_the_api_give_200_and_409(own_schema, flow, monkeypatch):
+    """The endpoint, not only the step: the second sign-off is sent while the first holds its locks (its
+    profile read slowed). One 200, one 409 (ProposalAlreadyDecided), never a 500; one sign-off committed."""
+    from core.repositories.feed_profiles import FeedProfileRepository
+
+    async with flow() as f:
+        await f.raised("volume", ("volume",))
+        await f.step("find-source")
+        await f.amaze("syn_exchange_volumes", "profile")
+        await f.amaze("syn_exchange_volumes", "profile/summary")
+        entered = _slow(monkeypatch, FeedProfileRepository, "latest")
+        url = f"/api/amaze/feeds/{f.feed_id}/signoff"
+
+        def sign():
+            return f.client.post(url, headers=BLAKE, json={"outcome": "meets"})
+
+        first, second = await _second_while_first_runs(sign, sign, entered)
+    assert (first.status_code, second.status_code) == (200, 409), (first.text, second.text)
+    assert "already approved" in second.json()["detail"]
+    assert committed(own_schema, "SELECT version, outcome FROM feed_signoffs") == [(1, "meets")]
+
+
+async def test_a_pick_and_a_rejection_at_once_through_the_api_give_no_500(own_schema, flow, monkeypatch):
+    """The endpoints, not only the steps: the rejection holds the source lock and the feed (its profile read
+    slowed); a pick of the same source by another requirement is sent then. The rejection 200, the pick
+    409 (SourceRejected); nobody is left on the rejected feed."""
+    from core.repositories.feed_profiles import FeedProfileRepository
+
+    vendor_code = "syn_vendor_eod_prices"
+    async with flow() as f:
+        vendor = (await f.listed())[vendor_code]
+        await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
+        later = (await f.listed("open price again"))[vendor_code]
+        await f.amaze(vendor_code, "profile")
+        await f.amaze(vendor_code, "profile/summary")
+        entered = _slow(monkeypatch, FeedProfileRepository, "latest", seconds=0.5)
+
+        def reject():
+            return f.client.post(f"/api/amaze/feeds/{f.feed_id}/signoff", headers=BLAKE,
+                                 json={"outcome": "rejected", "reasons": ["No vendor agreement on file"]})
+
+        def pick():
+            return f.client.post(f"/api/consumer/requirements/{f.id}/pick", headers=RILEY,
+                                 json={"proposal_id": later["proposal_id"],
+                                       "accepted_conditions": later["source"]["conditions"]})
+
+        rejected, picked = await _second_while_first_runs(reject, pick, entered)
+    assert (rejected.status_code, picked.status_code) == (200, 409), (rejected.text, picked.text)
+    assert "rejected by the backend team" in picked.json()["detail"]
+    assert committed(own_schema, "SELECT stage FROM feeds WHERE code = :c", c=vendor_code) == [("rejected",)]
+    assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [
+        ("awaiting_source_choice",)]
 
 
 def _conditions(candidate):
@@ -666,9 +741,9 @@ async def test_a_rejection_and_the_daily_fetch_of_one_feed_at_once_do_not_deadlo
         await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
         await f.amaze(vendor_code, "profile")
     _summarise_for_rejection(own_schema, f.feed_id)
-    _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)  # record_fetch: after the feed lock
-    out = _first_then_second(_daily_fetch(own_schema, tmp_path), _reject(own_schema, f.feed_id))
-    assert out == {"first": {vendor_code: "fetched"}, "second": "rejected"}, out
+    entered = _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)  # record_fetch: after the feed lock
+    out = _first_then_second(_daily_fetch(own_schema, tmp_path), _reject(own_schema, f.feed_id), entered)
+    assert out == {"first": {vendor_code: "fetched"}, "second": "rejected", "overlap": True}, out
     # released by the rejection; the backup is still listed
     assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("awaiting_source_choice",)]
 
@@ -690,24 +765,24 @@ async def test_a_rejection_and_a_requester_release_of_one_requirement_at_once_do
         feeds = (await f.client.get("/api/amaze/feeds", headers=BLAKE)).json()
     feed_id = next(x["id"] for x in feeds if x["code"] == backup_code)
     _summarise_for_rejection(own_schema, feed_id)  # a profile on a fetched row written for the test
-    _slow(monkeypatch, SourceChoiceRepository, "record_release", seconds=0.5)
+    entered = _slow(monkeypatch, SourceChoiceRepository, "record_release", seconds=0.5)
     release = _in_session(own_schema, lambda s: release_source(
         s, requirement_id=uuid.UUID(f.id), reason="requester_asked", user=dev_user_for("requester"),
         catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE), notifier=InAppNotifier(s),
         backend_team=["dev-backend-team"]).reason)
-    out = _first_then_second(release, _reject(own_schema, feed_id))
-    assert out == {"first": "requester_asked", "second": "rejected"}, out
+    out = _first_then_second(release, _reject(own_schema, feed_id), entered)
+    assert out == {"first": "requester_asked", "second": "rejected", "overlap": True}, out
     assert committed(own_schema, "SELECT stage FROM feeds WHERE id = :id", id=feed_id) == [("rejected",)]
     assert committed(own_schema, "SELECT version, action, reason FROM source_choices WHERE requirement_id = :id "
                                  "ORDER BY version", id=f.id) == [(1, "selected", None), (2, "released", "requester_asked")]
 
 
-async def test_a_profile_during_a_signoff_gives_a_success_or_a_409_never_a_500(own_schema, tmp_path, monkeypatch):
-    """The sign-off's profile read is slowed. A profile of the same feed at once: with the feed locked first,
-    the sign-off either succeeds (the profile is then version 2) or finds the newer profile unsummarised
-    (ProfileNotSummarised, 409). Without the lock it signs off a profile that is no longer the latest, and
-    the database refuses it (a raw IntegrityError: a 500)."""
-    from core.repositories.errors import ProfileNotSummarised
+async def test_a_profile_during_a_signoff_waits_for_it_and_never_gives_a_500(own_schema, tmp_path, monkeypatch):
+    """The sign-off locks the feed, reads the latest profile (slowed just after the read) and holds the lock;
+    a profile of the same feed starts then, and its record_profile waits for that lock. So the sign-off
+    succeeds on profile 1 and the profile is then version 2. Without the feed lock the profile commits first,
+    the sign-off signs a profile that is no longer the latest, and the database refuses it (a raw
+    IntegrityError: a 500)."""
     from core.repositories.feed_profiles import FeedProfileRepository
     from core.steps.s02_profile import profile_plan, record_profile, run_profile
     from core.steps.s03_signoff import sign_off
@@ -719,7 +794,7 @@ async def test_a_profile_during_a_signoff_gives_a_success_or_a_409_never_a_500(o
     feed_id = _summarised_feed(own_schema, tmp_path)
     blobs = LocalBlobStore(tmp_path / "blob")
     catalogue = SourceCatalogue.load(DEFAULT_CATALOGUE)
-    _slow(monkeypatch, FeedProfileRepository, "latest", after=True)
+    entered = _slow(monkeypatch, FeedProfileRepository, "latest", after=True)
 
     def profile(session):
         plan = profile_plan(session, feed_id=feed_id, catalogue=catalogue)
@@ -729,9 +804,10 @@ async def test_a_profile_during_a_signoff_gives_a_success_or_a_409_never_a_500(o
     signoff = _in_session(own_schema, lambda s: sign_off(
         s, feed_id=feed_id, user=dev_user_for("backend_team"), outcome="meets", gaps=[], reasons=[],
         catalogue=catalogue, notifier=InAppNotifier(s), backend_team=["dev-backend-team"]).outcome)
-    out = _first_then_second(signoff, _in_session(own_schema, profile), delay=0.05)
-    assert out["second"] == 2, out
-    assert out["first"] == "meets" or isinstance(out["first"], ProfileNotSummarised), out
+    out = _first_then_second(signoff, _in_session(own_schema, profile), entered)
+    assert out == {"first": "meets", "second": 2, "overlap": True}, out
+    assert committed(own_schema, "SELECT s.version, p.version FROM feed_signoffs s "
+                                 "JOIN feed_profiles p ON p.id = s.profile_id") == [(1, 1)]
 
 
 async def test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_schema, flow, tmp_path, monkeypatch):
@@ -748,13 +824,13 @@ async def test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_sche
         vendor = (await f.listed())[vendor_code]
         await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
         later = (await f.listed("open price again"))[vendor_code]
-    _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)
+    entered = _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)
     pick = _in_session(own_schema, lambda s: pick_source(
         s, requirement_id=uuid.UUID(f.id), user=dev_user_for("requester"), proposal_id=uuid.UUID(later["proposal_id"]),
         accepted_conditions=_conditions(later), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).outcome)
     started = time.monotonic()
-    out = _first_then_second(_daily_fetch(own_schema, tmp_path), pick)
-    assert out == {"first": {vendor_code: "fetched"}, "second": "source_picked"}, out
+    out = _first_then_second(_daily_fetch(own_schema, tmp_path), pick, entered)
+    assert out == {"first": {vendor_code: "fetched"}, "second": "source_picked", "overlap": True}, out
     # the pick committed while the fetch waited; the fetch then read who selects the feed, so it is onboarding
     assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("onboarding",)]
     assert time.monotonic() - started < 5
