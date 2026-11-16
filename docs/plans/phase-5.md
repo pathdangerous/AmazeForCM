@@ -618,6 +618,7 @@ Then in the browser: rows Q to T of section 8.2. For row R, check that the run s
 14. **Fourteen schema-per-test cases add about 30 s** to every run (assumption 47).
 15. **The DiscoveryAssistant's input changes.** A term that shares no word with any element and is not spelled like one gets no candidate, and so no suggestion. The mock's own rule needed the same similarity, so its answers should not change; the existing tests decide.
 16. **A rejected glossary proposal ends the column.** Nothing asks again; a column the owner rejected by mistake needs a new rule ("ask again with a note"), which phase 5 does not have.
+17. **A column sent back while its feed's glossary run is running is not asked about in that run.** Step 06 queues a `sent_back` run, but the one active run per feed is already claimed with its input built; the column waits until the steward proposes mappings again, which queues a new run (recorded at checkpoint 2).
 
 ## 16. Carried forward
 
@@ -641,6 +642,7 @@ Notes only; nothing here is built in phase 5.
 8. `python -m agents.evaluate_mappings` with `LLM_PROVIDER=azure_openai`; compare with the mock's pinned score, mean tie size and candidate recall, and with its two wrong maps.
 9. `AzureFunctionsScheduler.run_soon` becomes a queue-triggered function that calls `GlossaryRuns.drain()`; the other model calls can move to the same table.
 10. Whether sample values may be sent to the model is a data-governance decision; today no agent sees a value.
+11. Candidate recall with the mock is 27 of 28. Case 8 sets a ceiling no model can pass: candidate filtering never makes `price_currency` a candidate of `ccy`, so the expected tie is never offered. A miss on case 8 is the filter's, not the model's. Report Azure OpenAI's mean tie size next to the mock's 5.0; a model with fewer misses but bigger ties hands the steward more work.
 
 ## 17. Results and deviations (recorded during implementation)
 
