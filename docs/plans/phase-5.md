@@ -1,6 +1,6 @@
 # Phase 5 plan — Glossary builder and mapping (steps 05–06)
 
-**Status:** written on 2026-11-16; **waiting for approval.** Nothing but this file is written.
+**Status:** written on 2026-11-16; **approved on 2026-11-16** with the decisions under "Open questions" (section 4) and three plan changes (assumptions 36 to 38, section 13, risk 12). Being implemented.
 **Date:** 2026-11-16. **Branch:** `phase-5`, created from `main` at `f55eb6c`. **Scope:** phase 5 of `BUILD_PLAN.md`, the phase 5 notes of the phase 4 plan (section 16) and of the phase 3 plan (section 16, notes 5 and 5a), and the seven carried notes of the planning request. Local only; nothing is pushed.
 
 **One part, four checkpoints.** Phase 5 is two steps, two agents (and a read-only evaluator), one background runner and one migration. I stop at each checkpoint.
@@ -75,7 +75,7 @@
 | 6: the agent's name | assumption 21; open question 3 |
 | 7: the time spread, measured, and the expected added time | section 2; assumption 47 |
 
-**The gold set must be honest:** section 8.1 and assumptions 35 to 38. The mock gets 26 of 31; its five misses are named, two of them wrong maps.
+**The gold set must be honest:** section 8.1 and assumptions 35 to 38. The prototype got 26 of 31 under the first scoring rule, 25 of 31 under the approved one (assumption 36); the built code is measured again in task 9. Its misses are named, two of them wrong maps.
 
 ## 4. Assumptions — veto any by number
 
@@ -181,12 +181,14 @@
     - The expected answers were written by judgement before the mock rule was run, and none was changed after its score was seen. Cases the mock cannot get right were put in on purpose.
 36. **The score** (`agents/evaluation.py::score()`, pure). A case is right when:
     - expected `mapped`: the agent names exactly one element, and it is the expected one;
-    - expected `tie_to_steward`: the agent names several, and every element the case says must be offered is among them;
+    - expected `tie_to_steward`: the agent names **at least two and at most 3** elements, and every element the case says must be offered is among them (approved change 1: a tie of seven asks the steward to do the agent's work);
     - expected `no_element_back_to_05`: the agent names none.
-    - **Score = right cases / all cases.** Reported with it: the count per category, and the **wrong maps** (the agent names one element and the gold set does not accept it), listed, because a confident wrong mapping costs more than a tie.
-37. **The evaluation goes through `Agent.run()`** (open question 8). `MappingEvaluator` is a read-only agent (`approver_roles = ()`) on the same prompt, input builder and output schema as `MappingAgent`. It creates no proposal; every call is logged in `proposal_log` under its own name. One call per gold source.
-    - `python -m agents.evaluate_mappings` uses the provider selected by `LLM_PROVIDER`, logs to `DATABASE_URL` and prints the table, the score and the wrong maps.
-38. **The mock gets 26 of 31 (83.9%)**, measured with a throwaway prototype of assumptions 5, 6 and 33 on 2026-11-16 (not repository code). Its five misses, two of them wrong maps, are in section 8.1. `test_evaluation.py::test_the_mock_scores_26_of_31_and_misses_these_five` pins the number and the five names; if the built code gives another number, that is a deviation, recorded with its cause.
+    - **Score = right cases / all cases.** Reported with it: the count per category; the **mean tie size** (the mean number of elements named, over the cases where the agent named two or more); the **candidate recall** (below); and the **wrong maps** (the agent names one element and the gold set does not accept it), listed, because a confident wrong mapping costs more than a tie.
+    - **Candidate recall** (approved change 2): per case, whether each expected or must-offer element is in the candidate list that code built for that column (assumption 6), reported as "candidate recall n of m" over all those elements, with the cases that miss one listed. A miss whose element was never a candidate is the filter's; one whose element was a candidate is the model's. `score()` takes the candidate lists with the answers.
+37. **The evaluation goes through `Agent.run()`** (open question 8, decided with a change). `MappingEvaluator` is a read-only agent (`approver_roles = ()`) on the same prompt, input builder and output schema as `MappingAgent`. It creates no proposal; every call is logged in `proposal_log` under its own name. One call per gold source.
+    - `python -m agents.evaluate_mappings` uses the provider selected by `LLM_PROVIDER` and **logs to a separate database named by `EVAL_DATABASE_URL`** (in `.env.example`), never to the application's. It **refuses to run**, with a message and exit code 2, when `EVAL_DATABASE_URL` is not set or equals `DATABASE_URL`. It prints the table, the score, the mean tie size, the candidate recall and the wrong maps.
+    - `README.md` shows how to create `amaze_eval`, owned by the same user as `amaze`, and bring it to `alembic upgrade head` with `DATABASE_URL` pointed at it for that one command.
+38. **The mock's score is measured with the built code in task 9 and pinned** by `test_evaluation.py::test_the_mock_scores_as_measured_and_misses_these` (the number, the names of the misses and the wrong maps). The throwaway prototype of assumptions 5, 6 and 33 (2026-11-16, not repository code) got 26 of 31 under the first scoring rule; under the approved rule its case 14 (a tie of seven) is not right, so it predicts **25 of 31 (80.6%)**, with six misses, two of them wrong maps (section 8.1). If the built code gives another number, that is a deviation in section 17 with its cause. **The gold file is never changed to fit a score.**
 
 **Data, API, UI, tests**
 
@@ -222,6 +224,8 @@
 51. **I check the UI** by building it and by a scripted browser run with screenshots. The committed Playwright test stays in phase 7.
 
 **Open questions, recommendation first**
+
+**Decided on 2026-11-16:** questions 1 to 7 and 9 as recommended (question 3: `MappingAgent`, prompt id `mapping`). Question 8: through `Agent.run()` as recommended, but logged to a separate database (`EVAL_DATABASE_URL`, assumption 37). Assumptions 17 (no editing) and 24 (mapped means stored) stand. **Limitation recorded:** a rejected glossary proposal ends that column in phase 5; there is no "ask again with a note" (risk 16, section 14). The gold set of section 8.1 is approved as written and **frozen when task 3 commits it**; any later change is a new version of the file, recorded in section 17.
 
 1. **The background runner (note 3).** Recommended: **a `glossary_runs` table claimed with a lease, started by `Scheduler.run_soon()` after a commit and at start-up** (assumptions 10 and 11). It meets all three demands with one table and one port method, and phase 8 swaps the trigger only. Alternatives:
    - the same table with a polling tick every few seconds: no lost kick, but a timer that runs in every test and on an idle laptop;
@@ -428,7 +432,8 @@ Four invented sources, 31 columns, against the 33 seed elements. "Mock" is the p
 | 30 | | `date` (the source does not say which) | tie | a tie that offers `issue_date` and `maturity_date` | right |
 | 31 | | `lot`, text, hinted as `lot_size` | type mismatch | no element: the hint is wrong for a text column | right |
 
-- **Score: 26 of 31, 83.9%.** By category: easy 6/6, alias only 9/9, hint 2/2, abbreviation 2/2, tie 2/3, type mismatch 3/3, no element 2/2, context 0/2, misleading name 0/2.
+- **Score: 26 of 31, 83.9%, under the first scoring rule.** By category: easy 6/6, alias only 9/9, hint 2/2, abbreviation 2/2, tie 2/3, type mismatch 3/3, no element 2/2, context 0/2, misleading name 0/2.
+- **Under the approved rule (assumption 36, a tie names at most 3): 25 of 31, 80.6%,** tie 1/3: case 14's tie of seven is no longer right. This is the prototype's prediction; task 9 measures the built code.
 - **Wrong maps: 2** (cases 15 and 19). The other three misses are safe: they ask the steward or send the column back.
 - What the score does not show: the mock reads names and types only. It cannot use the source's description, which is what cases 8, 16, 17 and 19 turn on. Phase 8 runs the same file against Azure OpenAI.
 - Identifier type names (`isin`, `lei`) are allowed; the file holds no values at all.
@@ -547,7 +552,7 @@ Each task: tests first and shown failing, then code, then its check, then one co
 | 6 | Step 05: queue, claim, input, record, fail, decide; the run queued at registration; the catalogue's new source and file | `test_s05_glossary.py`, `test_s04_register.py`, `test_step_results.py`, `test_source_catalogue.py` | pytest |
 | 7 | The runner: `Scheduler.run_soon`, `GlossaryRuns`, the start-up kick, the do-nothing worker in `running_app` | `test_port_scheduler.py`, `test_azure_stubs.py`, `test_jobs.py`, `test_settings.py` | pytest |
 | 8 | Step 06: input, record, back to 05, decide, propose again | `test_s06_map.py`, `test_step_results.py` | pytest |
-| 9 | The evaluation script and the mock's pinned score | `test_evaluation.py` | pytest; `python -m agents.evaluate_mappings`; `alembic upgrade head`; `0016 (head)`. **CHECKPOINT 2:** pytest summary, the six outcome tests by name, the evaluation's printed table, `alembic current`, the new triggers listed |
+| 9 | The evaluation script and the mock's pinned score; `EVAL_DATABASE_URL` in `ports/config.py`, `.env.example` and `README.md` (brought forward from task 13) | `test_evaluation.py`, `test_settings.py` | pytest; `amaze_eval` created and upgraded; `python -m agents.evaluate_mappings` (and its refusal when the two URLs are equal); `alembic upgrade head`; `0016 (head)`. **CHECKPOINT 2:** pytest summary, the six outcome tests by name, the evaluation's printed table, `alembic current`, the new triggers listed |
 | 10 | Amaze API: runs, proposals, propose, decision; the feed page; the role checks | `test_api_amaze_mapping.py`, `test_api_amaze_onboarding.py` | pytest |
 | 11 | Commit visibility (six) and races (eight) | `test_commit_visibility.py`, `test_concurrency.py` | pytest; each commit removed in turn and its test shown failing; each race test shown failing against the lock or check it protects. **CHECKPOINT 3:** three full runs and their times, the done-when test's output, the added test time against assumption 47 |
 | 12 | backend-ui: the banner, the Glossary proposals, the Feed mapping table | none | build; browser run, rows Q to T |
@@ -563,9 +568,9 @@ Run from `F:\amaze-cm-poc` in Windows PowerShell.
 .\.venv\Scripts\python -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m alembic upgrade head
 .\.venv\Scripts\python -m core.seed
-.\.venv\Scripts\python -m pytest -v
+.\.venv\Scripts\python -m pytest -q
 .\.venv\Scripts\python -m alembic current
-.\.venv\Scripts\python -m agents.evaluate_mappings
+.\.venv\Scripts\python -m agents.evaluate_mappings      # EVAL_DATABASE_URL names amaze_eval (README)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 .\scripts\dev.ps1
@@ -573,9 +578,9 @@ npm --prefix apps\consumer-ui run build
 
 | Command | Expected |
 |---|---|
-| `pytest -v` | all pass; 0 failed, 0 skipped, 0 warnings |
+| `pytest -q` | all pass; 0 failed, 0 skipped, 0 warnings |
 | `alembic current` | `0016 (head)` |
-| `evaluate_mappings` | provider `mock`; `26 of 31 (83.9%)`; wrong maps: `quote_ccy`, `high` |
+| `evaluate_mappings` | provider `mock`; logged to `amaze_eval`; the score pinned in task 9 (prototype: `25 of 31 (80.6%)`), the mean tie size, the candidate recall; wrong maps: `quote_ccy`, `high`. With `EVAL_DATABASE_URL` equal to `DATABASE_URL`: refused, exit code 2 |
 | both builds | exit code 0 |
 | `dev.ps1` | three `OK` lines and health `ok` |
 
@@ -587,6 +592,7 @@ Then in the browser: rows Q to T of section 8.2. For row R, check that the run s
 - Loads, structure checks, certification, the product, "Ready" and "Access restricted" (phase 7).
 - Transformations: a mapping is level 1, one column to one element as it is. A column whose type does not fit is not mapped.
 - Editing a proposal before approving it; a glossary change written by a person without a proposal; retiring an element or an alias.
+- Asking the glossary builder again, with a note, about a column whose proposal the owner rejected: that column ends there in phase 5 (risk 16).
 - A mapping that names a pending element; a mapping proposal started by itself when an element is approved.
 - Mapping or the builder on a candidate feed; a new profile of a registered feed.
 - Sample values in an agent's input: the agents see names, types and counts only.
@@ -607,7 +613,7 @@ Then in the browser: rows Q to T of section 8.2. For row R, check that the run s
 9. **The new guards change how tests write configuration.** About 28 call sites move to `tests/configured.py`, which writes six rows for one mapping. Tests get slower and the helper must be kept right (as phase 4, risk 7).
 10. **The pending-proposal index reads the payload.** A proposal of the two kinds written without `source_field` would escape it; the domain model requires the field, and `0015` already fixes a payload once written.
 11. **No two columns of a feed map to one element, in code only.** Two approvals at once are held apart by the feed lock; raw SQL could still write it.
-12. **Evaluation calls grow `proposal_log`** in the application database: four rows per run with the mock. Open question 8.
+12. **Evaluation calls grow `proposal_log` in the evaluation database** (`EVAL_DATABASE_URL`, `amaze_eval`): four rows per run with the mock. The application database does not grow; the script refuses to run when the two URLs are equal. The evaluation database must be kept at the same migration head, or the script fails on its first write.
 13. **The banner is hard to see with the mock**, which answers at once. The scripted browser run holds a run with a slow stand-in provider to take the screenshot; the real path is the same.
 14. **Fourteen schema-per-test cases add about 30 s** to every run (assumption 47).
 15. **The DiscoveryAssistant's input changes.** A term that shares no word with any element and is not spelled like one gets no candidate, and so no suggestion. The mock's own rule needed the same similarity, so its answers should not change; the existing tests decide.
@@ -632,7 +638,7 @@ Notes only; nothing here is built in phase 5.
 
 **Phase 8**
 
-8. `python -m agents.evaluate_mappings` with `LLM_PROVIDER=azure_openai`; compare with 26 of 31 and with the mock's two wrong maps.
+8. `python -m agents.evaluate_mappings` with `LLM_PROVIDER=azure_openai`; compare with the mock's pinned score, mean tie size and candidate recall, and with its two wrong maps.
 9. `AzureFunctionsScheduler.run_soon` becomes a queue-triggered function that calls `GlossaryRuns.drain()`; the other model calls can move to the same table.
 10. Whether sample values may be sent to the model is a data-governance decision; today no agent sees a value.
 
