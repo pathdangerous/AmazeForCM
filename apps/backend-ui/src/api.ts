@@ -101,8 +101,55 @@ export type FeedPage = {
   registration: { owner_id: string; licence: string; permitted_use: string; redistribution: string;
                   visibility: "open" | "restricted"; registered_by: string; created_at: string } | null;
   next_action: "profile" | "summarise" | "sign_off" | "register" | null;
+  glossary_run: GlossaryRun | null; // phase 5: the latest
+  columns: ColumnMapping[]; // phase 5: a registered feed's mapping table
 };
 export type Owner = { id: string; display_name: string };
+
+// ---- phase 5: steps 05 and 06
+
+export type GlossaryRun = {
+  id: string; created_at: string; feed_id: string; reason: "registered" | "requested" | "sent_back";
+  columns: string[]; requested_by: string; status: "queued" | "running" | "done" | "failed"; attempt: number;
+  started_at: string | null; finished_at: string | null; results: Record<string, string> | null; error: string | null;
+};
+export type RunOnBanner = {
+  id: string; feed_id: string; feed_code: string; feed_name: string; status: string; reason: string; attempt: number;
+  created_at: string; finished_at: string | null; error: string | null; counts: Record<string, number>;
+};
+export type RunsBanner = { active: RunOnBanner[]; finished: RunOnBanner[]; waiting_proposals: number };
+
+export type Mapping = { id: string; created_at: string; feed_id: string; source_field: string; element_key: string;
+                        version: number; proposal_id: string };
+export type ColumnMapping = {
+  name: string; type: string | null; source_says: string | null; mapped_to: string | null; mapped_version: number | null;
+  pending: { proposal_id: string; candidates: string[]; recommended: string | null; reason: string } | null;
+  why_none: "with_glossary_builder" | "rejected_by_glossary_owner" | "type_does_not_fit" | null;
+  versions: Mapping[];
+};
+export type ElementDraft = { key: string; name: string; domain: string; data_type: string; definition: string;
+                             aliases: string[] };
+export type ElementOption = { kind: "new_element" | "alias"; key: string; alias: string | null; element: ElementDraft | null };
+export type Decision = { id: string; created_at: string; step: number; role: string; decided_by: string;
+                         decision: "approved" | "rejected"; note: string | null };
+export type ConfigProposal = {
+  id: string; kind: "glossary_element" | "mapping"; status: "pending" | "approved" | "rejected"; created_at: string;
+  decided_at: string | null; feed_id: string; feed_code: string; feed_name: string; column: string;
+  // glossary_element: outcome, options, recommended (an index), clashes; mapping: candidates, recommended (a key)
+  payload: { outcome?: "proposed" | "duplicate_alias" | "conflict_to_owner"; options?: ElementOption[];
+             recommended: number | string | null; clashes?: string[]; candidates?: string[]; column_type?: string | null };
+  reason: string; required_approver_roles: string[]; decisions: Decision[];
+};
+
+// One decision on a glossary or mapping proposal. choice: an option index (glossary) or an element key (mapping).
+export function decideProposal(id: string, decision: "approved" | "rejected", choice: number | string | null,
+                               note: string | null, devUser: string): Promise<{ proposal: ConfigProposal }> {
+  return apiPost(`/api/amaze/proposals/${id}/decision`, { decision, choice, note: note || null }, devUser);
+}
+
+export function words(value: string): string {
+  return value.replaceAll("_", " ");
+}
 
 // The API's own reason: FastAPI's detail is a sentence, or a list of validation errors.
 async function failure(path: string, response: Response): Promise<ApiError> {
@@ -134,7 +181,8 @@ export async function apiPost<T>(path: string, body: unknown, devUser: string): 
 export function describeError(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) return "Not signed in: choose a dev user above.";
-    if (err.status === 403) return "Not allowed: this view needs a backend role.";
+    if (err.status === 403) return err.message.includes("needs role")
+      ? `Not allowed: ${err.message}` : "Not allowed: this view needs a backend role.";
     if (err.status === 503) return "Service unavailable: check the Status view.";
     if (err.status === 409) return `Not now: ${err.message}`;
     if (err.status === 422) return `Not accepted: ${err.message}`;

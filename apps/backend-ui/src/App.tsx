@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
+import RunBanner from "./views/RunBanner";
 import StatusView from "./views/StatusView";
 
 const TITLE = "Amaze Backend Workbench";
@@ -50,6 +51,9 @@ export default function App() {
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
+  // phase 5: bumped when an action or a finished glossary run changes what the banner and the views show
+  const [changed, setChanged] = useState(0);
+  const onChange = useCallback(() => setChanged((c) => c + 1), []);
 
   useEffect(() => {
     const onHash = () => {
@@ -110,11 +114,18 @@ export default function App() {
         </div>
       </header>
       <main>
+        <RunBanner devUser={me ? selected : ""} refresh={`${view}/${feedId}/${changed}`} onChange={onChange}
+                   canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "status" && <StatusView />}
-        {view === "glossary" && <GlossaryView devUser={me ? selected : ""} />}
+        {view === "glossary" && (
+          <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")}
+                        changed={changed} onChange={onChange} />
+        )}
         {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} />}
         {view === "feeds" && feedId && (
-          <FeedView feedId={feedId} devUser={me ? selected : ""} canAct={!!me && me.roles.includes("backend_team")} />
+          <FeedView feedId={feedId} devUser={me ? selected : ""} canAct={!!me && me.roles.includes("backend_team")}
+                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))}
+                    canMap={!!me && me.roles.includes("data_steward")} changed={changed} onChange={onChange} />
         )}
       </main>
       <footer>Synthetic data only.</footer>
