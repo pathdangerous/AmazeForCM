@@ -130,9 +130,75 @@ def profiler(data: dict[str, Any]) -> dict[str, Any]:
             "reasons": []}
 
 
+_FAMILIES = (
+    (re.compile(r"^(VARCHAR|TEXT|STRING)"), "string"),
+    (re.compile(r"^U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)$|^INT[1248]?$"), "integer"),
+    (re.compile(r"^(DOUBLE|FLOAT|REAL|DECIMAL|NUMERIC)"), "decimal"),
+    (re.compile(r"^DATE$"), "date"),
+    (re.compile(r"^(TIMESTAMP|DATETIME)"), "datetime"),
+    (re.compile(r"^BOOL"), "boolean"),
+)
+
+
+def _family(duckdb_type: str | None) -> str:
+    """The glossary data type of a DuckDB type; text when unknown."""
+    t = (duckdb_type or "").strip().upper()
+    return next((family for pattern, family in _FAMILIES if pattern.match(t)), "string")
+
+
+def glossary_builder(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 5 plan, assumption 16. Per column: one candidate scoring 0.5 or more whose type fits is the
+    column under another name (same_as); two or more: nothing (step 06 chooses); none: a new element keyed
+    and named from the column's words, typed from its DuckDB family, in the source's main domain."""
+    answers = []
+    for column in data.get("columns", []):
+        name = column["name"]
+        fitting = [c for c in column.get("candidates", []) if c["score"] >= 0.5 and c["type_fits"]]
+        answer = {"column": name, "same_as": None, "new_element": None}
+        if len(fitting) == 1:
+            answer.update(same_as=fitting[0]["key"], reason=f"'{name}' reads like {fitting[0]['name']}.")
+        elif fitting:
+            answer["reason"] = f"'{name}' could be any of {len(fitting)} elements; the data steward chooses."
+        else:
+            words = re.findall(r"[a-z0-9]+", name.lower())
+            key = "_".join(words)
+            key = key if key[:1].isalpha() else f"col_{key}"
+            label = " ".join(words).capitalize()
+            answer["new_element"] = {
+                "key": key, "name": label, "domain": data.get("source_domain"), "data_type": _family(column.get("type")),
+                "definition": f"{label}: column {name} of {data.get('source_name')}. To be confirmed by the glossary owner.",
+                "aliases": []}
+            answer["reason"] = f"No glossary element reads like '{name}'."
+        answers.append(answer)
+    return {"answers": answers}
+
+
+def mapping(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 5 plan, assumption 33, over the candidates whose type fits: the one scoring 1.0; else the
+    spec's hinted one; else every one scoring 0.5 or more (none, one, or a tie), best first."""
+    answers = []
+    for column in data.get("columns", []):
+        fitting = [c for c in column.get("candidates", []) if c["type_fits"]]
+        exact = [c for c in fitting if c["score"] == 1.0]
+        hinted = [c for c in fitting if c["from_hint"]]
+        if len(exact) == 1:
+            chosen, reason = exact, "The column's name is this element's name or alias."
+        elif hinted:
+            chosen, reason = hinted[:1], "The source's spec names this element and its type fits."
+        else:
+            chosen = [c for c in fitting if c["score"] >= 0.5]
+            reason = ("No candidate reads like the column with a fitting type." if not chosen else
+                      "The column reads like this element." if len(chosen) == 1 else
+                      "The column reads like each of these; the data steward chooses.")
+        answers.append({"column": column["name"], "elements": [c["key"] for c in chosen], "reason": reason})
+    return {"answers": answers}
+
+
 RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "intent": intent,
     "source_discovery": source_discovery,
     "discovery_assistant": discovery_assistant,
     "profiler": profiler,
+    "glossary_builder": glossary_builder,
+    "mapping": mapping,
 }

@@ -26,7 +26,65 @@ def _intent(text="open price", purpose=None, note=None):
 
 
 def test_rules_are_named_by_prompt_id():
-    assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler"}
+    assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler", "glossary_builder",
+                          "mapping"}
+
+
+# ---------------------------------------------------------------- phase 5: glossary_builder and mapping
+
+
+def _cand(key, score, *, fits=True, hint=False, data_type="string"):
+    return {"key": key, "name": key.replace("_", " ").capitalize(), "data_type": data_type, "definition": "d",
+            "aliases": [], "score": score, "from_hint": hint, "type_fits": fits}
+
+
+def _builder(*columns):
+    return {"source_name": "Bond terms", "source_domain": "security_master", "domains": ["pricing", "security_master"],
+            "columns": [{"name": n, "type": t, "candidates": c} for n, t, c in columns]}
+
+
+def test_the_glossary_builder_rule():
+    data = _builder(("venue_mic_code", "VARCHAR", [_cand("exchange_mic", 0.67), _cand("ticker", 0.4)]),
+                    ("date", "DATE", [_cand("issue_date", 0.5), _cand("price_date", 0.5)]),
+                    ("score_year", "BIGINT", [_cand("price_date", 0.33, fits=False)]),
+                    ("maturity", "VARCHAR", [_cand("maturity_date", 1.0, fits=False)]),
+                    ("Open Price", "DOUBLE", []))
+    answers = {a["column"]: a for a in RULES["glossary_builder"](data)["answers"]}
+    assert answers["venue_mic_code"]["same_as"] == "exchange_mic" and answers["venue_mic_code"]["new_element"] is None
+    assert (answers["date"]["same_as"], answers["date"]["new_element"]) == (None, None)  # several fit: step 06
+    assert answers["score_year"]["new_element"] == {
+        "key": "score_year", "name": "Score year", "domain": "security_master", "data_type": "integer",
+        "definition": "Score year: column score_year of Bond terms. To be confirmed by the glossary owner.",
+        "aliases": []}
+    assert answers["maturity"]["new_element"]["key"] == "maturity"  # its one candidate's type does not fit
+    assert (answers["Open Price"]["new_element"]["key"], answers["Open Price"]["new_element"]["data_type"]) == (
+        "open_price", "decimal")
+
+
+@pytest.mark.parametrize(("duckdb", "data_type"), [("VARCHAR", "string"), ("BIGINT", "integer"),
+                                                   ("DOUBLE", "decimal"), ("DECIMAL(18,3)", "decimal"),
+                                                   ("DATE", "date"), ("TIMESTAMP", "datetime"),
+                                                   ("BOOLEAN", "boolean"), (None, "string"), ("BLOB", "string")])
+def test_the_glossary_builder_types_a_new_element_from_the_duckdb_family(duckdb, data_type):
+    [answer] = RULES["glossary_builder"](_builder(("col_x", duckdb, [])))["answers"]
+    assert answer["new_element"]["data_type"] == data_type
+
+
+def _mapping(*columns):
+    return {"source_name": "Bond terms", "columns": [{"name": n, "type": "VARCHAR", "candidates": c}
+                                                    for n, c in columns]}
+
+
+def test_the_mapping_rule():
+    data = _mapping(("isin", [_cand("isin", 1.0), _cand("isin_code_x", 0.5)]),
+                    ("instr_id", [_cand("figi", 0.33), _cand("instrument_id", 0.33, hint=True)]),
+                    ("date", [_cand("issue_date", 0.5), _cand("maturity_date", 0.5), _cand("as_of", 0.33)]),
+                    ("lot", [_cand("lot_size", 0.5, fits=False, hint=True), _cand("trading_lot_x", 0.4)]),
+                    ("maturity", [_cand("maturity_date", 1.0, fits=False)]),
+                    ("ccy", [_cand("currency", 1.0), _cand("trade_currency", 1.0)]))
+    answers = {a["column"]: a["elements"] for a in RULES["mapping"](data)["answers"]}
+    assert answers == {"isin": ["isin"], "instr_id": ["instrument_id"], "date": ["issue_date", "maturity_date"],
+                       "lot": [], "maturity": [], "ccy": ["currency", "trade_currency"]}
 
 
 # ---------------------------------------------------------------- profiler (phase 4 plan, assumption 15)
@@ -150,6 +208,8 @@ def test_a_word_like_nothing_gets_no_suggestion():
     ("source_discovery", {"requested_elements": ["open_price"], "requested_terms": [],
                           "candidates": [_candidate("syn_x", ["open_price"])]}),
     ("discovery_assistant", {"query": "closing prices", "unmatched_terms": ["closing prices"], "glossary": GLOSSARY}),
+    ("glossary_builder", _builder(("venue_mic_code", "VARCHAR", [_cand("exchange_mic", 0.67)]), ("x", "DATE", []))),
+    ("mapping", _mapping(("date", [_cand("issue_date", 0.5), _cand("maturity_date", 0.5)]))),
 ])
 def test_a_rule_is_deterministic_and_does_not_change_its_input(prompt_id, data):
     before = copy.deepcopy(data)

@@ -52,6 +52,90 @@ class NewColumn(BaseModel):
     distinct_count: int | None = None
     declared_as: str | None = None
     sent_back: bool = False
+    candidates: list[Candidate] = Field(default_factory=list, max_length=10)
+
+
+class ColumnToMap(BaseModel):
+    """A column step 06 asks the MappingAgent about: its statistics, at most 10 candidates (the spec's hint
+    among them, marked; the steward's rejected elements left out) and its current element, if mapped."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    type: str | None
+    null_rate: float | None = None
+    distinct_count: int | None = None
+    candidates: list[Candidate] = Field(default_factory=list, max_length=10)
+    current: str | None = None
+
+
+# ---------------------------------------------------------------- agent inputs and outputs
+
+
+class GlossaryBuilderInput(BaseModel):
+    """What the GlossaryBuilderAgent sees: one feed's new columns, each with its candidates; never the
+    whole glossary (assumption 13). No values: names, types and counts only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: UUID
+    feed_id: UUID
+    source_code: str
+    source_name: str
+    source_domain: str  # the domain most of the source's declared elements belong to
+    domains: list[str]
+    columns: list[NewColumn]
+
+
+class GlossaryAnswer(BaseModel):
+    """Per column: a candidate it is the same as, a new element, or neither (leave it to step 06)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    column: str
+    same_as: SnakeName | None = None
+    new_element: GlossaryElementDraft | None = None
+    reason: NonBlank
+
+    @model_validator(mode="after")
+    def _one(self) -> GlossaryAnswer:
+        if self.same_as is not None and self.new_element is not None:
+            raise ValueError("an answer is same_as or a new element, not both")
+        return self
+
+
+class GlossaryBuilderOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answers: list[GlossaryAnswer]
+
+
+class MappingInput(BaseModel):
+    """What the MappingAgent (and the MappingEvaluator) sees. feed_id is None for a gold source."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feed_id: UUID | None
+    source_code: str
+    source_name: str
+    source_description: str | None
+    columns: list[ColumnToMap]
+
+
+class MappingAnswer(BaseModel):
+    """Per column: zero, one or several element keys, best first, and why."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    column: str
+    elements: list[str]
+    reason: NonBlank
+
+
+class MappingOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answers: list[MappingAnswer]
 
 
 class ElementOption(BaseModel):

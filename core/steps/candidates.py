@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from core.domain.glossary import GlossaryElementDraft
-from core.domain.mapping import Candidate, ElementOption, GlossaryOutcome, NewColumn
+from core.domain.mapping import Candidate, ColumnToMap, ElementOption, GlossaryOutcome, NewColumn
 from core.domain.profiling import FileColumn, SourceSpec
 from core.steps.matching import Words, words
 
@@ -186,6 +186,13 @@ class Classified:
     outcome: GlossaryOutcome
     options: list[ElementOption]
     recommended: int | None  # index into options; None for a conflict
+
+
+def kept_elements(column: ColumnToMap, keys: Iterable[str]) -> list[str]:
+    """Step 06 (assumption 23): the agent's keys that were candidates of the column, each once, in its
+    order, at most 10. The agent never invents an element; rejected ones were never candidates."""
+    offered = {x.key for x in column.candidates}
+    return list(dict.fromkeys(k for k in keys if k in offered))[:MAX_CANDIDATES]
 
 
 def alias_of(column_name: str) -> str:
