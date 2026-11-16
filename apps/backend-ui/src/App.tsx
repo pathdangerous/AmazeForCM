@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
+import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
 import StatusView from "./views/StatusView";
 
@@ -17,7 +18,13 @@ type View = keyof typeof VIEWS;
 
 function viewFromHash(): View {
   const name = window.location.hash.replace(/^#\/?/, "");
+  if (name.startsWith("feed/")) return "feeds"; // one feed's page belongs to the registry tab
   return name in VIEWS ? (name as View) : "status";
+}
+
+function feedFromHash(): string | null {
+  const match = window.location.hash.match(/^#\/feed\/([0-9a-f-]{36})$/);
+  return match ? match[1] : null;
 }
 
 function remembered(): string | null {
@@ -38,13 +45,17 @@ function remember(userId: string): void {
 
 export default function App() {
   const [view, setView] = useState<View>(viewFromHash);
+  const [feedId, setFeedId] = useState<string | null>(feedFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
 
   useEffect(() => {
-    const onHash = () => setView(viewFromHash());
+    const onHash = () => {
+      setView(viewFromHash());
+      setFeedId(feedFromHash());
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
@@ -101,7 +112,10 @@ export default function App() {
       <main>
         {view === "status" && <StatusView />}
         {view === "glossary" && <GlossaryView devUser={me ? selected : ""} />}
-        {view === "feeds" && <FeedRegistryView devUser={me ? selected : ""} />}
+        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} />}
+        {view === "feeds" && feedId && (
+          <FeedView feedId={feedId} devUser={me ? selected : ""} canAct={!!me && me.roles.includes("backend_team")} />
+        )}
       </main>
       <footer>Synthetic data only.</footer>
     </>

@@ -5,6 +5,7 @@ const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "", label: "All" },
   { value: "candidate", label: "Candidate" },
   { value: "registered", label: "Registered" },
+  { value: "rejected", label: "Rejected" },
 ];
 
 export default function FeedRegistryView({ devUser }: { devUser: string }) {
@@ -66,7 +67,7 @@ export default function FeedRegistryView({ devUser }: { devUser: string }) {
             <tbody>
               {feeds.map((f) => (
                 <tr key={f.id}>
-                  <td><code>{f.code}</code></td>
+                  <td><a href={`#/feed/${f.id}`} data-testid={`feed-link-${f.code}`}><code>{f.code}</code></a></td>
                   <td>{f.name}</td>
                   <td>{f.stage}</td>
                   <td>{f.owner_id ?? <span className="muted">none</span>}</td>
