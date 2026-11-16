@@ -88,7 +88,13 @@ DECLARE
     el jsonb;
 BEGIN
     IF NEW.created_by = 'seed' THEN
-        RETURN NEW;  -- the seed has no proposal (0004, ck_glossary_elements_proposal_unless_seed)
+        -- the seed writes version 1 of a key that does not exist yet, with no proposal, and nothing else
+        IF NEW.proposal_id IS NOT NULL OR NEW.version IS DISTINCT FROM 1
+           OR EXISTS (SELECT 1 FROM glossary_elements WHERE key = NEW.key) THEN
+            RAISE EXCEPTION 'glossary element % version %: a seed row is version 1 of a new key, with no proposal',
+                NEW.key, NEW.version USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
     END IF;
     SELECT payload INTO p_payload FROM proposals WHERE id = NEW.proposal_id;
     IF NOT EXISTS (SELECT 1 FROM approvals WHERE proposal_id = NEW.proposal_id AND role = 'glossary_owner'

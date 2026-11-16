@@ -681,3 +681,7 @@ Notes only; nothing here is built in phase 5.
 
 **Full suite at checkpoint 1:** `1557 passed in 130.68s`, one run, nothing skipped, no warnings. Baseline 108 to 113 s: about 20 s more before any of the 14 schema-per-test cases. The cause is not isolated (no single new test is above 1.2 s); checkpoint 3 runs three timed runs.
 
+**Checkpoint 1 approved** (2026-11-16): test time continues as planned; deviations 1 and 3 accepted. Two fixes to `0016` before task 5 (not yet applied to the application database, so edited in place; no `0017`):
+
+- **Fix A: the seed branch of `amaze_require_glossary_option()`.** It let any row with `created_by = 'seed'` through. Now a seed row passes only with no proposal, version 1, and a key that has no row. RED: `3 failed, 1 passed` (`test_a_seed_row_with_a_proposal_is_refused`, `test_a_seed_version_2_is_refused`, `test_a_seed_row_for_an_existing_key_is_refused`). GREEN: `195 passed` (with the seed, glossary, approval and append-only tests). `test_repo_glossary.py::test_database_refuses_a_duplicate_version` wrote its duplicate as a seed row, which the guard now answers first; the test asserts that, then disables only `trg_glossary_elements_b_option` in a savepoint and shows `uq_glossary_elements_key_version` still refuses. `core.seed` and `core.seed --demo`, twice each on the test database at `0016`: `33 inserted` / `3 inserted`, then `0 inserted, 33 already present` / `0 inserted, 3 already present`.
+

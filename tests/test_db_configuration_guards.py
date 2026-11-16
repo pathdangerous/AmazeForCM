@@ -182,6 +182,26 @@ def test_the_seed_needs_no_option(s):
     s.execute(text(ROW), element_row(None, key="seed_probe", by="seed"))
 
 
+SEED_ONLY_NEW = _branch_off("amaze_require_glossary_option",
+                            "glossary element % version %: a seed row is version 1 of a new key, with no proposal")
+
+
+def test_a_seed_row_with_a_proposal_is_refused(s, new_score_year):
+    """ck_glossary_elements_proposal_unless_seed would refuse it too; this guard answers first."""
+    answered_by(s, "a seed row is version 1 of a new key", ROW, element_row(new_score_year.id, by="seed"),
+                SEED_ONLY_NEW)
+
+
+def test_a_seed_version_2_is_refused(s, isin):
+    answered_by(s, "a seed row is version 1 of a new key", ROW, alias_row(isin, None, by="seed"), SEED_ONLY_NEW)
+
+
+def test_a_seed_row_for_an_existing_key_is_refused(s, isin):
+    """uq_glossary_elements_key_version would refuse version 1 too; this guard answers first."""
+    answered_by(s, "a seed row is version 1 of a new key", ROW, alias_row(isin, None, by="seed", version=1),
+                SEED_ONLY_NEW)
+
+
 # ---------------------------------------------------------------- mappings: the row matches its proposal
 
 MAP = ("INSERT INTO mappings (feed_id, source_field, element_key, version, proposal_id) "

@@ -143,8 +143,16 @@ def test_database_refuses_a_non_seed_element_without_a_proposal(db_session):
 
 
 def test_database_refuses_a_duplicate_version(db_session, seeded):
-    with pytest.raises(IntegrityError, match="uq_glossary_elements_key_version"):
-        db_session.execute(text(
-            "INSERT INTO glossary_elements (key, version, name, domain, data_type, definition, created_by) "
-            "VALUES ('isin', 1, 'ISIN', 'security_master', 'string', 'Synthetic.', 'seed')"
-        ))
+    """From 0016 trg_glossary_elements_b_option refuses a seed row for an existing key first; with that
+    trigger disabled (in a savepoint), uq_glossary_elements_key_version still refuses it."""
+    duplicate = text("INSERT INTO glossary_elements (key, version, name, domain, data_type, definition, created_by) "
+                     "VALUES ('isin', 1, 'ISIN', 'security_master', 'string', 'Synthetic.', 'seed')")
+    with pytest.raises(IntegrityError, match="a seed row is version 1 of a new key"):
+        with db_session.begin_nested():
+            db_session.execute(duplicate)
+    with db_session.begin_nested() as behind:
+        db_session.execute(text("ALTER TABLE glossary_elements DISABLE TRIGGER trg_glossary_elements_b_option"))
+        with pytest.raises(IntegrityError, match="uq_glossary_elements_key_version"):
+            with db_session.begin_nested():
+                db_session.execute(duplicate)
+        behind.rollback()
