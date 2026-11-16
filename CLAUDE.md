@@ -25,7 +25,7 @@ The system is three platforms, in the order data moves:
 ## Tech stack
 
 - Backend: Python 3.14 (3.14.5 on this laptop and the office laptop; `requires-python = ">=3.14,<3.15"`), FastAPI, Pydantic v2, SQLAlchemy 2, Alembic. Create the venv with `py -3.14`.
-- Data: PostgreSQL 18 (any 18.x minor) on both laptops (stores and repositories). Use no PostgreSQL feature newer than 14 until the Azure Database for PostgreSQL version is confirmed. DuckDB (profiling and SQL rules on files without staging).
+- Data: PostgreSQL 18 (any 18.x minor) on both laptops (stores and repositories). Use no PostgreSQL feature newer than 14 until the Azure Database for PostgreSQL version is confirmed. DuckDB (`duckdb==1.5.6`, in memory; profiling, and later SQL rules, on files without staging).
 - Frontend: React + TypeScript (Vite). Two apps: `backend-ui` (Amaze, backend team) and `consumer-ui` (consumption, end users).
 - Local runtime: no containers. PostgreSQL installed directly on Windows. PowerShell scripts are plain ASCII so Windows PowerShell 5.1 reads them correctly. Files go to a local folder (`STORAGE_PROVIDER=local`). The API runs with uvicorn in a Python virtual environment and the two UIs with `npm run dev`. `scripts/dev.ps1` starts all three; `scripts/setup_db.ps1` creates the database and its user.
 - Infrastructure as code: Bicep under `infra/`.
@@ -52,8 +52,11 @@ core/
                           "Request this data", end to end) and errors.py (refused step input). Phase 3:
                           known_source.py (Known source?), s1_scope.py, s2_sources.py, s3_pick.py, s4_fetch.py
                           (S1-S4), release.py (release a selected source) and requirement_page.py (what the
-                          requester sees, and every requester message). A step that needs an agent receives
-                          it as an argument, so core/steps never imports agents
+                          requester sees, and every requester message). Phase 4: profiling.py (DuckDB in
+                          memory over one CSV, and coverage against each requirement), s02_profile.py,
+                          s03_signoff.py, s04_register.py (steps 02-04) and feed_page.py (what the backend
+                          team sees about one feed). A step that needs an agent receives it as an argument,
+                          so core/steps never imports agents
   engine/                 Deterministic run engine (step 13). No AI imports allowed here.
   entitlement/            Rules-based entitlement decisions (decide.py). No AI imports allowed here.
 agents/
@@ -75,8 +78,9 @@ ports/                    Ports (interfaces) and adapters — see Placeholders. 
   secrets/                Secrets: env file, key_vault (stub)
   notify/                 Notifier: in-app, email/Teams (stub)
   connectors/             Source connectors: local file, HTTP (for the custom data product), and the source
-                          catalogue (catalogue.py). HTTP reaches only SOURCE_HTTP_ALLOWED_HOSTS (this
-                          machine until the Azure move) and never follows a redirect
+                          catalogue (catalogue.py; each entry's columns name the file column of every
+                          declared field). HTTP reaches only SOURCE_HTTP_ALLOWED_HOSTS (this machine until
+                          the Azure move) and never follows a redirect
 migrations/               Alembic migrations (alembic.ini at the repository root)
 scripts/                  setup_db.ps1, dev.ps1 (PowerShell, Windows)
 infra/                    Bicep templates (placeholders until the Azure move)
@@ -164,7 +168,7 @@ Implement these as typed results in `core/steps/`. Names in `snake_case`.
 
 ## Plugins used in this project, and which one wins
 
-Installed in Claude Code: Superpowers, Karpathy guidelines, Claude Octopus, i-have-adhd.
+Installed in Claude Code: Superpowers, Karpathy guidelines, Claude Octopus, i-have-adhd. **In this setup the plugins do not load.** The Superpowers and Karpathy method below is followed by hand, task by task: before code, list any assumption the plan does not state and stop if it changes scope; touch only the files the plan names (any other is a recorded deviation); tests first, the failing summary line pasted (RED), then the least code that passes and its summary line (GREEN); an unexpected failure is reproduced and its root cause written down before it is fixed; every claim in a report is backed by pasted output. Octopus reviews are done by hand too.
 
 Order of precedence when they disagree:
 
@@ -178,9 +182,11 @@ Order of precedence when they disagree:
 
 - Follow the Superpowers flow for each phase: brainstorm → plan in `docs/plans/` → tests for the step's negative outcomes first → implement → review.
 - Keep `core/engine/`, `core/entitlement/`, `core/domain/`, `core/repositories/` and `core/steps/` free of `agents` and `ports.llm` imports; a test enforces this. An agent-backed step receives its agent as an argument; the API builds the agent (phase 3 plan, assumption 22). No file outside `agents/base.py` calls `.complete(`; a test enforces this too.
-- Every step that changes a requirement (or any row others may change at the same time) locks that row first (`RequirementRepository.lock()`), and the API maps each named conflict to 409, never 500.
+- Every step that changes a requirement (or any row others may change at the same time) locks that row first (`RequirementRepository.lock()`), and the API maps each named conflict to 409, never 500 (`apps/api/transactions.py`).
+- One lock order for every step that takes more than one lock (phase 4 plan, assumption 46): the advisory lock on the source code (`lock_source()`), then the feed row (`FeedRepository.lock()`, `FOR NO KEY UPDATE`), then the requirement rows in id order. The next version of a feed's profile, sign-off or registration is read only after the feed row is locked.
+- Step 02 reads the file only through `BlobStore.get()` and runs DuckDB with no database connection held, like a model call: read, end the transaction, profile, lock, check again, write.
 - No database connection is held during a model call. Every agent-backed step follows one pattern: (1) a read-only `*_input()` builds the agent's input and checks the status; (2) the API ends that read transaction (`Agent.run()` refuses a session still in one with `SessionInTransaction`; one-session chains for step tests live in `tests/step_chains.py`, never in `core/`); (3) `Agent.run(..., before_write=...)` calls the model; (4) in `before_write` the step locks the row and checks its status again; (5) only then are the log row, the proposals and the status change written, in one transaction. `Agent.run()` commits the call's `proposal_log` row in its own short transaction right after the call, before the request writes anything; a change during the call gives 409 and a second, append-only row in `proposal_log_discards` pointing at it, with no proposal. Every answered model call has exactly one call row. `tests/test_concurrency.py` checks `pool.checkedout() == 0` during every call. The source fetch (S4) follows the same read / end transaction / call / lock / write pattern.
-- Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. Never work around these triggers; add a new version instead.
+- Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. From `0014`, a sign-off needs its decided `profile_summary` proposal (approved when the person's outcome is the recommended one, rejected when it differs), a registration needs the feed's latest accepting sign-off, and `feeds.stage` changes only candidate → registered (with a registration) or candidate → rejected (with a rejected sign-off); tests make such feeds with `tests/onboarded.py`. Never work around these triggers; add a new version instead.
 - At the end of each phase, append any UI polish items found to `docs/ui-polish.md` (one line each: screen, issue, proposed fix). Do not fix them unless asked; phase 7.5 does.
 - Edit files only with the file tools (Read, Edit, Write). Never rewrite or patch files through PowerShell, sed or other shell commands.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.

@@ -48,6 +48,7 @@ each. Close the three windows to stop.
 | Backend workbench: status | http://localhost:5173/#/status |
 | Backend workbench: glossary | http://localhost:5173/#/glossary |
 | Backend workbench: feed registry | http://localhost:5173/#/feeds |
+| Backend workbench: one feed | http://localhost:5173/#/feed/<id> (linked from the registry) |
 | Marketplace: search (consumer-ui) | http://localhost:5174/#/search |
 | Marketplace: my requests | http://localhost:5174/#/requests |
 | Marketplace: one requirement | http://localhost:5174/#/requirement/<id> (linked from My requests) |
@@ -67,6 +68,13 @@ and the requirement is onboarding. Picking "Backup end-of-day prices" (no file, 
 waiting; "Choose another source" releases it and you pick again. `esg score` (tick the term) finds an
 open-data source; `yield to maturity` with the purpose "internal desk data" finds none. Search
 `closing prices` and press "Ask the assistant" for a suggested glossary element.
+
+Phase 4, as Blake Backend in the backend workbench: open a feed from the registry, then Profile the
+latest file (DuckDB), Summarise (the ProfilerAgent proposes an outcome), Sign off and Register (name a
+data owner; open or restricted). `issue date` picks Instrument lifecycle, whose file has empty issue
+dates: sign it off with gaps and the requester sees them. `lot size` picks Listing details, whose file
+has no rows: Meets is not offered; a rejection tells the requester why. A `volume` request after its
+feed is registered is linked to it at once, with no new fetch.
 `/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
 Azure stub.
 
@@ -74,7 +82,7 @@ Check:
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0013 (head)
+.\.venv\Scripts\python -m alembic current     # expect: 0014 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```
@@ -85,6 +93,7 @@ defaults; the Azure ones are stubs until the move and raise `NotImplementedError
 The database protects its own rules: append-only tables (`proposal_log`, `approvals`,
 `glossary_elements`, `mappings`, `rules`, and from phase 2 `product_elements`, `product_grants`,
 `requirement_elements`, `requirement_terms`, `consumer_requests`, and from phase 3
-`source_choices`, `source_fetches`, `requirement_scopes`) refuse UPDATE, DELETE and
+`source_choices`, `source_fetches`, `requirement_scopes`, and from phase 4 `feed_profiles`,
+`feed_signoffs`, `feed_registrations`) refuse UPDATE, DELETE and
 TRUNCATE, and configuration rows are accepted only for an approved proposal. Correct a mistake by
 adding a new version. Requests made in the marketplace therefore stay in the database for good.

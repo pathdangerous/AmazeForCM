@@ -46,9 +46,10 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 
 ## Phase 4 — Profile, sign-off, register (02–04)
 
-- DuckDB profiles the file directly: columns, types, null rates, distinct counts, coverage against the requirement.
-- ProfilerAgent (mock) summarises; backend team signs off: `meets`, `meets_with_gaps`, `rejected`.
-- Register with owner, licence (permitted use, redistribution) and who may see it.
+- DuckDB profiles the file directly: columns, types, null rates, distinct counts, coverage against the requirement. It reads the file only through `BlobStore.get()`, in memory, with no database connection held. A file with no data rows is `spec_only_low_confidence`.
+- ProfilerAgent (mock) summarises; backend team signs off: `meets`, `meets_with_gaps`, `rejected`. The sign-off is the backend team's decision on the summary: approved when the person keeps the recommended outcome, rejected when they choose another. `meets` is refused on a spec-only profile.
+- A rejection is final in the PoC: the feed is rejected, every requirement that selects it is released (`candidate_rejected`) and its requester is told the reasons; the source is not offered again.
+- Register with owner (a data owner), licence (permitted use, redistribution, copied from the catalogue) and who may see it (open or restricted). A requirement handed to a source whose feed is already registered is `duplicate_linked`: by source code, with nothing fetched or registered again.
 - **Done when:** a rejected candidate keeps its reasons and the requester is told; an accepted one is registered.
 
 ## Phase 5 — Glossary builder and mapping (05–06)
