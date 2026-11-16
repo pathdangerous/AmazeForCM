@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "description": "Gold set for step 06 (phase 5 plan, section 8.1). Four invented sources, 31 columns, against the 33 seed elements of fixtures/glossary/enterprise_glossary.json. Each case says what a careful person would decide, reading the source's description. Synthetic: no values, no client or vendor names. Frozen at version 1; a change is a new version, recorded in the phase 5 plan, section 17.",
+  "sources": [
+    {
+      "code": "syn_gold_eod_prices",
+      "name": "Gold: end-of-day prices",
+      "description": "End-of-day prices of listed instruments, one row per instrument and day. The file does not say whether its currency column is the instrument's currency or the currency the prices are quoted in.",
+      "columns": [
+        {"case": 1, "column": "instrument_id", "type": "VARCHAR", "hint": null, "category": "easy", "expected": {"outcome": "mapped", "element": "instrument_id"}},
+        {"case": 2, "column": "price_date", "type": "DATE", "hint": null, "category": "easy", "expected": {"outcome": "mapped", "element": "price_date"}},
+        {"case": 3, "column": "close_price", "type": "DOUBLE", "hint": null, "category": "easy", "expected": {"outcome": "mapped", "element": "close_price"}},
+        {"case": 4, "column": "Open Price", "type": "DOUBLE", "hint": null, "category": "easy", "expected": {"outcome": "mapped", "element": "open_price"}},
+        {"case": 5, "column": "day_high", "type": "DOUBLE", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "high_price"}},
+        {"case": 6, "column": "day_low", "type": "DOUBLE", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "low_price"}},
+        {"case": 7, "column": "traded_volume", "type": "BIGINT", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "volume"}},
+        {"case": 8, "column": "ccy", "type": "VARCHAR", "hint": null, "category": "tie", "expected": {"outcome": "tie_to_steward", "must_offer": ["currency", "price_currency"]}}
+      ]
+    },
+    {
+      "code": "syn_gold_vendor_quotes",
+      "name": "Gold: vendor quotes",
+      "description": "Daily quotes from one vendor, one row per instrument and day: bid, offer and mid, all in the currency the quote is made in (quote_ccy). The spec names the instrument and date columns. The vendor does not say which price its column 'price' is.",
+      "columns": [
+        {"case": 9, "column": "instr_id", "type": "VARCHAR", "hint": "instrument_id", "category": "hint", "expected": {"outcome": "mapped", "element": "instrument_id"}},
+        {"case": 10, "column": "px_date", "type": "DATE", "hint": "price_date", "category": "hint", "expected": {"outcome": "mapped", "element": "price_date"}},
+        {"case": 11, "column": "bid", "type": "DOUBLE", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "bid_price"}},
+        {"case": 12, "column": "offer", "type": "DOUBLE", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "ask_price"}},
+        {"case": 13, "column": "mid_px", "type": "DOUBLE", "hint": null, "category": "abbreviation", "expected": {"outcome": "mapped", "element": "mid_price"}},
+        {"case": 14, "column": "price", "type": "DOUBLE", "hint": null, "category": "tie", "expected": {"outcome": "tie_to_steward", "must_offer": ["close_price", "mid_price"]}},
+        {"case": 15, "column": "quote_ccy", "type": "VARCHAR", "hint": null, "category": "misleading name", "expected": {"outcome": "mapped", "element": "price_currency"}}
+      ]
+    },
+    {
+      "code": "syn_gold_volume_stats",
+      "name": "Gold: daily volume statistics",
+      "description": "Daily trading statistics, one row per instrument and trading day. 'instrument' is the internal instrument identifier; 'trade_date' is the day the statistics are for; 'volume' is the day's traded volume; 'high' is the size of the day's largest single trade, a quantity, not a price; 'open' says whether the instrument was open for trading that day, Y or N.",
+      "columns": [
+        {"case": 16, "column": "instrument", "type": "VARCHAR", "hint": null, "category": "context", "expected": {"outcome": "mapped", "element": "instrument_id"}},
+        {"case": 17, "column": "trade_date", "type": "DATE", "hint": null, "category": "context", "expected": {"outcome": "mapped", "element": "price_date"}},
+        {"case": 18, "column": "volume", "type": "BIGINT", "hint": null, "category": "easy", "expected": {"outcome": "mapped", "element": "volume"}},
+        {"case": 19, "column": "high", "type": "BIGINT", "hint": null, "category": "misleading name", "expected": {"outcome": "no_element_back_to_05"}},
+        {"case": 20, "column": "open", "type": "VARCHAR", "hint": null, "category": "type mismatch", "expected": {"outcome": "no_element_back_to_05"}}
+      ]
+    },
+    {
+      "code": "syn_gold_bond_terms",
+      "name": "Gold: bond terms",
+      "description": "Terms of bonds, one row per bond: its ISIN; its maturity as a tenor such as 5Y (text); its coupon; its issue date; the issuer's name and LEI; the bond's currency; a credit rating; an ESG score; a column 'date' the source does not explain; and the trading lot as text such as '1000 units'. The spec says the lot column holds the lot size.",
+      "columns": [
+        {"case": 21, "column": "isin", "type": "VARCHAR", "hint": null, "category": "easy", "expected": {"outcome": "mapped", "element": "isin"}},
+        {"case": 22, "column": "maturity", "type": "VARCHAR", "hint": null, "category": "type mismatch", "expected": {"outcome": "no_element_back_to_05"}},
+        {"case": 23, "column": "coupon", "type": "DOUBLE", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "coupon_rate"}},
+        {"case": 24, "column": "issue_dt", "type": "DATE", "hint": null, "category": "abbreviation", "expected": {"outcome": "mapped", "element": "issue_date"}},
+        {"case": 25, "column": "rating", "type": "VARCHAR", "hint": null, "category": "no element", "expected": {"outcome": "no_element_back_to_05"}},
+        {"case": 26, "column": "esg_score", "type": "DOUBLE", "hint": null, "category": "no element", "expected": {"outcome": "no_element_back_to_05"}},
+        {"case": 27, "column": "issuer", "type": "VARCHAR", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "issuer_name"}},
+        {"case": 28, "column": "lei", "type": "VARCHAR", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "issuer_lei"}},
+        {"case": 29, "column": "ccy", "type": "VARCHAR", "hint": null, "category": "alias only", "expected": {"outcome": "mapped", "element": "currency"}},
+        {"case": 30, "column": "date", "type": "DATE", "hint": null, "category": "tie", "expected": {"outcome": "tie_to_steward", "must_offer": ["issue_date", "maturity_date"]}},
+        {"case": 31, "column": "lot", "type": "VARCHAR", "hint": "lot_size", "category": "type mismatch", "expected": {"outcome": "no_element_back_to_05"}}
+      ]
+    }
+  ]
+}
