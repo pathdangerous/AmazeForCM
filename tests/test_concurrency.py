@@ -442,6 +442,22 @@ def test_no_connection_is_held_during_a_profiling_run(own_schema, tmp_path):
     assert (errors, results, blobs.checked_out) == ([], [1], [0])
 
 
+async def test_no_connection_is_held_during_the_profile_endpoint(own_schema, flow, tmp_path):
+    """POST .../profile: the endpoint ends its read before DuckDB runs. The step-level test above calls the
+    step functions itself, so only this test sees a change in the endpoint (checkpoint 3 review)."""
+    from apps.api.deps import get_blob_store_port
+    from apps.api.main import app
+    from ports.storage.local import LocalBlobStore
+
+    async with flow() as f:
+        await f.raised("volume", ("volume",))
+        await f.step("find-source")
+        blobs = _WatchedBlobs(LocalBlobStore(tmp_path / "blob"), own_schema)
+        app.dependency_overrides[get_blob_store_port] = lambda: blobs
+        await f.amaze("syn_exchange_volumes", "profile")
+    assert blobs.checked_out == [0]
+
+
 def test_two_profiles_of_one_feed_at_once_take_the_next_versions(own_schema, tmp_path):
     """Both runs meet at a barrier inside BlobStore.get(), then record at once. record_profile locks the feed
     row before it reads the next version, so they write versions 1 and 2: two successes, never a unique

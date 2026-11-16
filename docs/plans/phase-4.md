@@ -830,6 +830,8 @@ Six tests, five commits: find-source and pick share one link commit. The pick's 
 
 **Files changed outside section 11:** none.
 
+**After checkpoint 3 (your review): the profiling-run proof.** `run_profile(...)` was moved inside the `read(...)` call of `POST .../profile` in `apps/api/routers/amaze.py` with the Edit tool. `test_no_connection_is_held_during_a_profiling_run` **still passed** (`1 passed in 2.04s`): it calls the step functions itself, never the endpoint, so it cannot see the change. A new endpoint-level test was written with the change still in place, `test_no_connection_is_held_during_the_profile_endpoint` (the API's real session factory, a blob store that records `pool.checkedout()` on `get()`), and failed: `assert [1] == [0]`. The endpoint was restored with the Edit tool; `git diff --stat -- apps` is empty; both tests pass (`2 passed`).
+
 **`pytest --durations=15`** (the test setup unchanged):
 
 ```
