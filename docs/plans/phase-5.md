@@ -769,3 +769,67 @@ Note 12 (added at checkpoint 3's approval; numbered last so notes 6 to 11 keep t
 
 **Test time (assumption 47: about 145 s, between 135 and 175 s).** Three full runs, back to back: `1687 passed in 162.92s`, `1687 passed in 163.31s`, `1687 passed in 160.11s`; nothing skipped, no warnings. Inside the range, about 16 s above the most likely figure. From checkpoint 2 (`1662 passed in 128.17s`) to checkpoint 3: +25 tests, +33 s, almost all from the 14 schema-per-test cases (6 commit visibility, 8 races) and the longer no-connection test.
 
+**Checkpoint 3 approved** (2026-11-17): deviations 1 to 4 accepted; `EVAL_DATABASE_URL` corrected in `.env` by you. Before task 12 (commit `c81251b`): `test_a_backend_user_without_the_approver_role_gets_403_and_nothing_is_decided` (both kinds; `FORBIDDEN` emptied with the Edit tool: `1 failed` with `NotAnApprover` raised as a 500; restored: `11 passed`), deviation 4 appended to `docs/ui-polish.md`, and section 16, phase 6 note 12 (test time).
+
+### Checkpoint 4 (tasks 12 to 15)
+
+**Task 12, assumptions the plan did not state**
+1. The banner shows nothing when no run is active, no proposal waits and no feed's newest run failed. It reads `GET /glossary/runs` when the view, the feed or the user changes, after an action, and every 3 s while a run is active; when the number of active runs falls, it tells the views to read again (so the feed page shows the run's results without a reload).
+2. Run again shows for `glossary_owner` and `backend_team` (the roles of `POST .../glossary/run`), on the newest finished run of a feed when it failed and nothing is active for that feed.
+3. The Glossary view lists pending `glossary_element` proposals only. Approve sends the chosen option (the recommended one preselected); a conflict with no option shows only Reject. Reject, on both views, needs a note in the UI (assumptions 17 and 28); see finding 1.
+4. On the feed page, the glossary builder and mapping sections show for a registered feed only. Propose again shows on a mapped column with no pending proposal; the versions list opens when a column has more than one version.
+5. A 403 whose reason names the role ("needs role ...") is shown with that reason; any other 403 keeps "this view needs a backend role".
+
+**Browser run** (servers started by me and closed after; backend-ui and consumer-ui by `npm run dev`; the API by a scratch launcher outside the repository that holds the glossary builder's mock call for 8 s and is otherwise the real app, risk 13). Screenshots in `.playwright-mcp/`:
+
+| Row | Result | Screenshot |
+|---|---|---|
+| Q | Glenn: Run the glossary builder; the banner showed the run, then "2 proposals wait for the glossary owner" (its link opens Glossary). `esg_score`, `score_year`: `proposed`; approved: two elements, version 1. Sam: Propose mappings: 3 recommended (`instrument` → `instrument_id` from the source's spec, `esg_score`, `score_year`); approved: three mappings, version 1 | `phase5-Q.png` |
+| R | Registration queued the run with no click; the banner showed "running for Bond terms (syn_bond_terms)". Run results: `rating` proposed, `venue_mic_code` duplicate alias (of `exchange_mic`), `date` left to step 06, `maturity` covered by name. Glenn approved both. Sam: 5 recommended, 1 tie (`date`: issue, maturity or price date), 1 sent back (`maturity`, type does not fit); the `sent_back` run gave `maturity` a `conflict_to_owner` with no option (clashes with `maturity_date`); Glenn rejected it with a note; the row says "rejected by the glossary owner". Sam approved the five and chose `price_date` | `phase5-R.png`, `phase5-banner.png` |
+| S | Propose again on `date`: a tie again. `maturity_date`: refused, "Not now: Column 'matures_on' of this feed is mapped to maturity_date" (409). `issue_date`: version 2. The versions list shows version 1 `price_date` and version 2 `issue_date` | `phase5-S.png` |
+| T | Riley: `closing prices`, Ask the assistant: "Close price suggested", held by Daily close prices (as before). The newest file under `data/blob/agent-inputs/DiscoveryAssistant/` holds 10 glossary entries (`close_price`, `ask_price`, `bid_price`, `high_price`, `low_price`, `mid_price`, `open_price`, `price_currency`, `price_date`, `price_source`) of 37 | `phase5-T.png` |
+
+Console errors: one, the browser's log line for the expected 409 of row S. API 4xx/5xx in the server log: that one 409; no 5xx.
+
+**What the run left in the application database:** `glossary_runs`: 3 `done` (registered 1, requested 1, sent_back 1). `glossary_elements`: 33 seed, 4 from proposals (`esg_score`, `score_year`, `rating` version 1; `exchange_mic` version 2 with the alias). `mappings`: 10 rows (Open ESG scores 3, Bond terms 7: six columns, `date` in two versions). Proposals: `glossary_element` 4 approved, 1 rejected; `mapping` 10 approved. `proposal_log`: GlossaryBuilderAgent 3, MappingAgent 3, and, from both attempts of row R and from row T, IntentAgent +2, SourceDiscoveryAgent +1, ProfilerAgent +1, DiscoveryAssistant +1. Also row R's first attempt (below): one `reuse` request and one requirement ending `no source found`.
+
+**Deviations**
+1. *Row R could not start in the marketplace.* With `core.seed --demo` loaded, the demo product Bond reference data holds `coupon_rate` (and every element Bond terms declares), so "coupon rate" is answered `reuse` and never reaches S1; "coupon rate and rating" raises a requirement for the term only, which no source declares (`no_fit`). Riley's requirement for `coupon_rate` was raised by a scratch script outside the repository that posts to the real `POST /api/consumer/requests` with only `route_request` replaced to answer `raise_requirement`; everything after it (Find a source, scope, pick, profile, summary, sign-off, register) was done in the browser. A polish line records the overlap of the demo data.
+2. `.env.example` is unchanged in task 13: both settings were added in tasks 7 and 9.
+3. The 403 test, the polish line for deviation 4 and phase 6 note 12 were committed before task 12, as asked.
+
+**Task 13:** `CLAUDE.md` (the layout of `core/steps/`, `agents/evaluation.py`, `apps/api/jobs.py`; the step 05 agent line; the phase 5 lock order; the run table and the 10-candidate rule; the `0016` guards and `tests/configured.py`), `BUILD_PLAN.md` (phase 5 as built), `README.md` (the phase 5 demo, `0016 (head)`). The tests that read the documents: `92 passed`.
+
+**Task 15, review** (by hand; Octopus not loaded)
+
+| Rule | Holds | How |
+|---|---|---|
+| 1 AI proposes; people decide; rules execute | yes | Both agents write proposals only; `mappings` and non-seed `glossary_elements` need their approved proposal and must match it (`0016` triggers); the decision endpoint checks the proposal's role in the step (403, test above); the UI shows actions to the role only |
+| 2 No model call in the engine or entitlement | yes | `test_import_boundaries.py`, `test_no_direct_llm_calls.py` pass; phase 5 adds nothing under `core/engine/` or `core/entitlement/` |
+| 3 Every negative outcome explicit | yes | Steps 05 and 06 return `CLAUDE.md`'s six outcomes as unions (`test_step_results.py`); a failed run is a `failed` row with its error, shown in the banner |
+| 4 Every proposal logged | yes | Every call through `Agent.run()`: 3 GlossaryBuilderAgent and 3 MappingAgent rows for 3 runs and 3 proposes in the browser run; a late or refused answer gets a discard row; decisions are `approvals` rows |
+| 5 Azure behind an interface | yes | `Scheduler.run_soon` is on the port; `AzureFunctionsScheduler.run_soon` raises `NotImplementedError` (`test_azure_stubs.py`) |
+| 6 Synthetic data only | yes | `bond_terms.csv`, the gold set and the catalogue entry are synthetic (`syn_` codes) |
+| 7 Configuration versioned | yes | `date`: versions 1 and 2 both kept; an alias is a new element version; the append-only triggers cover `mappings` and `glossary_elements` |
+
+**PostgreSQL 14:** `0016` uses `jsonb_typeof`, `jsonb_array_elements` and `?` (9.4), `to_jsonb` (9.5), `gen_random_uuid()` (13), partial unique indexes, plpgsql, statement-level `BEFORE TRUNCATE` triggers; the code uses `ON CONFLICT` with a partial-index predicate and `FOR UPDATE SKIP LOCKED` (9.5) and `pg_advisory_xact_lock` (9.1). A search of `0016` and every Python file changed in phase 5 for features of 15 or later (`MERGE`, `NULLS NOT DISTINCT`, SQL/JSON constructors and `JSON_TABLE`, `uuidv7`, virtual generated columns, `ANY_VALUE`, `regexp_count` and others) finds none.
+
+**Findings**
+1. *A rejection needs no note in the API.* Assumptions 17 and 28 say "reject with a note"; the UI requires one, but `decide_element()` and `decide_mapping()` accept `note=None`, so a direct API call can reject without a reason. Not changed; for your decision.
+2. *The banner's failed state and Run again were not seen in the browser:* no run failed. They are built on `runs_banner()`'s `failed` runs, which the API tests cover; backend-ui has no test of its own (phase 7).
+
+**Section 13 results**
+
+| Command | Result |
+|---|---|
+| `pip install -r requirements-dev.txt` | exit 0 |
+| `alembic upgrade head` | exit 0 (already at head) |
+| `core.seed` | `0 inserted, 33 already present` |
+| `pytest -q` | `1688 passed in 222.46s` (an earlier run, with `-p no:cacheprovider`: `1688 passed in 233.65s`); 0 failed, 0 skipped, 0 warnings |
+| `alembic current` | `0016 (head)` |
+| `evaluate_mappings` | provider `mock`, `Score: 25 of 31 (80.6%)`, mean tie size 5.0, candidate recall 27 of 28 (case 8 `price_currency`), wrong maps 15 `quote_ccy`, 19 `high`; `Logged 4 calls to database amaze_eval`; exit 0, the plain command with the corrected `.env`. The refusal with the two URLs equal was not run again: setting the application database's URL as `EVAL_DATABASE_URL` was blocked by the session's permission check; it is covered by the test suite and was shown at checkpoint 2 |
+| both builds | exit 0 |
+| `dev.ps1` | three `OK` lines and health `ok`; its three windows closed after |
+
+**Test time.** 222 to 234 s, against 160 to 163 s at checkpoint 3, with one test added (3 s). Not the code: the only Python change since `02594e2` is that test, and `test_concurrency.py` with `test_commit_visibility.py`, unchanged files over unchanged code, went from `58 passed in 81.03s` to `58 passed in 105.42s`, the time in fixture set-up, not in the tests. Not the test database: one schema, catalogs vacuumed, no dead tuples. The machine was on mains power at about 85% processor performance; the cause is not isolated further. Phase 6 note 12 stands.
+
