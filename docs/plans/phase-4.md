@@ -953,3 +953,45 @@ dev.ps1                               OK Amaze API / OK Amaze backend-ui / OK Am
    - `.playwright-mcp/phase4-M.png`: Riley's "issue date" page. The first retake was empty again: the wait found the text, then the page reloaded when the dev user was set and was blank at the screenshot. Root cause of the earlier bad image too. Retaken after the page snapshot showed the message; it shows "Your data is getting onboarded; we will notify you once it is ready." and under it "The backend team accepted Instrument lifecycle with gaps: issue_date is empty in 2 of 10 rows."
    - `.playwright-mcp/phase4-signoff-form.png`: the sign-off form without the button, on `syn_open_esg_scores` (the only feed with a file still waiting for a sign-off): Profile and Summarise were run for it and left unsigned, so the application database now also holds that feed's profile 1 (`profiled`) and its `profile_summary` proposal (`pending`, recommends meets). The form shows "Gaps and reasons are shown to the requester."
 3. **One UI polish line appended** to `docs/ui-polish.md` (not fixed): backend-ui, Feed: coverage cards of requirements that no longer select the feed read 'A requirement'; show the requirement's title, marked 'no longer selects this feed', or hide the card.
+
+### Fixes after the independent review (2026-11-16)
+
+All 11 findings accepted and fixed, one commit each. `0014` is applied, so every database change is in a new migration, `0015_stage_guard_and_signer.py`, developed against the test database and applied to the application database at the end. Every proof below was made with the Edit tool and restored; `git grep PROOF` finds nothing. Tests: 1360 at the start, 1396 at the end.
+
+| # | Fix | RED | GREEN | Commit |
+|---|---|---|---|---|
+| 1 | `0015`: `amaze_guard_feed_stage` replaced. candidate → registered also needs the latest registration's sign-off to be the feed's latest, to accept, and to be on the latest profile; candidate → rejected needs the rejected sign-off on the latest profile. `trg_feed_registrations_c_once` refuses a registration version above 1. Downgrade test for `0015` | 6 new raw-SQL tests: `6 failed, 1 passed` (the 1: an existing test the `-k` filter matched) | `134 passed in 23.69s`; full `1367 passed in 172.59s` | `abb662f` |
+| 2 | Seven raw-SQL tests: approved summary with a rejected approval; required role missing; rejected summary with no rejected approval; a summary of another feed; the signer under another role; unique profile; unique proposal | proof: each guard removed first, inside the test's transaction (a trigger branch's `RAISE EXCEPTION` turned to `RAISE NOTICE`; a constraint dropped): `7 failed` (6 × `DID NOT RAISE`; the signer case then refused by D1's missing-role check, a different message) | `63 passed in 3.66s` | `8cacfc0` |
+| 3 | Two races through the API; every head-start race now starts its second request on an event set inside the first's slowed read and asserts the overlap; the profile-during-sign-off result is exact (`meets`, then profile 2); the two-sign-offs docstring credits the proposal row lock | proof: `ProposalAlreadyDecided` and `SourceRejected` removed from `CONFLICTS`: `2 failed, 2 passed` (the API tests fail; the step-level tests still pass, the gap the review named) | `24 passed in 47.28s` | `4b948d0` |
+| 4 | `0015`: `trg_feed_signoffs_d_signer` (the signer's own `backend_team` row is `approved` when the outcome is the recommended one, else `rejected`); `trg_proposals_decision_only` (UPDATE may change `status` and `decided_at` only, the two columns `record_decision` writes; DELETE refused) | `9 failed, 2 passed` (the 2: the legitimate D1 paths, which must keep working) | full run first: `2 failed, 1385 passed`, both my test's error (below); then `142 passed in 18.77s` | `f340ca9` |
+| 5 | The daily close of a list whose only source was rejected: test, and the reason in the backend team's notification | `1 failed` (the body said "has left the catalogue") | `31 passed in 4.81s` | `5b61e7d` |
+| 6 | Step test: a source rejected between Known source?'s unlocked check and its lock gives `SourceRejected`; the API test renamed `test_a_rejected_source_is_no_longer_listed_and_its_pick_is_409` | proof: the re-check at `known_source.py:127-128` disabled: `IntegrityError` "is rejected: it cannot be selected" (a 500) | `44 passed in 14.48s` | `1e3c5d5` |
+| 7 | S4 locks requirements in id order (`sorted`) in both loops | `1 failed` (the larger id, selected first, locked first) | `46 passed in 4.42s` | `266b477` |
+| 8 | `populate_existing` on the five `with_for_update` selects | `4 failed` (old name; a pending proposal decided again; old status; old title) | full `1394 passed in 114.41s` | `5128697` |
+| 9 | Commit-visibility test for the broken-catalogue notification | proof: the commit removed: `1 failed, 2 passed` (the two shared-session tests still pass) | `31 passed in 21.01s` | `21dd5b2` |
+| 10 | Decision A pinned: a requirement that selects or is linked after `meets_with_gaps` sees the note and is not notified; assumption 32 gains the line | none: decision A is the behaviour already built, so the test passed at once (`1 passed`) | `1 passed` | `9881b7c` |
+| 11 | `spec_check()` and `FeedProfileRepository.get` deleted; the feed page's undeclared and missing columns get their own test first; two tests renamed; section 11, task 11 and risk 13 corrected | none (a deletion) | `63 passed in 6.76s` | `a0024b3` |
+
+**Finding 5, the new wording** (to the backend team, subject "No source left: <title>"; for your approval): "Requirement <id> (<title>): every listed source was rejected by the backend team. It is now no_source_found; the requester can ask for a new scope." When some were rejected and the others left the catalogue: "... every listed source was rejected by the backend team or has left the catalogue. ..."; when none was rejected, unchanged ("... has left the catalogue. ...").
+
+**Unexpected failures, with their root causes:**
+1. Finding 4: `feed_id = NULL` and `requirement_id = NULL` were not refused. Root cause: the fixture's proposal has neither link, so the UPDATE changed nothing. The test now sets a new value (the BEFORE trigger answers before the foreign key). The guard was right.
+2. Finding 6's first proof failed with "is rejected: only a candidate feed is signed off". Root cause: my test's wrapper rejected the feed on every `lock_source` call, and `feed_for` takes the same lock again. It now rejects once; the proof then failed for the right reason.
+3. Finding 9's first proof replaced the commit with a rollback, which also failed the shared-session test. The review's scenario is a missing commit; the proof was redone with the commit removed.
+
+**Deviations:**
+1. `README.md` (`0015 (head)`), `tests/test_db_approval_guard.py`, `tests/test_known_source.py`, `tests/test_s4_fetch.py`, `tests/test_profiling.py`, `tests/test_repo_feed_profiles.py` and `migrations/versions/0015_stage_guard_and_signer.py` are outside section 11; each is a file a finding named or needed.
+2. `requirement_scopes.py:30` selects the id column only, so `populate_existing` changes nothing there and no test can show it; it is added for uniformity.
+3. Finding 2's unique-proposal test drops `uq_feed_signoffs_profile_id` first: the same summary always names the same profile, so the unique profile refuses before the unique proposal can.
+4. `trg_proposals_decision_only` refuses UPDATE and DELETE, not TRUNCATE (not asked). It does not restrict which status a proposal moves to; finding 2's tests set statuses by hand, as the review's scenarios do.
+5. Section 17's checkpoint 1 record still names `spec_check()`: it is history.
+
+**Application database:**
+
+```
+alembic current          0014
+alembic upgrade head     Running upgrade 0014 -> 0015, stage guard checks the registration's sign-off; a feed is registered once
+alembic current          0015 (head)
+```
+
+**Full suite:** `1396 passed in 170.56s (0:02:50)`, none skipped or failed. The suite's time on this laptop varied from 114 to 173 s during the day; the baseline before the fixes was `1360 passed in 129.50s`.
