@@ -17,7 +17,7 @@ def claude_md_outcomes(label: str) -> list[str]:
     text = (REPO_ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     lines = [line for line in text.splitlines() if line.startswith(f"- **{label}**:")]
     assert len(lines) == 1, f"CLAUDE.md has {len(lines)} lines for {label!r}"
-    return re.findall(r"`([a-z_]+)`", lines[0])
+    return re.findall(r"`([a-z][a-z0-9_]*)`", lines[0])  # digits: no_element_back_to_05 (phase 5)
 
 
 def test_step_02_outcomes_are_claude_mds():
@@ -44,6 +44,13 @@ def test_step_05_outcomes_are_claude_mds():
 
     assert union_outcomes(GlossaryResult) == claude_md_outcomes("05 Glossary") == [
         "proposed", "duplicate_alias", "conflict_to_owner"]
+
+
+def test_step_06_outcomes_are_claude_mds():
+    from core.steps.s06_map import MapResult
+
+    assert union_outcomes(MapResult) == claude_md_outcomes("06 Map") == [
+        "mapped", "tie_to_steward", "no_element_back_to_05"]
 
 
 def test_claude_md_lists_the_phase_2_outcomes():

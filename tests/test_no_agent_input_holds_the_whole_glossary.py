@@ -46,3 +46,32 @@ def test_the_discovery_assistant_gets_at_most_ten_candidates_per_term(db_session
     assert len(set(keys)) == len(keys)
     assert "close_price" in keys
     assert [(s.term, s.element_key) for s in result.suggestions] == [("closing prices", "close_price")]
+
+
+@pytest.fixture
+def lookalike_feed(db_session, big_glossary):
+    """A registered feed whose one undeclared column looks like all 167 synthetic elements."""
+    from core.domain.profiling import FileColumn, SourceSpec
+    from core.repositories.feeds import FeedRepository
+    from tests.onboarded import registered_feed
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_lookalike", name="Lookalike")
+    return registered_feed(db_session, feed.id, spec=SourceSpec(source_code="syn_lookalike", elements=[],
+                                                                other_fields=[], columns={}),
+                           columns=[FileColumn(name="closing_prices_value", type="DOUBLE", null_count=0, null_rate=0.0,
+                                               distinct_count=5)])
+
+
+def test_the_glossary_builder_gets_at_most_ten_candidates_per_column(db_session, lookalike_feed):
+    from core.steps.s05_glossary import builder_input, claim_run, queue_run
+
+    queue_run(db_session, feed_id=lookalike_feed.id, reason="requested", requested_by="dev-glossary-owner")
+    [column] = builder_input(db_session, claim_run(db_session, lease_seconds=60)).agent_input.columns
+    assert 1 <= len(column.candidates) <= 10
+
+
+def test_the_mapping_agent_gets_at_most_ten_candidates_per_column(db_session, lookalike_feed):
+    from core.steps.s06_map import mapping_input
+
+    [column] = mapping_input(db_session, feed_id=lookalike_feed.id).columns
+    assert 1 <= len(column.candidates) <= 10
