@@ -125,7 +125,7 @@ class ProposalRepository:
     def _row(self, proposal_id: UUID, *, lock: bool = False) -> ProposalRow:
         query = select(ProposalRow).where(ProposalRow.id == proposal_id)
         if lock:
-            query = query.with_for_update()
+            query = query.with_for_update().execution_options(populate_existing=True)  # fresh after the lock
         row = self._session.scalars(query).one_or_none()
         if row is None:
             raise ProposalNotFound(f"No proposal with id {proposal_id}")

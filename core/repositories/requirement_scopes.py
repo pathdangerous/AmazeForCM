@@ -27,7 +27,9 @@ class RequirementScopeRepository:
                     **fields: Any) -> RequirementScope:
         draft = RequirementScopeDraft(**fields)
         if self._session.scalars(
+            # populate_existing for uniformity: this select reads the id column only, so no loaded row is reused
             select(RequirementRow.id).where(RequirementRow.id == requirement_id).with_for_update()
+            .execution_options(populate_existing=True)
         ).one_or_none() is None:
             raise RequirementNotFound(f"No requirement with id {requirement_id}")
         last = self._session.scalar(select(func.max(Row.version)).where(Row.requirement_id == requirement_id))

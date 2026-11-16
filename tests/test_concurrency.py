@@ -836,6 +836,77 @@ async def test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_sche
     assert time.monotonic() - started < 5
 
 
+# ---------------------------------------------------------------- a locked read is fresh (independent review, finding 8)
+
+
+def _rows_for_lock_tests(engine):
+    """A requirement, a candidate feed and a pending proposal, committed; returns their ids."""
+    from core.proposal_log import ProposalLog
+    from core.repositories.feeds import FeedRepository
+    from core.repositories.proposals import ProposalRepository
+    from core.repositories.requirements import RequirementRepository
+    from ports.db import get_sessionmaker
+    from ports.llm.base import LLMResult
+    from tests.onboarded import _Summary
+
+    with get_sessionmaker(engine)() as session:
+        requirement = RequirementRepository(session).create(requester_id="dev-requester", title="volume",
+                                                            element_keys=["volume"])
+        feed = FeedRepository(session).create_candidate(code="syn_lock_check", name="Lock check")
+        result = LLMResult(output=_Summary(recommended_outcome="meets"), provider="test", model="test",
+                           model_version="0", prompt_id="profiler", prompt_version="v1", latency_ms=0, raw_ref=None)
+        entry = ProposalLog(session).record(agent_name="ProfilerAgent", input_ref="test://lock", result=result)
+        proposal = ProposalRepository(session).create(
+            proposal_log_id=entry.id, kind="mapping", autonomy="A2", required_approver_roles=["data_steward"],
+            payload={"note": "synthetic"})
+        session.commit()
+        return {"requirement": requirement.id, "feed": feed.id, "proposal": proposal.id}
+
+
+CHANGES = {  # what another connection commits after the row was loaded
+    "feed": ("feed", "UPDATE feeds SET name = 'Changed meanwhile' WHERE id = :id"),
+    "proposal": ("proposal", "UPDATE proposals SET status = 'approved', decided_at = now() WHERE id = :id"),
+    "requirement": ("requirement", "UPDATE requirements SET status = 'source_selected' WHERE id = :id"),
+    "source_choices_requirement": ("requirement", "UPDATE requirements SET title = 'changed meanwhile' WHERE id = :id"),
+}
+
+
+@pytest.mark.parametrize("case", list(CHANGES))
+def test_a_locked_read_sees_a_change_committed_after_the_row_was_loaded(own_schema, case):
+    """Without populate_existing, with_for_update() locks the row but the session hands back the attributes
+    it loaded earlier (the identity map), so 'lock, then check again' would check stale data. Each case
+    holds the row loaded first, as a step that read it unlocked would."""
+    from core.repositories.errors import ProposalAlreadyDecided
+    from core.repositories.feeds import FeedRepository
+    from core.repositories.proposals import ProposalRepository
+    from core.repositories.requirements import RequirementRepository
+    from core.repositories.source_choices import SourceChoiceRepository
+    from core.repositories.tables import FeedRow, ProposalRow, RequirementRow
+    from ports.db import get_sessionmaker
+    from sqlalchemy import text
+    from tests.conftest import dev_user_for
+
+    ids = _rows_for_lock_tests(own_schema)
+    which, sql = CHANGES[case]
+    with get_sessionmaker(own_schema)() as session:
+        held = session.get({"feed": FeedRow, "proposal": ProposalRow, "requirement": RequirementRow}[which], ids[which])
+        with own_schema.begin() as other:
+            other.execute(text(sql), {"id": ids[which]})
+        if case == "feed":
+            assert FeedRepository(session).lock(ids["feed"]).name == "Changed meanwhile"
+        elif case == "proposal":
+            with pytest.raises(ProposalAlreadyDecided):
+                ProposalRepository(session).record_decision(ids["proposal"], user=dev_user_for("data_steward"),
+                                                            decision="approved")
+        elif case == "requirement":
+            assert RequirementRepository(session).lock(ids["requirement"]).status == "source_selected"
+        else:
+            SourceChoiceRepository(session)._require_requirement(ids["requirement"])  # its lock, before a version
+            assert held.title == "changed meanwhile"
+        session.rollback()
+    assert held is not None
+
+
 def test_two_registrations_at_once_give_one_success_and_one_409(own_schema, tmp_path, monkeypatch):
     """register_feed locks the feed row before it reads the stage, the sign-off and the next version: the
     second waits, then finds the feed registered (FeedNotACandidate, 409). Never a unique violation. The

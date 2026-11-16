@@ -115,6 +115,7 @@ class SourceChoiceRepository:
         # Locked, so two requests cannot both write the next version of one requirement's choices.
         row = self._session.scalars(
             select(RequirementRow).where(RequirementRow.id == requirement_id).with_for_update()
+            .execution_options(populate_existing=True)  # fresh after the lock
         ).one_or_none()
         if row is None:
             raise RequirementNotFound(f"No requirement with id {requirement_id}")

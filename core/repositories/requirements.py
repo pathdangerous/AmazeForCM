@@ -75,7 +75,7 @@ class RequirementRepository:
     def _row(self, requirement_id: UUID, *, lock: bool = False) -> Row:
         query = select(Row).where(Row.id == requirement_id)
         if lock:
-            query = query.with_for_update()
+            query = query.with_for_update().execution_options(populate_existing=True)  # fresh after the lock
         row = self._session.scalars(query).one_or_none()
         if row is None:
             raise RequirementNotFound(f"No requirement with id {requirement_id}")

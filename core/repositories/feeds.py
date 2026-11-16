@@ -117,7 +117,9 @@ class FeedRepository:
             # FOR NO KEY UPDATE: two fetches of one feed still wait for each other, but a foreign key to the
             # feed (a source_choices or source_fetches insert: FOR KEY SHARE) does not wait. With FOR UPDATE
             # a release and a fetch of the same feed deadlocked (independent review, fix 1).
-            query = query.with_for_update(key_share=True)
+            # populate_existing: the locked read replaces what the session loaded earlier, so a check made after
+            # the lock sees the row as committed now (independent review, finding 8).
+            query = query.with_for_update(key_share=True).execution_options(populate_existing=True)
         row = self._session.scalars(query).one_or_none()
         if row is None:
             raise FeedNotFound(f"No feed with id {feed_id}")
