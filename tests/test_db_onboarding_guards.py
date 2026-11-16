@@ -292,6 +292,115 @@ def test_a_summary_without_a_recommendation_cannot_be_signed_off(world, make_pro
     refused(world.s, "names no recommended_outcome", World.SIGNOFF, **world.signoff_params(profile, bare.id))
 
 
+# ---------------------------------------------------------------- each guard is what refuses (independent review, finding 2)
+
+
+def _branch_off(function, message):
+    """SQL that turns one RAISE EXCEPTION of a guard function into a RAISE NOTICE, in the test's transaction
+    only: that branch no longer refuses, every other one still does. Built when it runs."""
+    return ("branch", function, message)
+
+
+def _without(session, removal):
+    if removal[0] == "branch":
+        _, function, message = removal
+        body = session.scalar(text("SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :f "
+                                   "AND p.pronamespace = current_schema()::regnamespace"), {"f": function})
+        needle = f"RAISE EXCEPTION '{message}"
+        assert body.count(needle) == 1, (function, message)
+        session.execute(text(body.replace(needle, f"RAISE NOTICE '{message}")))
+    else:
+        session.execute(text(removal))
+
+
+def answered_by(session, match, sql, params, removal):
+    """The statement is refused with `match`. With only `removal` undone (in a savepoint rolled back at
+    once), it is no longer refused with that message: this guard, and nothing else, refuses it."""
+    import re
+
+    refused(session, match, sql, **params)
+    proof = session.begin_nested()
+    try:
+        _without(session, removal)
+        try:
+            with session.begin_nested():
+                session.execute(text(sql), params)
+        except DBAPIError as exc:
+            assert not re.search(match, str(exc)), f"still refused with {match!r} without its guard"
+    finally:
+        proof.rollback()
+
+
+def test_an_approved_summary_with_a_rejected_approval_cannot_be_signed_off(world):
+    profile = world.profile()
+    proposal = world.proposal(profile, recommended="meets")  # approved by the signer
+    world.s.execute(text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+                         "VALUES (:p, 2, 'data_steward', 'dev-data-steward', 'rejected')"), {"p": proposal})
+    answered_by(world.s, "has a rejected decision in approvals", World.SIGNOFF, world.signoff_params(profile, proposal),
+                _branch_off("amaze_require_signoff_decision", "proposal % has a rejected decision in approvals"))
+
+
+def test_an_approved_summary_with_a_required_role_missing_cannot_be_signed_off(world, make_proposal):
+    profile = world.profile()
+    two = make_proposal(kind="profile_summary", roles=("backend_team", "data_steward"), feed_id=world.feed,
+                        payload={"profile_id": str(profile), "recommended_outcome": "meets"})
+    ProposalRepository(world.s).record_decision(two.id, user=dev_user_for("backend_team"), decision="approved")
+    world.s.execute(text("UPDATE proposals SET status = 'approved', decided_at = now() WHERE id = :p"), {"p": two.id})
+    answered_by(world.s, "has no approved decision from role data_steward", World.SIGNOFF,
+                world.signoff_params(profile, two.id),
+                _branch_off("amaze_require_signoff_decision", "proposal % has no approved decision from role %"))
+
+
+def test_a_rejected_summary_with_no_rejected_approval_cannot_be_signed_off(world):
+    profile = world.profile()
+    proposal = world.proposal(profile, recommended="meets_with_gaps", decision="approved")
+    world.s.execute(text("UPDATE proposals SET status = 'rejected' WHERE id = :p"), {"p": proposal})
+    answered_by(world.s, "is rejected with no rejected decision in approvals", World.SIGNOFF,
+                world.signoff_params(profile, proposal),
+                _branch_off("amaze_require_signoff_decision",
+                            "proposal % is rejected with no rejected decision in approvals"))
+
+
+def test_a_summary_of_another_feed_cannot_be_signed_off(world):
+    profile = world.profile()
+    elsewhere = world.proposal(profile, world.other)  # names this profile, but is the other feed's
+    answered_by(world.s, "is not the profile_summary proposal of profile", World.SIGNOFF,
+                world.signoff_params(profile, elsewhere),
+                _branch_off("amaze_guard_feed_signoff", "proposal % is not the profile_summary proposal of profile %"))
+
+
+def test_a_signer_who_decided_under_another_role_cannot_sign_off(world):
+    profile = world.profile()
+    proposal = world.proposal(profile, decision=None)
+    world.s.execute(text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+                         "VALUES (:p, 1, 'data_steward', :by, 'approved')"), {"p": proposal, "by": BACKEND})
+    world.s.execute(text("UPDATE proposals SET status = 'approved', decided_at = now() WHERE id = :p"), {"p": proposal})
+    answered_by(world.s, "the sign-off must name the person who decided proposal", World.SIGNOFF,
+                world.signoff_params(profile, proposal),
+                _branch_off("amaze_guard_feed_signoff",
+                            "the sign-off must name the person who decided proposal % as backend_team, not %"))
+
+
+def test_a_profile_is_signed_off_once(world):
+    """A second summary of the same profile, decided by the same person: only the unique profile refuses it."""
+    profile = world.profile()
+    world.signoff(profile, world.proposal(profile))
+    again = world.proposal(profile)
+    answered_by(world.s, "uq_feed_signoffs_profile_id", World.SIGNOFF, world.signoff_params(profile, again),
+                "ALTER TABLE feed_signoffs DROP CONSTRAINT uq_feed_signoffs_profile_id")
+
+
+def test_a_summary_is_signed_off_once(world):
+    """The same summary twice. Its profile is the same too, so uq_feed_signoffs_profile_id refuses first; it is
+    dropped for this test (rolled back) to show the unique proposal refuses on its own."""
+    profile = world.profile()
+    proposal = world.proposal(profile)
+    world.signoff(profile, proposal)
+    world.s.execute(text("ALTER TABLE feed_signoffs DROP CONSTRAINT uq_feed_signoffs_profile_id"))
+    answered_by(world.s, "uq_feed_signoffs_proposal_id", World.SIGNOFF, world.signoff_params(profile, proposal),
+                "ALTER TABLE feed_signoffs DROP CONSTRAINT uq_feed_signoffs_proposal_id")
+
+
 @pytest.mark.parametrize(("outcome", "gaps", "reasons"), [
     ("meets", ["g"], []), ("meets_with_gaps", [], []), ("rejected", [], []), ("rejected", ["g"], ["r"]),
 ])
