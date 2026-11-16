@@ -14,3 +14,4 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Feed | The registration shows the owner's user id (`dev-data-owner`), not the name chosen in the list (rows L, M) | Show the owner's display name, as in the owner list |
 | backend-ui, Feed | After Profile, Summarise or Sign off, the next form appears lower on the page while the result line is at the top; on a long profile the next step is out of view (rows L to O) | Scroll to the next form, or show the result line beside the button pressed |
 | backend-ui, Feed | The ProfilerAgent's summary reads "1 of 1 requested items are in the file" (the mock's wording) | Word the mock's summary "1 of 1 requested items is in the file"; the real model's wording is for phase 8 |
+| backend-ui, Feed | Coverage cards of requirements that no longer select the feed read 'A requirement' | Show the requirement's title, marked 'no longer selects this feed', or hide the card |
