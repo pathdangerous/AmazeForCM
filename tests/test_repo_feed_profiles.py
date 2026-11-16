@@ -25,12 +25,12 @@ def test_each_profile_is_the_next_version_and_the_highest_is_latest(db_session, 
     assert (first.version, second.version) == (1, 2)
     assert repo.latest(feed.id) == second
     assert repo.history(feed.id) == [first, second]
-    assert repo.get(first.id) == first
 
 
 def test_columns_coverage_and_spec_read_back_as_models(db_session, feed):
-    profile = profiled(db_session, feed.id)
-    read = FeedProfileRepository(db_session).get(profile.id)
+    profiled(db_session, feed.id)
+    db_session.expire_all()  # read back from the database, not the objects just written
+    read = FeedProfileRepository(db_session).latest(feed.id)
     assert isinstance(read, FeedProfile)
     assert (read.columns, read.spec, read.row_count, read.engine) == ([COLUMN], SPEC, 1, "duckdb 1.5.6")
 

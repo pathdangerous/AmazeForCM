@@ -121,7 +121,7 @@ def test_picking_again_adds_the_next_version(db_session, picked_backup):
     assert status(db_session, req) == "source_selected"
 
 
-def test_a_candidate_rejected_release_comes_from_onboarding_or_source_selected(db_session, picked_backup):
+def test_a_candidate_rejected_release_comes_from_onboarding_and_names_nobody(db_session, picked_backup):
     """Phase 4: the sign-off's rejection releases by rule, naming nobody (the person is on the sign-off)."""
     from core.repositories.feeds import FeedRepository
     from tests.onboarded import rejected_feed

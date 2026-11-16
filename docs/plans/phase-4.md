@@ -509,9 +509,9 @@ tests/
   test_agent_profiler.py  test_repo_feed_profiles.py  test_repo_feed_signoffs.py
   test_repo_feed_registrations.py  test_db_onboarding_guards.py
   test_api_amaze_onboarding.py                new
-  step_chains.py  stand_in_agents.py  test_migrations.py  test_append_only.py
+  step_chains.py  test_migrations.py  test_append_only.py
   test_domain_models.py  test_step_results.py  test_source_catalogue.py  test_mock_rules.py
-  test_prompts.py  test_repo_feeds.py  test_repo_source_choices.py  test_repo_requirements.py
+  test_prompts.py  test_repo_feeds.py  test_repo_source_choices.py
   test_repo_loads.py  test_coverage.py  test_routing.py  test_request_data.py
   test_known_source.py  test_s2_sources.py  test_s3_pick.py  test_release.py  test_jobs.py
   test_api_consumer.py  test_api_consumer_sourcing.py  test_commit_visibility.py
@@ -542,7 +542,7 @@ Each task: tests first and shown failing, then code, then its check, then one co
 | 8 | The daily job: the catalogue load error; a feed registered by step 04 | `test_jobs.py`, `test_repo_feeds.py` | pytest; `alembic upgrade head`; `0014 (head)`. **CHECKPOINT 2:** pytest summary, the eight outcome tests by name, `alembic current`, the new triggers listed, the five feeds still candidates |
 | 9 | Amaze API: the feed page, owners, the four actions; `apps/api/transactions.py`; the role check | `test_api_amaze_onboarding.py` | pytest |
 | 10 | Consumer API: the link after a selection; gaps and rejection on the requirement page | `test_api_consumer_sourcing.py`, `test_api_consumer.py` | pytest |
-| 11 | Commit visibility (five) and concurrency (five) | `test_commit_visibility.py`, `test_concurrency.py` | pytest; each commit removed in turn and its test shown failing. **CHECKPOINT 3:** pytest summary and its time, the two done-when tests' output, the added test time |
+| 11 | Commit visibility (six) and concurrency (eleven, as built) | `test_commit_visibility.py`, `test_concurrency.py` | pytest; each commit removed in turn and its test shown failing. **CHECKPOINT 3:** pytest summary and its time, the two done-when tests' output, the added test time |
 | 12 | backend-ui: the Feed view, the registry link and filter | none | build; browser run, rows L to P |
 | 13 | consumer-ui: gaps, rejection, the history label | none | build; browser run, Riley's side of rows L to P |
 | 14 | Documents: `CLAUDE.md`, `BUILD_PLAN.md`, `README.md`. `CLAUDE.md`'s plugin section says the plugins do not load in this setup, and that the Superpowers and Karpathy method is followed by hand | none | documents read back |
@@ -599,7 +599,7 @@ Then in the browser: rows L to P of section 8. For row N, check that `meets` can
 10. **The licence is copied at registration and not checked again.** A later change in the catalogue does not reach a registered feed; that needs a second registration version, which phase 4 does not write.
 11. **`duplicate_linked` skips the first fetch.** If the registered feed's source is down that day, the requirement is still `onboarding`: its data is the registered feed's, whenever it next arrives.
 12. **A catalogue that stays broken tells the backend team every day.** Once per run, on purpose, until it is fixed.
-13. **Five commit-visibility and five concurrency tests add about 20 to 40 seconds** to every run, each on its own schema.
+13. **Six commit-visibility and eleven concurrency tests (as built at checkpoint 4) add about 20 to 40 seconds** to every run, each on its own schema.
 14. **DuckDB is a new binary dependency.** Its wheel must be available on the office laptop too; the pin and `--only-binary` check make a missing wheel fail at install, not at run time.
 15. **A rejection on a spec-only profile is final and global** (row N). A header-only file gets `rejected`, the feed is rejected for every requirement, and nothing reopens it, though the source's next file might have data (risk 6).
 

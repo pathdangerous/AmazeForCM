@@ -119,6 +119,18 @@ def test_a_header_only_file_keeps_its_column_names(db_session, blobs, lifecycle)
     assert [c.name for c in result.profile.columns] == ["instr_id", "issued_on", "state"]
 
 
+def test_the_feed_page_lists_undeclared_and_missing_columns(db_session, blobs, lifecycle):
+    """The feed page compares the latest profile's columns with its spec (spec_check() did this until the
+    independent review, finding 11)."""
+    from core.steps.feed_page import feed_page
+
+    feed, _ = lifecycle
+    store(db_session, blobs, feed, b"instr_id,issued_on,extra\nsyn-0001,2020-01-01,x\n")
+    profile(db_session, blobs, feed)
+    page = feed_page(db_session, FeedRepository(db_session).get(feed.id), CATALOGUE)
+    assert (page.undeclared_columns, page.missing_columns) == (["extra"], ["state"])
+
+
 def test_the_profile_reads_the_feeds_latest_fetched_file(db_session, blobs, lifecycle):
     feed, _ = lifecycle
     store(db_session, blobs, feed, b"instr_id,issued_on,state\n")

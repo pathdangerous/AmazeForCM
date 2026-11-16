@@ -112,7 +112,7 @@ def test_register_needs_an_accepting_signoff_on_the_latest_profile(db_session, v
         register(db_session, feed)
 
 
-def test_a_registered_or_rejected_feed_is_not_registered(db_session, volumes, glossary):
+def test_a_registered_feed_is_not_registered_again(db_session, volumes, glossary):
     _, feed = volumes
     signed_off(db_session, feed.id)
     register(db_session, feed)

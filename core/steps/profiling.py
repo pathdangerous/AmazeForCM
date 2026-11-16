@@ -70,12 +70,6 @@ def spec_of(entry: SourceEntry) -> SourceSpec:
                       columns=entry.columns)
 
 
-def spec_check(entry: SourceEntry, file: FileProfile) -> tuple[list[str], list[str]]:
-    """(columns in the file the spec does not declare, declared columns missing from the file), each in order."""
-    in_file = [c.name for c in file.columns]
-    return [n for n in in_file if n not in entry.columns], [n for n in entry.columns if n not in in_file]
-
-
 def coverage_of(requirement: Requirement, entry: SourceEntry, file: FileProfile | None) -> RequirementCoverage:
     """Each requested element and ticked term: declared by the source, its column, and that column's
     statistics in the file. Without a file (spec only), from the spec alone."""

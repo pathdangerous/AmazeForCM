@@ -91,7 +91,7 @@ import uuid  # noqa: E402
 from datetime import UTC, datetime  # noqa: E402
 
 from core.domain.requirement import Requirement  # noqa: E402
-from core.steps.profiling import coverage_of, spec_check, spec_of  # noqa: E402
+from core.steps.profiling import coverage_of, spec_of  # noqa: E402
 from ports.config import REPO_ROOT  # noqa: E402
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue  # noqa: E402
 
@@ -135,7 +135,6 @@ def test_a_declared_column_absent_from_the_file_is_missing(tmp_path):
     coverage = coverage_of(requirement(["volume"]), entry, file)
     assert items(coverage) == [("volume", "element", True, "traded_qty", False, None, None)]
     assert coverage.missing == ["volume"]
-    assert spec_check(entry, file) == ([], ["traded_qty"])
 
 
 def test_without_a_file_coverage_comes_from_the_spec_alone():
@@ -150,11 +149,6 @@ def test_a_header_only_file_has_the_columns_but_no_statistics():
     entry = CATALOGUE.get("syn_listing_details")
     coverage = coverage_of(requirement(["lot_size"]), entry, profile_csv(FILES / entry.source_ref))
     assert items(coverage) == [("lot_size", "element", True, "board_lot", True, None, 0)]
-
-
-def test_spec_check_lists_undeclared_and_missing_columns():
-    entry = CATALOGUE.get("syn_open_esg_scores")
-    assert spec_check(entry, profile_csv(FILES / entry.source_ref)) == (["score_year"], [])
 
 
 def test_the_spec_is_kept_as_it_was_read():
