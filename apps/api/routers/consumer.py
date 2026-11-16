@@ -46,6 +46,7 @@ from core.steps.requirement_page import RequirementPage, approval_missing_messag
 from core.steps.s1_scope import ScopeProposed, ScopeResult, decide_scope, record_scope, scope_input
 from core.steps.s2_sources import NoFit, SourcesResult, record_sources, sources_input
 from core.steps.s3_pick import ApprovalMissing, Declined, PickResult, SourcePicked, decline_source, pick_source
+from core.steps.s04_register import DuplicateLinked, link_to_registered_feed
 from core.steps.s4_fetch import FetchResult, fetch_file, fetch_plan, record_fetch
 from core.steps.s17_discover import Assistance, Discovery, assist_input, discover, record_assist
 from ports.config import Settings
@@ -197,6 +198,7 @@ ListAgent = Annotated[SourceDiscoveryAgent, Depends(get_source_discovery_agent)]
 class FindSourceResponse(BaseModel):
     check: KnownSourceResult
     fetch: FetchResult | None
+    registration: DuplicateLinked | None = None  # phase 4: the source's feed was already registered; no fetch
     # 3b: with no known source, S1's typed result: the proposed scope, or no_fit (no channel to search).
     # None for a known source (independent review, fix 6).
     scope: ScopeProposed | NoFit | None
@@ -228,6 +230,19 @@ def _first_fetch(session: Session, feed_id: UUID, *, identity: Identity, catalog
         catalogue=catalogue, release_after_days=settings.source_down_release_days))
 
 
+def _after_selection(session: Session, feed_id: UUID, requirement_id: UUID, *, identity: Identity,
+                     catalogue: SourceCatalogue, notifier: Notifier, blob_store: BlobStore,
+                     connector_factory: Callable[[str], SourceConnector], settings: Settings):
+    """After a committed selection: a registered feed is linked at once (step 04, duplicate_linked) and
+    nothing is fetched; otherwise the first fetch runs. Returns (fetch, registration), one of them None."""
+    if FeedRepository(session).get(feed_id).stage == "registered":
+        return None, _in_transaction(session, lambda: link_to_registered_feed(
+            session, requirement_id=requirement_id, feed_id=feed_id, notifier=notifier,
+            backend_team=_recipients(identity)["backend_team"]))
+    return _first_fetch(session, feed_id, identity=identity, catalogue=catalogue, notifier=notifier,
+                        blob_store=blob_store, connector_factory=connector_factory, settings=settings), None
+
+
 def _page(session: Session, requirement_id: UUID, catalogue: SourceCatalogue, settings: Settings) -> RequirementPage:
     return requirement_page(session, RequirementRepository(session).get(requirement_id), catalogue,
                             settings.source_down_release_days)
@@ -255,12 +270,14 @@ def find_source(requirement_id: UUID, session: DbSession, user: Requester, ident
         scope = _in_transaction(session, lambda: record_scope(
             session, agent=intent_agent, agent_input=agent_input, notifier=notifier,
             backend_team=_recipients(identity)["backend_team"]))
-    fetch = None
+    fetch = registration = None
     if found.feed is not None:
-        fetch = _first_fetch(session, found.feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
-                             blob_store=blob_store, connector_factory=connector_factory, settings=settings)
+        fetch, registration = _after_selection(
+            session, found.feed.id, requirement_id, identity=identity, catalogue=catalogue, notifier=notifier,
+            blob_store=blob_store, connector_factory=connector_factory, settings=settings)
     page = _page(session, requirement_id, catalogue, settings)
-    return FindSourceResponse(check=found.check, fetch=fetch, scope=scope, message=page.message, requirement=page)
+    return FindSourceResponse(check=found.check, fetch=fetch, registration=registration, scope=scope,
+                              message=page.message, requirement=page)
 
 
 # ---- phase 3b: scope (S1), sources (S2), pick and decline (S3), release
@@ -308,6 +325,7 @@ class SourcesResponse(BaseModel):
 class PickResponse(BaseModel):
     result: PickResult
     fetch: FetchResult | None
+    registration: DuplicateLinked | None = None
     message: str
     requirement: RequirementPage
 
@@ -372,14 +390,15 @@ def pick(requirement_id: UUID, body: PickBody, session: DbSession, user: Request
     result = _in_transaction(session, lambda: pick_source(
         session, requirement_id=requirement_id, user=user, proposal_id=body.proposal_id,
         accepted_conditions=body.accepted_conditions, catalogue=catalogue))
-    fetch = None
+    fetch = registration = None
     if isinstance(result, SourcePicked):
         feed = FeedRepository(session).get_by_code(result.feed_code)
-        fetch = _first_fetch(session, feed.id, identity=identity, catalogue=catalogue, notifier=notifier,
-                             blob_store=blob_store, connector_factory=connector_factory, settings=settings)
+        fetch, registration = _after_selection(
+            session, feed.id, requirement_id, identity=identity, catalogue=catalogue, notifier=notifier,
+            blob_store=blob_store, connector_factory=connector_factory, settings=settings)
     page = _page(session, requirement_id, catalogue, settings)
     message = approval_missing_message(result.source.name) if isinstance(result, ApprovalMissing) else page.message
-    return PickResponse(result=result, fetch=fetch, message=message, requirement=page)
+    return PickResponse(result=result, fetch=fetch, registration=registration, message=message, requirement=page)
 
 
 @router.post("/requirements/{requirement_id}/decline", response_model=DeclineResponse)

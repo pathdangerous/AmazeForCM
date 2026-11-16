@@ -391,6 +391,81 @@ async def test_a_failed_model_call_writes_nothing_and_keeps_the_status(client, d
     assert db_session.query(ProposalLogEntry).count() == 0
 
 
+# ---------------------------------------------------------------- phase 4: a registered feed; the sign-off on the page
+
+
+async def _backend(client, feed_code, *steps):
+    """Run the Amaze steps on a feed as Blake Backend; each step is (action, body)."""
+    feeds = (await client.get("/api/amaze/feeds", headers=BLAKE)).json()
+    feed_id = next(f["id"] for f in feeds if f["code"] == feed_code)
+    for action, body in steps:
+        response = await client.post(f"/api/amaze/feeds/{feed_id}/{action}", headers=BLAKE, json=body)
+        assert response.status_code == 200, response.text
+    return feed_id
+
+
+ACCEPT_AND_REGISTER = (("profile", {}), ("profile/summary", {}), ("signoff", {"outcome": "meets"}),
+                       ("register", {"owner_id": "dev-data-owner", "visibility": "open"}))
+
+
+async def test_row_p_find_source_links_a_registered_feed_without_a_fetch(client, db_session):
+    """Phase 4 plan, row P: duplicate_linked. Nothing is fetched, profiled or registered again."""
+    from core.repositories.source_fetches import SourceFetchRepository
+
+    first = await raise_requirement(client, "volume", ["volume"])
+    await find_source(client, first)
+    feed_id = await _backend(client, "syn_exchange_volumes", *ACCEPT_AND_REGISTER)
+    fetches = len(SourceFetchRepository(db_session).list_for_feed(feed_id))
+
+    later = await raise_requirement(client, "volume again", ["volume"])
+    found = await find_source(client, later)
+    assert (found["check"]["outcome"], found["fetch"]) == ("known_source", None)
+    assert (found["registration"]["outcome"], found["registration"]["feed_code"]) == (
+        "duplicate_linked", "syn_exchange_volumes")
+    assert found["message"] == ONBOARDING and (await page(client, later))["status"] == "onboarding"
+    assert len(SourceFetchRepository(db_session).list_for_feed(feed_id)) == fetches
+
+
+async def test_a_pick_of_a_registered_source_links_without_a_fetch(client):
+    first, listed, _ = await scoped_and_listed(client)
+    vendor = listed[VENDOR]
+    await post(client, first, "pick", {"proposal_id": vendor["proposal_id"],
+                                       "accepted_conditions": vendor["source"]["conditions"]})
+    await _backend(client, VENDOR, *ACCEPT_AND_REGISTER)
+
+    later, listed, _ = await scoped_and_listed(client, "open price again")
+    vendor = listed[VENDOR]
+    picked = await post(client, later, "pick", {"proposal_id": vendor["proposal_id"],
+                                                "accepted_conditions": vendor["source"]["conditions"]})
+    assert (picked["result"]["outcome"], picked["fetch"], picked["registration"]["outcome"]) == (
+        "source_picked", None, "duplicate_linked")
+    assert (picked["message"], (await page(client, later))["status"]) == (ONBOARDING, "onboarding")
+
+
+async def test_the_requirement_page_shows_the_gaps_under_the_onboarding_message(client):
+    requirement_id = await raise_requirement(client, "volume", ["volume"])
+    await find_source(client, requirement_id)
+    await _backend(client, "syn_exchange_volumes", ("profile", {}), ("profile/summary", {}),
+                   ("signoff", {"outcome": "meets_with_gaps", "gaps": ["Volumes before 2026-11-02 are missing"]}))
+    shown = await page(client, requirement_id)
+    assert (shown["message"], shown["signoff_note"]) == (
+        ONBOARDING, "The backend team accepted Exchange daily volumes with gaps: Volumes before 2026-11-02 are missing.")
+
+
+async def test_a_rejected_source_is_409_on_find_source_and_pick(client):
+    """Listed before its rejection: the page no longer offers it, and a pick is 409."""
+    first, listed, _ = await scoped_and_listed(client)
+    later, later_listed, _ = await scoped_and_listed(client, "open price again")
+    vendor = listed[VENDOR]
+    await post(client, first, "pick", {"proposal_id": vendor["proposal_id"],
+                                       "accepted_conditions": vendor["source"]["conditions"]})
+    await _backend(client, VENDOR, ("profile", {}), ("profile/summary", {}),
+                   ("signoff", {"outcome": "rejected", "reasons": ["No vendor agreement on file"]}))
+    assert [c["source"]["code"] for c in (await page(client, later))["listed"]] == [BACKUP]
+    await post(client, later, "pick", {"proposal_id": later_listed[VENDOR]["proposal_id"],
+                                       "accepted_conditions": vendor["source"]["conditions"]}, expect=409)
+
+
 @pytest.mark.parametrize("reason", ["timeout", "rate_limit", "provider_error"])
 @pytest.mark.parametrize("action", ["find-source", "assist"])
 async def test_a_provider_that_does_not_answer_gives_503_and_writes_nothing(client, db_session, reason, action):
