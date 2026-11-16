@@ -11,6 +11,12 @@ Phase 4, fixes after the independent review (plan, section 17). 0014 is applied,
   amaze_guard_feed_registration, made again at the stage change). candidate -> rejected needs the
   latest sign-off to be rejected and to be on the latest profile.
 - feed_registrations (finding 1): a row with a version above 1 is refused; phase 4 registers once.
+- feed_signoffs (finding 4, decision D1): trg_feed_signoffs_d_signer. The signer's own backend_team
+  approval row must be 'approved' when the outcome is the summary's recommended_outcome, and 'rejected'
+  when it differs; another person's decision no longer stands in for the signer's.
+- proposals (finding 4): trg_proposals_decision_only. An UPDATE may change status and decided_at only:
+  the two columns the decision path (ProposalRepository.record_decision) writes; every other column
+  (payload with its recommended_outcome, kind, roles, links) is fixed once written. DELETE is refused.
 
 Function bodies are written out here on purpose, the 0014 ones too (for the downgrade): a migration must
 not change when code changes. PostgreSQL 14 features only: plpgsql, BEFORE and AFTER row triggers.
@@ -133,14 +139,59 @@ END $$;
 """
 
 
+SIGNER_DECISION = """
+CREATE FUNCTION amaze_require_signer_decision() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    s_decision text;
+    p_recommended text;
+    needed text;
+BEGIN
+    SELECT payload ->> 'recommended_outcome' INTO p_recommended FROM proposals WHERE id = NEW.proposal_id;
+    SELECT decision INTO s_decision FROM approvals
+     WHERE proposal_id = NEW.proposal_id AND role = 'backend_team' AND decided_by = NEW.signed_off_by;
+    needed := CASE WHEN NEW.outcome IS NOT DISTINCT FROM p_recommended THEN 'approved' ELSE 'rejected' END;
+    IF s_decision IS DISTINCT FROM needed THEN
+        RAISE EXCEPTION 'the signer % decided proposal % as %; a sign-off of % needs %', NEW.signed_off_by,
+            NEW.proposal_id, COALESCE(s_decision, 'nothing'), NEW.outcome, needed USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+"""
+
+PROPOSAL_DECISION_ONLY = """
+CREATE FUNCTION amaze_guard_proposal_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'proposals: DELETE refused; a proposal is decided, never removed'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF (to_jsonb(NEW) - 'status' - 'decided_at') IS DISTINCT FROM (to_jsonb(OLD) - 'status' - 'decided_at') THEN
+        RAISE EXCEPTION 'proposals: only status and decided_at change (by a decision); proposal % is otherwise fixed',
+            OLD.id USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+"""
+
+
 def upgrade() -> None:
     op.execute(FEED_STAGE_0015)
     op.execute(REGISTERED_ONCE)
     op.execute("CREATE TRIGGER trg_feed_registrations_c_once BEFORE INSERT ON feed_registrations "
                "FOR EACH ROW EXECUTE FUNCTION amaze_refuse_second_registration()")
+    op.execute(SIGNER_DECISION)
+    op.execute("CREATE TRIGGER trg_feed_signoffs_d_signer BEFORE INSERT ON feed_signoffs "
+               "FOR EACH ROW EXECUTE FUNCTION amaze_require_signer_decision()")
+    op.execute(PROPOSAL_DECISION_ONLY)
+    op.execute("CREATE TRIGGER trg_proposals_decision_only BEFORE UPDATE OR DELETE ON proposals "
+               "FOR EACH ROW EXECUTE FUNCTION amaze_guard_proposal_change()")
 
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER trg_proposals_decision_only ON proposals")
+    op.execute("DROP FUNCTION amaze_guard_proposal_change()")
+    op.execute("DROP TRIGGER trg_feed_signoffs_d_signer ON feed_signoffs")
+    op.execute("DROP FUNCTION amaze_require_signer_decision()")
     op.execute("DROP TRIGGER trg_feed_registrations_c_once ON feed_registrations")
     op.execute("DROP FUNCTION amaze_refuse_second_registration()")
     op.execute(FEED_STAGE_0014)

@@ -292,6 +292,30 @@ def test_a_summary_without_a_recommendation_cannot_be_signed_off(world, make_pro
     refused(world.s, "names no recommended_outcome", World.SIGNOFF, **world.signoff_params(profile, bare.id))
 
 
+# ---------------------------------------------------------------- 0015: D1 is the signer's own decision (finding 4)
+
+
+def test_the_signers_own_decision_must_be_the_one_d1_needs(world):
+    """The independent review's scenario: the signer approved the summary; a second, rejected decision by
+    someone else is written by hand and the status set to rejected; then a sign-off that differs from the
+    recommendation. 0014 accepts it (a rejected decision exists); the signer's own row says approved."""
+    profile = world.profile()
+    proposal = world.proposal(profile, recommended="meets_with_gaps")  # the signer approved it
+    world.s.execute(text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+                         "VALUES (:p, 2, 'data_steward', 'dev-data-steward', 'rejected')"), {"p": proposal})
+    world.s.execute(text("UPDATE proposals SET status = 'rejected' WHERE id = :p"), {"p": proposal})
+    refused(world.s, "the signer dev-backend-team decided proposal .* as approved; a sign-off of meets needs rejected",
+            World.SIGNOFF, **world.signoff_params(profile, proposal, outcome="meets"))
+
+
+def test_the_d1_paths_still_sign_off(world):
+    """The signer's own row approved and the outcome recommended; or rejected and another outcome."""
+    profile = world.profile()
+    world.signoff(profile, world.proposal(profile, recommended="meets_with_gaps"), outcome="meets_with_gaps", gaps=["g"])
+    newer = world.profile()
+    world.signoff(newer, world.proposal(newer, recommended="meets_with_gaps", decision="rejected"), outcome="meets")
+
+
 # ---------------------------------------------------------------- each guard is what refuses (independent review, finding 2)
 
 

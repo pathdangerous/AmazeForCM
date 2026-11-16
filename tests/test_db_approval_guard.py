@@ -12,6 +12,47 @@ from core.repositories.glossary import GlossaryRepository
 
 STEWARD_THEN_CHECKER = ("data_steward", "checker")
 
+
+# ---------------------------------------------------------------- 0015: a proposal changes only by its decision
+
+
+@pytest.mark.parametrize("change", [
+    "payload = '{\"recommended_outcome\": \"rejected\"}'", "kind = 'rule'", "autonomy = 'A1'",
+    # the fixture's proposal has no links: a new value (the BEFORE trigger answers before the foreign key)
+    "required_approver_roles = ARRAY['checker']", "feed_id = gen_random_uuid()", "requirement_id = gen_random_uuid()",
+    "created_at = now() - interval '1 day'",
+])
+def test_a_proposal_changes_only_in_status_and_decided_at(db_session, make_proposal, change):
+    from sqlalchemy.exc import DBAPIError
+
+    proposal = make_proposal(payload={"recommended_outcome": "meets"})
+    with pytest.raises(DBAPIError, match="only status and decided_at change"):
+        with db_session.begin_nested():
+            db_session.execute(text(f"UPDATE proposals SET {change} WHERE id = :id"), {"id": proposal.id})
+
+
+def test_a_proposal_is_never_deleted(db_session, make_proposal):
+    from sqlalchemy.exc import DBAPIError
+
+    proposal = make_proposal()
+    with pytest.raises(DBAPIError, match="proposals: DELETE refused"):
+        with db_session.begin_nested():
+            db_session.execute(text("DELETE FROM proposals WHERE id = :id"), {"id": proposal.id})
+
+
+def test_the_decision_path_still_decides(db_session, make_proposal):
+    """record_decision sets status and decided_at, the only columns it writes; both outcomes still work."""
+    from core.repositories.proposals import ProposalRepository
+    from tests.conftest import dev_user_for
+
+    repo = ProposalRepository(db_session)
+    approved, rejected = make_proposal(), make_proposal()
+    repo.record_decision(approved.id, user=dev_user_for("data_steward"), decision="approved")
+    repo.record_decision(rejected.id, user=dev_user_for("data_steward"), decision="rejected")
+    db_session.expire_all()
+    assert [(p.status, p.decided_at is not None) for p in (repo.get(approved.id), repo.get(rejected.id))] == [
+        ("approved", True), ("rejected", True)]
+
 # table -> (proposal kind, roles that approve it, raw insert using :feed and :proposal)
 TABLES = {
     "mappings": (
