@@ -770,3 +770,83 @@ alembic current          0014 (head)
 ```
 
 Triggers present: `trg_feed_profiles_a_version`, `_b_fetch`, `_append_only`; `trg_feed_signoffs_a_version`, `_b_guard`, `_c_decision`, `_append_only`; `trg_feed_registrations_a_version`, `_b_guard`, `_append_only`; `trg_feeds_a_stage`; `trg_source_choices_f_feed_stage` (the `no_truncate` statement triggers are not listed by `information_schema.triggers`). The five feeds are still `candidate`; the three new tables are empty; `ck_source_choices_reason` holds the three reasons.
+
+### Tasks 9 to 11 (checkpoint 3)
+
+Tests: 1331 at checkpoint 2, 1359 at checkpoint 3. `1359 passed in 100.92s`, none skipped, no warnings.
+
+| Task | RED | GREEN | Commit |
+|---|---|---|---|
+| 9, part 1: `apps/api/transactions.py` | a pure move: no test changed (`git diff --stat -- tests` empty) | `85 passed` (the consumer API, commit-visibility and concurrency tests); full `1331 passed in 103.39s` | `ef6e6a1` |
+| 9, part 2: Amaze API | `12 failed in 4.14s` | `31 passed in 6.62s`; full `1343 passed in 109.03s` | `5764c44` |
+| 10 consumer API | `2 failed, 2 passed` (the gaps note and a rejected source's 409 already worked through tasks 6 and 9) | full `1347 passed in 83.60s` | `aa658d2` |
+| 11 commit visibility and concurrency | written after the code: their RED is each proof below | `15 passed`; `21 passed in 30.32s`; full `1359 passed in 100.92s` | `3a4a2b1` |
+
+**The two done-when tests** (`test_api_amaze_onboarding.py`, `pytest -v`):
+
+```
+test_done_when_a_rejected_candidate_keeps_its_reasons_and_the_requester_is_told PASSED [ 50%]
+test_done_when_an_accepted_candidate_is_registered PASSED [100%]
+2 passed in 2.44s
+```
+
+**Commit visibility: each commit removed** (its `in_transaction(...)` given `keep=False`, a rollback, with the Edit tool; restored; `git diff --stat -- apps` empty after):
+
+| Commit removed | Its test | Others that failed |
+|---|---|---|
+| `POST .../profile` | `test_profile_commits_the_profile` failed | the 5 later flows (they need a profile) |
+| `POST .../profile/summary` | `test_summary_commits_the_proposal` failed | the 4 later flows |
+| `POST .../signoff` | `test_signoff_commits_the_decision` failed | the 3 later flows |
+| `POST .../register` | `test_register_commits_the_registration` failed | the 2 link tests |
+| the link to a registered feed (`_after_selection`, shared by find-source and pick) | `test_find_source_commits_the_link_to_a_registered_feed` and `test_pick_commits_the_link_to_a_registered_feed` both failed | none |
+
+Six tests, five commits: find-source and pick share one link commit. The pick's own selection commit is phase 3's, covered by `test_pick_commits_the_choice_and_the_fetch`.
+
+**Concurrency: each test and what it was shown failing against** (each change made with the Edit tool, run three times where timing matters, restored; `grep PROOF` finds nothing; `git diff --stat -- core apps` empty):
+
+| Test | Shown failing against | Result |
+|---|---|---|
+| `test_no_connection_is_held_during_a_profiling_run` (checkpoint 2) | not shown failing: it checks `pool.checkedout() == 0` inside `BlobStore.get()`, and the step holds no session there by design | |
+| `test_two_profiles_of_one_feed_at_once_take_the_next_versions` (checkpoint 2) | `record_profile`'s feed lock replaced by `get` | 3/3 `UniqueViolation` |
+| `test_two_signoffs_at_once_give_one_success_and_one_409` (checkpoint 2) | the source and feed locks removed | **3/3 still passed**: the proposal row lock refuses the second |
+| `test_two_registrations_at_once_give_one_success_and_one_409` (checkpoint 2) | `register_feed`'s feed lock replaced by `get` | 3/3 `IntegrityError` |
+| `test_no_connection_is_held_during_any_model_call` (+ the ProfilerAgent's call) | the summary endpoint without `read()` | `SessionInTransaction` from `Agent.run()` |
+| `test_a_new_profile_during_the_summary_gives_409_and_a_discard_row` | `ProfileSuperseded` removed from `before_write` | failed (200, a proposal of a superseded profile); `test_s02_profile.py::test_a_newer_profile_during_the_call_writes_no_proposal` failed too |
+| `test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_rejected_feed` | the pick's `lock_source` removed | 3/3 failed: `IntegrityError` from `trg_source_choices_f_feed_stage` ("is rejected: it cannot be selected"), a 500, not the 409 |
+| `test_a_rejection_and_the_daily_fetch_of_one_feed_at_once_do_not_deadlock` | `sign_off` locking the requirements before the feed (the order reversed) | 3/3 `DeadlockDetected` |
+| `test_a_rejection_and_a_requester_release_of_one_requirement_at_once_do_not_deadlock` | `sign_off`'s re-check of a requirement released meanwhile removed | 3/3 failed: the rejection gives `RequirementNotInStatus`, is rolled back, and the feed stays a candidate |
+| `test_a_profile_during_a_signoff_gives_a_success_or_a_409_never_a_500` (your 1) | `sign_off`'s `feeds.lock()` replaced by `feeds.get()` | 3/3 `IntegrityError` ("profile ... is not the latest profile"), a 500. Restored: 3/3 passed |
+| `test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed` (your 2) | the feed lock as `FOR UPDATE` instead of `FOR NO KEY UPDATE` | 3/3 failed, **not by deadlock**: the pick's `source_choices` insert waited for the whole fetch, so the fetch did not hand the file to the new requirement (`source_selected`, not `onboarding`) |
+
+**Unexpected failures, with their root causes:**
+1. Your proof 1 first failed with `SignoffDoesNotFit`, not a 500. Root cause: `_slow` slept before the read, so the profile committed first and the sign-off read the newer (spec-only) profile. `_slow` gained `after=True` (sleep after the read); then 3/3 failed with the 500 and 3/3 passed with the lock.
+2. Two expected statuses in the new concurrency tests were wrong, not the code: a rejection leaves a requirement `awaiting_source_choice` when another source is listed; a pick that commits while the fetch waits gets the file (`onboarding`).
+
+**Deviations from the plan:**
+1. **The concurrency tests run the steps on threads**, each on its own session, after a setup through the API; the plan's `test_concurrency.py` tests of phase 3 ran requests through the app. Each new test starts one request and the other 0.1 s later, with one read slowed, so the interleaving is known.
+2. **`FindSourceResponse` and `PickResponse` gained `registration`** (`DuplicateLinked` or none).
+3. **`transactions.py` gained `NOT_FOUND`** (with `FeedNotFound`) and the phase 4 conflicts in task 9 part 2, after the pure move.
+4. **`core/steps/feed_page.py`** names the undeclared and missing columns `undeclared_columns`, `missing_columns`, and the latest fetch `last_file`.
+
+**Files changed outside section 11:** none.
+
+**`pytest --durations=15`** (the test setup unchanged):
+
+```
+2.18s call     tests/test_port_connectors.py::test_http_client_is_closed_after_a_failed_fetch[None]
+2.11s call     tests/test_concurrency.py::test_two_concurrent_picks_give_one_success_and_one_409
+2.01s call     tests/test_api.py::test_health_reports_unreachable_database_with_503
+1.78s call     tests/test_concurrency.py::test_two_requirements_selecting_the_same_new_source_at_once_make_one_feed
+1.25s call     tests/test_concurrency.py::test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed
+1.17s call     tests/test_concurrency.py::test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_rejected_feed
+1.03s call     tests/test_concurrency.py::test_a_rejection_and_the_daily_fetch_of_one_feed_at_once_do_not_deadlock
+0.95s call     tests/test_concurrency.py::test_a_rejection_and_a_requester_release_of_one_requirement_at_once_do_not_deadlock
+0.89s call     tests/test_migrations.py::test_upgrade_downgrade_upgrade
+0.89s call     tests/test_migrations.py::test_0002_refuses_to_drop_a_recorded_decision
+0.80s call     tests/test_concurrency.py::test_two_signoffs_at_once_give_one_success_and_one_409
+0.74s call     tests/test_migrations.py::test_0009_downgrade_restores_0008_when_there_are_no_3b_rows
+0.72s setup    tests/test_concurrency.py::test_two_registrations_at_once_give_one_success_and_one_409
+0.72s call     tests/test_migrations.py::test_0012_moves_a_0011_discard_into_its_own_table
+0.67s setup    tests/test_concurrency.py::test_a_status_change_during_the_model_call_gives_409_and_logs_it_as_discarded[find-source]
+1359 passed in 100.92s (0:01:40)
+```
