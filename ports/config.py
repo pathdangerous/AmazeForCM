@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     source_http_allowed_hosts: str = "127.0.0.1,localhost"
     # Phase 3b: a selected source that did not answer on this many UTC days in a row is released.
     source_down_release_days: int = Field(default=3, ge=1)
+    # Phase 5: a glossary run left running this long by a worker that died is claimed again.
+    glossary_run_lease_seconds: int = Field(default=300, ge=1)
 
     @field_validator("source_catalogue")
     @classmethod

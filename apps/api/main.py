@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from apps.api.jobs import DailyFetch, register_daily_fetch
+from apps.api.jobs import DailyFetch, GlossaryRuns, kick_glossary_runs, register_daily_fetch
 from apps.api.routers import amaze, consumer, dev_identity, health
 from ports.config import get_settings
 from ports.identity import get_identity
@@ -34,6 +34,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         daily = getattr(app.state, "daily_fetch", None) or DailyFetch.from_settings(settings, app.state.identity)
         register_daily_fetch(scheduler, daily)
         scheduler.start()
+        # Phase 5: the glossary runs worker, kicked at every start so runs left by the last process are taken.
+        # Tests set app.state.glossary_runs (running_app puts a do-nothing one there).
+        if getattr(app.state, "glossary_runs", None) is None:
+            app.state.glossary_runs = GlossaryRuns.from_settings(settings, app.state.identity)
+        kick_glossary_runs(scheduler, app.state.glossary_runs)
     try:
         yield
     finally:

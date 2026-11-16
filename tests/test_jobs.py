@@ -330,3 +330,83 @@ def test_a_new_selection_wakes_the_feed(db_session, daily, selected):
     assert daily().run() == {"syn_exchange_volumes": "fetched"}
     assert RequirementRepository(db_session).get(second.id).status == "onboarding"
     assert RequirementRepository(db_session).get(first.id).status == "no_source_found"
+
+
+# ---------------------------------------------------------------- phase 5: the glossary runs worker (assumptions 10 to 12, 48)
+
+
+@pytest.fixture
+def glossary_runs(db_session, tmp_path):
+    """The worker, pointed at the test's session (each run's commits are savepoint releases)."""
+    from apps.api.jobs import GlossaryRuns
+    from agents.glossary_builder import GlossaryBuilderAgent
+    from ports.llm.mock import MockProvider
+
+    def _runs(provider=None):
+        return GlossaryRuns(
+            session_factory=lambda: nullcontext(db_session),
+            agent_factory=lambda: GlossaryBuilderAgent(provider=provider or MockProvider(),
+                                                       blob_store=LocalBlobStore(tmp_path / "blob")),
+            owners=lambda: ["dev-glossary-owner"], lease_seconds=300)
+
+    return _runs
+
+
+@pytest.fixture
+def two_queued(db_session, glossary):
+    from core.repositories.feeds import FeedRepository
+    from core.steps.s05_glossary import queue_run
+    from tests.test_s05_glossary import BOND_COLUMNS, BOND_SPEC
+
+    feeds = FeedRepository(db_session)
+    bond = registered_feed(db_session, feeds.create_candidate(code="syn_bond_terms", name="Bond terms").id,
+                           spec=BOND_SPEC, columns=BOND_COLUMNS)
+    plain = registered_feed(db_session, feeds.create_candidate(code="syn_plain", name="Plain").id)
+    runs = [queue_run(db_session, feed_id=f.id, reason="registered", requested_by="dev-backend-team")[0]
+            for f in (bond, plain)]
+    db_session.commit()
+    return runs
+
+
+def test_drain_runs_every_waiting_run_each_in_its_own_transaction(db_session, glossary_runs, two_queued):
+    from core.repositories.glossary_runs import GlossaryRunRepository
+
+    assert glossary_runs().drain() == {two_queued[0].id: "done", two_queued[1].id: "done"}
+    runs = GlossaryRunRepository(db_session)
+    assert [runs.get(r.id).status for r in two_queued] == ["done", "done"]
+    assert runs.get(two_queued[0].id).results["rating"] == "proposed"
+    assert glossary_runs().drain() == {}  # nothing waits
+
+
+def test_a_model_that_does_not_answer_fails_the_run_and_keeps_its_reason(db_session, glossary_runs, two_queued):
+    from core.repositories.glossary_runs import GlossaryRunRepository
+    from ports.llm.base import LLMUnavailable
+    from tests.stand_in_agents import FixedProvider
+
+    result = glossary_runs(FixedProvider(error=LLMUnavailable("the model did not answer"))).drain()
+    bond, plain = (GlossaryRunRepository(db_session).get(r.id) for r in two_queued)
+    assert result == {bond.id: "failed", plain.id: "done"}  # the plain feed asks nothing: no call
+    assert (bond.status, bond.error) == ("failed", "LLMUnavailable: the model did not answer")
+
+
+async def test_the_app_under_test_runs_no_worker_of_its_own():
+    """Phase 5 plan, assumption 48: running_app puts a do-nothing worker in app.state.glossary_runs, and the
+    start-up kick reaches it, not a worker on the application database."""
+    from apps.api.main import app
+    from tests.conftest import NoGlossaryRuns
+
+    async with running_app():
+        worker = app.state.glossary_runs
+        assert isinstance(worker, NoGlossaryRuns)
+        assert worker.kicked.wait(5)
+
+
+async def test_the_worker_is_kicked_at_every_start_up():
+    """Runs left by the last process are taken at the next start-up (assumption 11)."""
+    from apps.api.main import app
+    from tests.conftest import NoGlossaryRuns
+
+    for _ in range(2):
+        worker = NoGlossaryRuns()
+        async with running_app(glossary_runs=worker):
+            assert app.state.glossary_runs is worker and worker.kicked.wait(5)

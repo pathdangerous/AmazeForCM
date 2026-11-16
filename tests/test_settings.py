@@ -71,6 +71,25 @@ def test_source_down_release_days_is_a_whole_number_of_at_least_one(tmp_path, mo
     assert load_settings(tmp_path / "missing.env").source_down_release_days == expected
 
 
+@pytest.mark.parametrize("value, expected", [(None, 300), ("1", 1), ("900", 900)])
+def test_the_glossary_run_lease_is_a_whole_number_of_seconds_of_at_least_one(tmp_path, monkeypatch, value, expected):
+    monkeypatch.delenv("GLOSSARY_RUN_LEASE_SECONDS", raising=False)
+    if value is not None:
+        monkeypatch.setenv("GLOSSARY_RUN_LEASE_SECONDS", value)
+    assert load_settings(tmp_path / "missing.env").glossary_run_lease_seconds == expected
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "1.5", "soon"])
+def test_a_bad_glossary_run_lease_is_refused_by_name(tmp_path, monkeypatch, bad):
+    monkeypatch.setenv("GLOSSARY_RUN_LEASE_SECONDS", bad)
+    with pytest.raises(ConfigError, match="GLOSSARY_RUN_LEASE_SECONDS"):
+        load_settings(tmp_path / "missing.env")
+
+
+def test_env_example_names_the_glossary_run_lease(tmp_path):
+    assert "GLOSSARY_RUN_LEASE_SECONDS=300" in (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("bad", ["0", "-2", "2.5", "three"])
 def test_a_bad_source_down_release_days_is_refused_by_name(tmp_path, monkeypatch, bad):
     monkeypatch.setenv("SOURCE_DOWN_RELEASE_DAYS", bad)

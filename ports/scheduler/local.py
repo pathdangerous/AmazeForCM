@@ -6,6 +6,9 @@ or re-register them from the database at start-up).
 
 from __future__ import annotations
 
+import logging
+import threading
+import uuid
 from collections.abc import Callable
 from datetime import UTC
 
@@ -14,6 +17,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ports.scheduler.base import JobInfo, JobNotFound, check_time
 
+log = logging.getLogger(__name__)
+
 
 class LocalScheduler:
     name = "local"
@@ -21,10 +26,16 @@ class LocalScheduler:
     def __init__(self) -> None:
         self._scheduler = BackgroundScheduler(timezone=UTC)
         self._times: dict[str, tuple[int, int]] = {}
+        self._soon_lock = threading.Lock()
+        self._soon_pending: list[tuple[str, Callable[[], None]]] = []
 
     def start(self) -> None:
-        if not self._scheduler.running:
-            self._scheduler.start()
+        with self._soon_lock:
+            if not self._scheduler.running:
+                self._scheduler.start()
+            pending, self._soon_pending = self._soon_pending, []
+        for job_id, guarded in pending:
+            threading.Thread(target=guarded, name=f"{job_id}:{uuid.uuid4().hex[:8]}", daemon=True).start()
 
     def shutdown(self) -> None:
         if self._scheduler.running:
@@ -41,13 +52,32 @@ class LocalScheduler:
     def run_now(self, job_id: str) -> None:
         self._job(job_id).func()
 
+    def run_soon(self, job_id: str, func: Callable[[], None]) -> None:
+        """Each call on a daemon thread of its own, at once (or at start, if called before), so calls may
+        overlap. Not an APScheduler job: APScheduler 3 sets its state to stopped before it takes its job-store
+        lock in shutdown(), so a one-off job finishing then raises JobLookupError in its thread (phase 5 plan,
+        section 17). An exception in func is logged, never raised in the thread."""
+
+        def guarded() -> None:
+            try:
+                func()
+            except Exception:
+                log.exception("background run %s failed", job_id)
+
+        with self._soon_lock:
+            if not self._scheduler.running:
+                self._soon_pending.append((job_id, guarded))
+                return
+        threading.Thread(target=guarded, name=f"{job_id}:{uuid.uuid4().hex[:8]}", daemon=True).start()
+
     def remove(self, job_id: str) -> None:
         self._job(job_id)
         self._scheduler.remove_job(job_id)
         del self._times[job_id]
 
     def list_jobs(self) -> list[JobInfo]:
-        return sorted((self._info(job.id) for job in self._scheduler.get_jobs()), key=lambda j: j.job_id)
+        return sorted((self._info(job.id) for job in self._scheduler.get_jobs() if job.id in self._times),
+                      key=lambda j: j.job_id)  # daily jobs only; run_soon jobs are not kept
 
     def _job(self, job_id: str):
         job = self._scheduler.get_job(job_id)

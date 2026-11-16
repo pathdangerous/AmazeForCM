@@ -85,18 +85,34 @@ def anyio_backend():
     return "asyncio"
 
 
+class NoGlossaryRuns:
+    """A do-nothing glossary runs worker (phase 5 plan, assumption 48): no test starts a worker on the
+    application database. kicked is set when the start-up kick (or any kick) reaches it."""
+
+    def __init__(self):
+        import threading
+
+        self.kicked = threading.Event()
+
+    def drain(self) -> dict:
+        self.kicked.set()
+        return {}
+
+
 @asynccontextmanager
-async def running_app(engine=None, settings=None, session=None):
+async def running_app(engine=None, settings=None, session=None, glossary_runs=None):
     """Start the API (lifespan included) with optional overrides and yield an httpx client.
 
     session: every request uses this session (the test's rolled-back db_session), so a request sees
     rows the test created without committing them.
+    glossary_runs: the step 05 worker; a do-nothing one unless the test gives its own.
     """
     import httpx
 
     from apps.api.deps import get_app_settings, get_db_engine, get_db_session
     from apps.api.main import app
 
+    app.state.glossary_runs = glossary_runs or NoGlossaryRuns()
     if engine is not None:
         app.dependency_overrides[get_db_engine] = lambda: engine
     if settings is not None:
@@ -110,6 +126,7 @@ async def running_app(engine=None, settings=None, session=None):
                 yield client
     finally:
         app.dependency_overrides.clear()
+        del app.state.glossary_runs
 
 
 # ---------------------------------------------------------------- phase 1: proposals and approvals

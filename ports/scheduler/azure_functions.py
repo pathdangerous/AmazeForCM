@@ -35,6 +35,10 @@ class AzureFunctionsScheduler:
     def run_now(self, job_id: str) -> None:
         raise NotImplementedError(AZURE_NOT_IMPLEMENTED)
 
+    def run_soon(self, job_id: str, func: Callable[[], None]) -> None:
+        """Phase 8: put a message on a queue; a queue-triggered function calls GlossaryRuns.drain()."""
+        raise NotImplementedError(AZURE_NOT_IMPLEMENTED)
+
     def remove(self, job_id: str) -> None:
         raise NotImplementedError(AZURE_NOT_IMPLEMENTED)
 

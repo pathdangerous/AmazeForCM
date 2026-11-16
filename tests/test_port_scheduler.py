@@ -66,6 +66,49 @@ def test_next_run_is_in_the_future_at_the_utc_time_after_start(scheduler):
     assert info.next_run_at.astimezone(UTC).minute == 15
 
 
+def test_run_soon_runs_the_function_once_in_the_background(scheduler):
+    """Phase 5 plan, assumption 11: once, as soon as possible, not in the caller (run_soon returns first)."""
+    import threading
+
+    started, release, calls = threading.Event(), threading.Event(), []
+
+    def work():
+        calls.append(threading.current_thread().name)
+        started.set()
+        release.wait(5)
+
+    scheduler.start()
+    scheduler.run_soon("glossary-runs", work)
+    assert started.wait(5)
+    assert calls[0] != threading.current_thread().name  # another thread: the caller did not wait
+    release.set()
+    assert scheduler.list_jobs() == []  # nothing is kept: run once, then gone
+
+
+def test_run_soon_calls_may_overlap(scheduler):
+    import threading
+
+    both, gate = threading.Barrier(2, timeout=5), []
+    scheduler.start()
+    for _ in range(2):
+        scheduler.run_soon("glossary-runs", lambda: gate.append(both.wait()))
+    for _ in range(50):
+        if len(gate) == 2:
+            break
+        threading.Event().wait(0.1)
+    assert sorted(gate) == [0, 1]  # both ran at the same time (the barrier needs two waiting threads)
+
+
+def test_run_soon_before_start_runs_at_start(scheduler):
+    import threading
+
+    ran = threading.Event()
+    scheduler.run_soon("glossary-runs", ran.set)
+    assert not ran.wait(0.2)
+    scheduler.start()
+    assert ran.wait(5)
+
+
 def test_start_and_shutdown_are_safe_to_repeat():
     s = LocalScheduler()
     s.start()

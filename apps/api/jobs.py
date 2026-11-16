@@ -1,4 +1,6 @@
 """The daily fetch: one job, registered at every API start-up, that reads the feeds table when it runs.
+Phase 5 adds GlossaryRuns: step 05's worker, started by Scheduler.run_soon() after a commit that queued
+a run and at every start-up (the runs are rows in glossary_runs, so a restart loses nothing).
 
 Carried item 3 (phase 3 plan, assumptions 17 and 18). Nothing per feed is kept in the scheduler, so an
 API restart loses nothing: the new start-up registers the same job, and the job finds every feed in the
@@ -21,10 +23,12 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from core.repositories.errors import RunSuperseded
 from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
+from core.steps.s05_glossary import builder_input, claim_run, fail_run, record_run
 from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
 from ports.connectors.catalogue import SourceCatalogue
@@ -149,3 +153,80 @@ class DailyFetch:
 def register_daily_fetch(scheduler: Scheduler, daily: DailyFetch) -> None:
     """Called at every start-up. The same id replaces any job with that id."""
     scheduler.schedule_daily(DAILY_FETCH_JOB_ID, daily.run, hour=DAILY_FETCH_HOUR)
+
+
+# ---------------------------------------------------------------- phase 5: the glossary runs worker
+
+GLOSSARY_RUNS_JOB_ID = "glossary-runs"
+
+
+@dataclass
+class GlossaryRuns:
+    """Step 05 in the background (phase 5 plan, assumptions 10 to 12 and 19). drain() claims and runs until
+    no run waits. Each run: claim and commit; read and end the read; the model call with no connection held;
+    then the locked write and commit. Safe to run twice at once: a claim takes a run once (SKIP LOCKED), and
+    a late answer is discarded (RunSuperseded). The API builds it from the settings; tests build their own."""
+
+    session_factory: Callable[[], AbstractContextManager[Session]]
+    agent_factory: Callable[[], object]  # a GlossaryBuilderAgent
+    owners: Callable[[], Sequence[str]]
+    lease_seconds: int = 300
+    settings: Settings | None = None  # selects the notifier; None means in-app
+
+    @classmethod
+    def from_settings(cls, settings: Settings, identity: Identity) -> GlossaryRuns:
+        def sessions() -> AbstractContextManager[Session]:
+            from ports.db import get_sessionmaker
+
+            return get_sessionmaker()()
+
+        def agent():
+            from agents.glossary_builder import GlossaryBuilderAgent
+            from ports.llm import get_llm_provider
+
+            return GlossaryBuilderAgent(provider=get_llm_provider(settings), blob_store=get_blob_store(settings))
+
+        return cls(session_factory=sessions, agent_factory=agent,
+                   owners=lambda: [u.id for u in identity.list_users() if "glossary_owner" in u.roles],
+                   lease_seconds=settings.glossary_run_lease_seconds, settings=settings)
+
+    def drain(self) -> dict:
+        """Run id -> done, failed or superseded, for every run this call took."""
+        results = {}
+        while True:
+            with self.session_factory() as session:
+                run = claim_run(session, lease_seconds=self.lease_seconds)
+                session.commit()
+            if run is None:
+                return results
+            results[run.id] = self._run_one(run)
+
+    def _run_one(self, run) -> str:
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                plan = builder_input(session, run)
+                session.rollback()  # end the read: no connection is held during the model call
+                record_run(session, plan=plan, agent=self.agent_factory(), notifier=notifier, owners=self.owners())
+                session.commit()
+                return "done"
+            except RunSuperseded:  # another worker took it after the lease; the discard row is committed
+                session.rollback()
+                return "superseded"
+            except Exception as exc:
+                session.rollback()
+                log.exception("glossary run %s failed", run.id)
+                error = f"{type(exc).__name__}: {exc}"
+        with self.session_factory() as session:
+            try:
+                fail_run(session, run=run, error=error)
+                session.commit()
+                return "failed"
+            except RunSuperseded:
+                session.rollback()
+                return "superseded"
+
+
+def kick_glossary_runs(scheduler: Scheduler, runs: GlossaryRuns) -> None:
+    """After a commit that queued a run, and at every start-up (rows left by the last process)."""
+    scheduler.run_soon(GLOSSARY_RUNS_JOB_ID, runs.drain)

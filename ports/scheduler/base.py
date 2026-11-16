@@ -1,4 +1,5 @@
-"""Scheduler port: daily jobs (the custom data product's daily fetch). Times are UTC."""
+"""Scheduler port: daily jobs (the custom data product's daily fetch) and one-off background runs
+(phase 5: the glossary runs worker). Times are UTC."""
 
 from __future__ import annotations
 
@@ -38,6 +39,11 @@ class Scheduler(Protocol):
 
     def run_now(self, job_id: str) -> None:
         """Run the job once, now. Raises JobNotFound."""
+        ...
+
+    def run_soon(self, job_id: str, func: Callable[[], None]) -> None:
+        """Run func once, in the background, as soon as possible (phase 5 plan, assumption 11). Nothing is
+        kept afterwards. Calls may overlap, so func must be safe to run twice at once."""
         ...
 
     def remove(self, job_id: str) -> None:
