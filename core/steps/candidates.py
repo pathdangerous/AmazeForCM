@@ -99,9 +99,15 @@ def _candidate(element: Element, s: float, column_type: str | None, from_hint: b
 
 
 def candidate_list(name: str, column_type: str | None, elements: Iterable[Element],
-                   hint: str | None = None) -> list[Candidate]:
+                   hint: str | None = None, *, also: Iterable[str] = ()) -> list[Candidate]:
+    """One list for one column or term; with also, each element scores its best over name and those forms."""
     pool = list(elements)
-    scored = sorted(((score(name, e), e) for e in pool), key=lambda t: (-t[0], t[1].key))
+    forms = list(dict.fromkeys((name, *also)))
+
+    def best(e: Element) -> float:
+        return max(score(f, e) for f in forms)
+
+    scored = sorted(((best(e), e) for e in pool), key=lambda t: (-t[0], t[1].key))
     kept = [(s, e) for s, e in scored if s >= MIN_SCORE]
     if len(kept) > FIRST:
         fifth = kept[FIRST - 1][0]
@@ -111,9 +117,33 @@ def candidate_list(name: str, column_type: str | None, elements: Iterable[Elemen
     if hinted is not None and all(e.key != hint for _, e in kept):
         if len(kept) == MAX_CANDIDATES:
             kept = kept[:-1]
-        kept.append((score(name, hinted), hinted))
+        kept.append((best(hinted), hinted))
         kept.sort(key=lambda t: (-t[0], t[1].key))
     return [_candidate(e, s, column_type, from_hint=e.key == hint) for s, e in kept]
+
+
+def singular(term: str) -> str:
+    """The term with a plural ending dropped from its last word (the DiscoveryAssistant's mock rule)."""
+    ws = list(words(term))
+    if ws and len(ws[-1]) > 3:
+        last = ws[-1]
+        if last.endswith("ies"):
+            last = last[:-3] + "y"
+        elif last.endswith("s") and not last.endswith("ss"):
+            last = last[:-1]
+        ws[-1] = last
+    return " ".join(ws)
+
+
+def term_candidates(terms: Iterable[str], elements: Iterable[Element]) -> list[Candidate]:
+    """Step 17 (assumption 7): one list per term, scored on the term and its singular form (so at most 10
+    per term); each element once, first seen first. No type is known, so none is dropped for its type."""
+    pool = list(elements)
+    seen: dict[str, Candidate] = {}
+    for term in terms:
+        for x in candidate_list(term, None, pool, also=(singular(term),)):
+            seen.setdefault(x.key, x)
+    return list(seen.values())
 
 
 # ---------------------------------------------------------------- new columns and coverage (assumptions 8, 9)

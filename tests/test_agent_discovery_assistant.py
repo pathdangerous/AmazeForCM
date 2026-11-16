@@ -74,7 +74,7 @@ def test_the_assistant_sees_the_unmatched_terms_and_the_glossary(db_session, glo
     assist(db_session, query="close price and closing prices", agent=agent, **RILEY)
     sent = agent.inputs[0]
     assert sent.unmatched_terms == ["closing prices"]
-    assert len(sent.glossary) == 33 and {"key": "close_price", "name": "Close price",
+    assert len(sent.glossary) <= 10 and {"key": "close_price", "name": "Close price",
                                          "aliases": ["closing_price", "close"]} in [g.model_dump() for g in sent.glossary]
 
 

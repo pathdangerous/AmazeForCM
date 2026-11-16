@@ -126,3 +126,15 @@ def test_hits_are_ordered_by_matched_elements_then_name_then_code(search, make_p
     assert [h.product.code for h in search("close price and volume").hits] == [
         "both", "earlier_name", "a_one", "b_one",
     ]
+
+
+def test_the_assistant_gets_candidates_not_the_whole_glossary(db_session, glossary):
+    """Phase 5 plan, assumption 7: the candidates of each unmatched term and its singular form."""
+    from core.steps.candidates import candidate_list
+    from core.steps.s17_discover import assist_input
+
+    sent = assist_input(db_session, query="close price and closing prices")
+    current = glossary.list_current()
+    expected = candidate_list("closing prices", None, current, also=("closing price",))
+    assert [g.key for g in sent.glossary] == [x.key for x in expected]
+    assert sent.glossary[0].key == "close_price" and len(sent.glossary) < 33

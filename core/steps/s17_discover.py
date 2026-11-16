@@ -29,6 +29,7 @@ from core.entitlement.decide import decide, route_to_access
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.grants import ProductGrantRepository
 from core.repositories.products import ProductRepository
+from core.steps.candidates import term_candidates
 from core.steps.matching import Match, build_phrases, match, words
 from core.steps.result import StepResult
 
@@ -140,8 +141,9 @@ def assist_input(session: Session, *, query: str) -> AssistantInput | None:
     unmatched = match(query, build_phrases(glossary)).terms if query.strip() else []
     if not unmatched:
         return None
-    return AssistantInput(query=query, unmatched_terms=unmatched,
-                          glossary=[GlossaryRef(key=e.key, name=e.name, aliases=e.aliases) for e in glossary])
+    return AssistantInput(query=query, unmatched_terms=unmatched,  # candidates only (phase 5, assumption 7)
+                          glossary=[GlossaryRef(key=x.key, name=x.name, aliases=x.aliases)
+                                    for x in term_candidates(unmatched, glossary)])
 
 
 def record_assist(session: Session, *, agent: RunsAgent, agent_input: AssistantInput | None, user_id: str,
