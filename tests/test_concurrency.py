@@ -17,7 +17,19 @@ import uuid
 import pytest
 
 from ports.llm.mock import MockProvider
-from tests.test_commit_visibility import BLAKE, RILEY, committed, flow, own_schema  # noqa: F401 (fixtures)
+from tests.test_commit_visibility import (  # noqa: F401 (flow and own_schema are fixtures)
+    BLAKE,
+    GLENN,
+    RILEY,
+    SAM,
+    amaze_post,
+    bond_feed,
+    committed,
+    flow,
+    glossary_worker,
+    own_schema,
+    queued_run,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -263,8 +275,12 @@ async def test_no_connection_is_held_during_any_model_call(own_schema, flow):
         await f.step("find-source")
         await f.amaze("syn_exchange_volumes", "profile")
         await f.amaze("syn_exchange_volumes", "profile/summary")
-    # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant, ProfilerAgent
-    assert provider.checked_out == [0, 0, 0, 0, 0, 0]
+        await f.amaze("syn_exchange_volumes", "signoff", {"outcome": "meets"})  # phase 5: the MappingAgent's call
+        await f.amaze("syn_exchange_volumes", "register", {"owner_id": "dev-data-owner", "visibility": "open"})
+        proposed = await f.client.post(f"/api/amaze/feeds/{f.feed_id}/mappings/propose", headers=SAM, json={})
+        assert proposed.status_code == 200, proposed.text
+    # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant, ProfilerAgent, MappingAgent
+    assert provider.checked_out == [0, 0, 0, 0, 0, 0, 0]
 
 
 async def test_a_new_profile_during_the_summary_gives_409_and_a_discard_row(own_schema, flow):
@@ -942,3 +958,201 @@ def test_two_registrations_at_once_give_one_success_and_one_409(own_schema, tmp_
     assert results == ["registered"]
     assert [type(e) for e in errors] == [FeedNotACandidate]
     assert committed(own_schema, "SELECT version, owner_id FROM feed_registrations") == [(1, "dev-data-owner")]
+
+
+# ---------------------------------------------------------------- phase 5: steps 05 and 06 (plan, assumption 46)
+
+
+class HeldProvider:
+    """The mock provider. Its first call sets `entered` and waits for `release`: the test does something
+    else while that call is in progress (an event, not a sleep). Later calls answer at once."""
+
+    name = "mock"
+
+    def __init__(self):
+        self.entered, self.release, self._lock, self.calls = threading.Event(), threading.Event(), threading.Lock(), 0
+
+    def complete(self, **kwargs):
+        with self._lock:
+            self.calls += 1
+            first = self.calls == 1
+        if first:
+            self.entered.set()
+            assert self.release.wait(timeout=20), "the test never released the first call"
+        return MockProvider().complete(**kwargs)
+
+
+def _in_thread(work):
+    """Start work() on a thread; returns (thread, out) where out["result"] or out["error"] is set at the end."""
+    out = {}
+
+    def run():
+        try:
+            out["result"] = work()
+        except Exception as exc:  # noqa: BLE001 (returned to the test)
+            out["error"] = exc
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, out
+
+
+def test_no_connection_is_held_during_the_glossary_job(own_schema, tmp_path):
+    """Note 3: the worker claims and commits, reads and ends the read, then calls the model."""
+    run_id = queued_run(own_schema, bond_feed(own_schema))
+    provider = WatchingProvider(own_schema)
+    assert glossary_worker(own_schema, tmp_path, provider).drain() == {uuid.UUID(run_id): "done"}
+    assert provider.checked_out == [0]
+
+
+def test_two_workers_at_once_run_a_queued_run_once(own_schema, tmp_path):
+    """The second worker starts while the first is in its model call: the run is running with a lease that
+    has not passed, so the second claims nothing. One call, one attempt."""
+    run_id = uuid.UUID(queued_run(own_schema, bond_feed(own_schema)))
+    provider = HeldProvider()
+    thread, first = _in_thread(lambda: glossary_worker(own_schema, tmp_path, provider).drain())
+    assert provider.entered.wait(timeout=10), "the first worker never called the model"
+    second = glossary_worker(own_schema, tmp_path, provider).drain()
+    provider.release.set()
+    thread.join(timeout=30)
+    assert (first, second) == ({"result": {run_id: "done"}}, {})
+    assert committed(own_schema, "SELECT status, attempt FROM glossary_runs") == [("done", 1)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'GlossaryBuilderAgent'") == [(1,)]
+
+
+async def test_two_requests_for_a_run_of_one_feed_give_one_active_run(own_schema, flow, monkeypatch):
+    """The second request is sent while the first holds the feed row (its profile read slowed): it waits,
+    then gets the active run. One row, one created."""
+    from core.repositories.feed_profiles import FeedProfileRepository
+
+    feed_id = bond_feed(own_schema)
+    async with flow() as f:
+        entered = _slow(monkeypatch, FeedProfileRepository, "latest")
+
+        def ask():
+            return f.client.post(f"/api/amaze/feeds/{feed_id}/glossary/run", headers=GLENN, json={})
+
+        first, second = await _second_while_first_runs(ask, ask, entered)
+    assert (first.status_code, second.status_code) == (200, 200), (first.text, second.text)
+    assert (first.json()["created"], second.json()["created"]) == (True, False)
+    assert first.json()["run"]["id"] == second.json()["run"]["id"]
+    assert committed(own_schema, "SELECT count(*) FROM glossary_runs") == [(1,)]
+
+
+def test_a_late_answer_after_the_lease_writes_nothing_and_is_discarded(own_schema, tmp_path):
+    """The first worker's lease has passed while it waits for the model (lease_seconds=-60); a second
+    worker takes the run (attempt 2) and finishes it. The first answer then finds the run no longer its own:
+    RunSuperseded, a discard row, no proposal."""
+    run_id = uuid.UUID(queued_run(own_schema, bond_feed(own_schema)))
+    provider = HeldProvider()
+    thread, late = _in_thread(lambda: glossary_worker(own_schema, tmp_path, provider, lease_seconds=-60).drain())
+    assert provider.entered.wait(timeout=10), "the first worker never called the model"
+    second = glossary_worker(own_schema, tmp_path, provider).drain()
+    provider.release.set()
+    thread.join(timeout=30)
+    assert (second, late) == ({run_id: "done"}, {"result": {run_id: "superseded"}})
+    assert committed(own_schema, "SELECT status, attempt FROM glossary_runs") == [("done", 2)]
+    assert committed(own_schema, "SELECT count(*) FROM proposals WHERE kind = 'glossary_element'") == [(2,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'GlossaryBuilderAgent'") == [(2,)]
+    # discarded by the run's attempt check, not later by the pending-proposal index (section 17)
+    [(reason,)] = committed(own_schema, "SELECT reason FROM proposal_log_discards")
+    assert reason.startswith("RunSuperseded: "), reason
+
+
+async def test_after_a_restart_a_queued_run_and_an_expired_one_are_run(own_schema, tmp_path):
+    """Note 3 (assumption 11): rows left by the last process. One run was running when its worker stopped
+    (its lease has passed), one was queued. The API's start-up kick runs both."""
+    from core.repositories.glossary_runs import GlossaryRunRepository
+    from ports.config import Settings
+    from ports.db import get_sessionmaker
+    from tests.conftest import running_app
+
+    expired = uuid.UUID(queued_run(own_schema, bond_feed(own_schema, "syn_bond_terms_a")))
+    with get_sessionmaker(own_schema)() as session:
+        assert GlossaryRunRepository(session).claim(lease_seconds=-60).id == expired  # its worker stopped here
+        session.commit()
+    waiting = uuid.UUID(queued_run(own_schema, bond_feed(own_schema, "syn_bond_terms_b")))
+
+    worker, drained, out = glossary_worker(own_schema, tmp_path), threading.Event(), {}
+
+    class Watched:
+        def drain(self):
+            out.update(worker.drain())
+            drained.set()
+            return out
+
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None), glossary_runs=Watched()):
+        assert await asyncio.to_thread(drained.wait, 15), "the start-up kick never ran the worker"
+    assert out == {expired: "done", waiting: "done"}
+    assert committed(own_schema, "SELECT id, status, attempt FROM glossary_runs ORDER BY attempt") == [
+        (waiting, "done", 1), (expired, "done", 2)]
+
+
+async def test_two_mapping_requests_of_one_feed_at_once_give_200_and_409(own_schema, flow):
+    """The second Propose mappings is sent while the first waits for the model; it proposes and commits.
+    The first answer then finds pending proposals for its columns: 409 (MappingAlreadyProposed), a discard
+    row, nothing else written."""
+    feed_id = bond_feed(own_schema)
+    provider = HeldProvider()
+    url = f"/api/amaze/feeds/{feed_id}/mappings/propose"
+    async with flow() as f:
+        use_provider(provider)
+        first = asyncio.create_task(f.client.post(url, headers=SAM, json={}))
+        assert await asyncio.to_thread(provider.entered.wait, 10), "the first request never called the model"
+        second = await f.client.post(url, headers=SAM, json={})
+        provider.release.set()
+        first = await first
+    assert (first.status_code, second.status_code) == (409, 200), (first.text, second.text)
+    assert "pending mapping proposal" in first.json()["detail"]
+    assert committed(own_schema, "SELECT count(*) FROM proposals WHERE kind = 'mapping'") == [(5,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'MappingAgent'") == [(2,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(1,)]
+
+
+async def test_two_decisions_of_one_mapping_at_once_give_200_and_409(own_schema, flow, monkeypatch):
+    """The second approval is sent while the first holds the feed and proposal rows (its read of the
+    feed's mappings slowed): it waits, then finds the proposal approved (409). One approval, one mapping."""
+    from core.repositories.configuration import MappingRepository
+
+    feed_id = bond_feed(own_schema)
+    async with flow() as f:
+        proposed = await amaze_post(f.client, f"feeds/{feed_id}/mappings/propose")
+        cpn = next(r for r in proposed["result"]["recommended"] if r["source_field"] == "cpn")
+        entered = _slow(monkeypatch, MappingRepository, "current_for_feed")
+
+        def approve():
+            return f.client.post(f"/api/amaze/proposals/{cpn['proposal_id']}/decision", headers=SAM,
+                                 json={"decision": "approved"})
+
+        first, second = await _second_while_first_runs(approve, approve, entered)
+    assert (first.status_code, second.status_code) == (200, 409), (first.text, second.text)
+    assert "already approved" in second.json()["detail"]
+    assert committed(own_schema, "SELECT count(*) FROM approvals WHERE proposal_id = :p", p=cpn["proposal_id"]) == [(1,)]
+    assert committed(own_schema, "SELECT source_field, version FROM mappings") == [("cpn", 1)]
+
+
+async def test_two_alias_approvals_of_one_element_at_once_take_the_next_versions(own_schema, flow, monkeypatch):
+    """Two glossary proposals on two feeds, each an alias of exchange_mic. The second approval is sent while
+    the first holds the glossary lock (a pause just after its read of the element): it waits, then reads
+    version 2 and writes version 3. Both 200; no unique violation."""
+    from core.repositories.glossary import GlossaryRepository
+    from ports.db import get_sessionmaker
+    from tests.configured import alias, glossary_proposal
+
+    with get_sessionmaker(own_schema)() as session:
+        ids = [str(glossary_proposal(session, [alias("exchange_mic", name)], column=name).id)
+               for name in ("venue_mic_code", "mic_of_venue")]
+        session.commit()
+    async with flow() as f:
+        entered = _slow(monkeypatch, GlossaryRepository, "get_current", after=True)  # what it read can go stale
+
+        def approve(proposal_id):
+            return lambda: f.client.post(f"/api/amaze/proposals/{proposal_id}/decision", headers=GLENN,
+                                         json={"decision": "approved"})
+
+        first, second = await _second_while_first_runs(approve(ids[0]), approve(ids[1]), entered)
+    assert (first.status_code, second.status_code) == (200, 200), (first.text, second.text)
+    rows = committed(own_schema, "SELECT version, aliases FROM glossary_elements WHERE key = 'exchange_mic' "
+                                 "ORDER BY version")
+    assert [(version, aliases[-2:]) for version, aliases in rows[1:]] == [
+        (2, [rows[0][1][-1], "venue_mic_code"]), (3, ["venue_mic_code", "mic_of_venue"])]

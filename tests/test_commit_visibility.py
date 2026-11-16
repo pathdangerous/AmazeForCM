@@ -341,6 +341,123 @@ async def test_pick_commits_the_link_to_a_registered_feed(own_schema, flow):
     assert committed(own_schema, "SELECT count(*) FROM source_fetches") == fetches
 
 
+# ---------------------------------------------------------------- phase 5: one test per commit (plan, assumption 45)
+
+GLENN = {"X-Dev-User": "dev-glossary-owner"}
+SAM = {"X-Dev-User": "dev-data-steward"}
+
+
+def bond_feed(engine, code="syn_bond_terms") -> str:
+    """A feed registered with the bond profile (seven columns), committed; returns its id."""
+    from core.repositories.feeds import FeedRepository
+    from tests.onboarded import registered_feed
+    from tests.test_s05_glossary import BOND_COLUMNS, BOND_SPEC
+
+    with get_sessionmaker(engine)() as session:
+        feed = FeedRepository(session).create_candidate(code=code, name="Bond terms")
+        feed = registered_feed(session, feed.id, spec=BOND_SPEC, columns=BOND_COLUMNS)
+        session.commit()
+    return str(feed.id)
+
+
+def glossary_worker(engine, tmp_path, provider=None, lease_seconds=300):
+    """The step 05 worker on the app's real session factory (assumption 48: the test runs it, not the app)."""
+    from agents.glossary_builder import GlossaryBuilderAgent
+    from apps.api.jobs import GlossaryRuns
+    from ports.llm.mock import MockProvider
+
+    return GlossaryRuns(session_factory=get_sessionmaker(engine),
+                        agent_factory=lambda: GlossaryBuilderAgent(provider=provider or MockProvider(),
+                                                                   blob_store=LocalBlobStore(tmp_path / "blob")),
+                        owners=lambda: ["dev-glossary-owner"], lease_seconds=lease_seconds)
+
+
+def queued_run(engine, feed_id, reason="requested"):
+    from core.steps.s05_glossary import queue_run
+
+    with get_sessionmaker(engine)() as session:
+        run, _ = queue_run(session, feed_id=uuid.UUID(feed_id), reason=reason, requested_by="dev-glossary-owner")
+        session.commit()
+    return str(run.id)
+
+
+async def amaze_post(client, path, body=None, headers=SAM):
+    response = await client.post(f"/api/amaze/{path}", headers=headers, json=body if body is not None else {})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.anyio
+async def test_register_commits_the_glossary_run(own_schema, flow):
+    async with flow() as f:
+        await _volumes_onboarding(f)
+        await _accepted_and_registered(f)
+    assert committed(own_schema, "SELECT r.reason, r.status, r.requested_by FROM glossary_runs r "
+                                 "JOIN feeds f ON f.id = r.feed_id WHERE f.code = :c", c=VOLUMES) == [
+        ("registered", "queued", "dev-backend-team")]
+
+
+def test_the_glossary_job_commits_its_proposals(own_schema, tmp_path):
+    run_id = queued_run(own_schema, bond_feed(own_schema))
+    assert glossary_worker(own_schema, tmp_path).drain() == {uuid.UUID(run_id): "done"}
+    assert committed(own_schema, "SELECT status, results->>'rating' FROM glossary_runs WHERE id = :id",
+                     id=run_id) == [("done", "proposed")]
+    assert committed(own_schema, "SELECT agent_name FROM proposal_log WHERE agent_name <> 'ProfilerAgent'") == [
+        ("GlossaryBuilderAgent",)]  # registered_feed's summary is a ProfilerAgent call
+    assert committed(own_schema, "SELECT payload->>'source_field', status FROM proposals "
+                                 "WHERE kind = 'glossary_element' ORDER BY 1") == [
+        ("rating", "pending"), ("venue_mic_code", "pending")]
+    assert committed(own_schema, "SELECT recipient FROM notifications WHERE subject LIKE 'Glossary proposals%'") == [
+        ("dev-glossary-owner",)]
+
+
+@pytest.mark.anyio
+async def test_glossary_run_commits_the_queued_run(own_schema, flow):
+    feed_id = bond_feed(own_schema)
+    async with flow() as f:
+        body = await amaze_post(f.client, f"feeds/{feed_id}/glossary/run", headers=GLENN)
+    assert committed(own_schema, "SELECT id::text, reason, status, requested_by FROM glossary_runs") == [
+        (body["run"]["id"], "requested", "queued", "dev-glossary-owner")]
+
+
+@pytest.mark.anyio
+async def test_propose_commits_the_mapping_proposals(own_schema, flow):
+    feed_id = bond_feed(own_schema)
+    async with flow() as f:
+        await amaze_post(f.client, f"feeds/{feed_id}/mappings/propose")
+    assert committed(own_schema, "SELECT agent_name FROM proposal_log WHERE agent_name = 'MappingAgent'") == [
+        ("MappingAgent",)]
+    assert committed(own_schema, "SELECT payload->>'source_field' FROM proposals WHERE kind = 'mapping' "
+                                 "AND status = 'pending' ORDER BY 1") == [
+        ("cpn",), ("date",), ("instr_id",), ("matures_on",), ("venue_mic_code",)]
+    assert committed(own_schema, "SELECT reason, columns FROM glossary_runs") == [("sent_back", ["rating", "maturity"])]
+
+
+@pytest.mark.anyio
+async def test_a_glossary_decision_commits_the_element(own_schema, flow, tmp_path):
+    queued_run(own_schema, bond_feed(own_schema))
+    glossary_worker(own_schema, tmp_path).drain()
+    [(proposal_id,)] = committed(own_schema, "SELECT id::text FROM proposals WHERE payload->>'source_field' = 'rating'")
+    async with flow() as f:
+        await amaze_post(f.client, f"proposals/{proposal_id}/decision", {"decision": "approved"}, headers=GLENN)
+    assert committed(own_schema, "SELECT decision, decided_by FROM approvals WHERE proposal_id = :p",
+                     p=proposal_id) == [("approved", "dev-glossary-owner")]
+    assert committed(own_schema, "SELECT key, version, created_by FROM glossary_elements WHERE proposal_id = :p",
+                     p=proposal_id) == [("rating", 1, "dev-glossary-owner")]
+
+
+@pytest.mark.anyio
+async def test_a_mapping_decision_commits_the_mapping(own_schema, flow):
+    feed_id = bond_feed(own_schema)
+    async with flow() as f:
+        proposed = await amaze_post(f.client, f"feeds/{feed_id}/mappings/propose")
+        cpn = next(r for r in proposed["result"]["recommended"] if r["source_field"] == "cpn")
+        await amaze_post(f.client, f"proposals/{cpn['proposal_id']}/decision", {"decision": "approved"})
+    assert committed(own_schema, "SELECT decision, decided_by FROM approvals WHERE proposal_id = :p",
+                     p=cpn["proposal_id"]) == [("approved", "dev-data-steward")]
+    assert committed(own_schema, "SELECT source_field, element_key, version FROM mappings") == [("cpn", "coupon_rate", 1)]
+
+
 def test_the_daily_job_commits_the_broken_catalogue_notification(own_schema, tmp_path):
     """Phase 4 plan, assumption 36: with a catalogue that fails to load, the backend team's notification is
     committed in its own transaction (independent review, finding 9)."""
