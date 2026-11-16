@@ -109,6 +109,26 @@ async def test_done_when_an_accepted_candidate_is_registered(client):
     assert (await page(client, requirement_id))["message"] == ONBOARDING
 
 
+async def test_register_queues_a_glossary_run_and_kicks_the_worker_after_its_commit(client):
+    """Phase 5 plan, section 9: register also queues the run (step 05) and kicks the worker."""
+    from apps.api.deps import get_glossary_kick
+    from apps.api.main import app
+
+    kicks = []
+    app.dependency_overrides[get_glossary_kick] = lambda: (lambda: kicks.append("kick"))
+    requirement_id = await raise_requirement(client, "volume", ["volume"])
+    await find_source(client, requirement_id)
+    feed_id = await feed_of(client, "syn_exchange_volumes")
+    for action, body in (("profile", {}), ("profile/summary", {}), ("signoff", {"outcome": "meets"})):
+        await amaze(client, feed_id, action, body)
+    assert kicks == []
+    registered = await amaze(client, feed_id, "register", {"owner_id": "dev-data-owner", "visibility": "open"})
+    run_id = registered["result"]["glossary_run_id"]
+    assert kicks == ["kick"] and run_id is not None
+    run = registered["feed"]["glossary_run"]
+    assert (run["id"], run["status"], run["reason"]) == (run_id, "queued", "registered")
+
+
 async def test_the_feed_page_shows_the_conditions_each_requester_accepted(client):
     requirement_id, feed_id = await onboarding_by_pick(client, "open price", ["open_price"], VENDOR)
     feed = await amaze(client, feed_id, headers=STEWARD)  # any backend role reads

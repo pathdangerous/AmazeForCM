@@ -14,13 +14,19 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from core.repositories.errors import (
+    ElementAlreadyMapped,
     FeedHasNoFile,
     FeedNotACandidate,
     FeedNotFound,
     FeedNotProfiled,
     FeedNotRegistered,
     FeedNotSignedOff,
+    GlossaryRunNotFound,
+    MappingAlreadyProposed,
+    NotAnApprover,
+    NothingToMap,
     NothingToRelease,
+    PhraseTaken,
     ProfileAlreadySummarised,
     ProfileNotSummarised,
     ProfileSuperseded,
@@ -41,8 +47,11 @@ CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyH
              SourceAlreadyReleased, UnknownSource,  # UnknownSource: a listed source left the catalogue
              # phase 4 (plan, assumption 13 and section 9)
              FeedNotACandidate, FeedHasNoFile, FeedNotProfiled, ProfileAlreadySummarised, ProfileSuperseded,
-             ProfileNotSummarised, FeedNotSignedOff, FeedNotRegistered, SourceRejected)
-NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound)
+             ProfileNotSummarised, FeedNotSignedOff, FeedNotRegistered, SourceRejected,
+             # phase 5 (plan, section 9)
+             NothingToMap, MappingAlreadyProposed, ElementAlreadyMapped, PhraseTaken)
+NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound)
+FORBIDDEN = (NotAnApprover,)  # phase 5: the proposal's approver role is checked by the step (403)
 
 
 def read(session: Session, work: Callable[[], T]) -> T:
@@ -67,6 +76,9 @@ def in_transaction(session: Session, work: Callable[[], T], *, keep: bool = True
     except NOT_FOUND:
         session.rollback()
         raise HTTPException(status_code=404, detail="Not found") from None
+    except FORBIDDEN as exc:
+        session.rollback()
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     except StepInputError as exc:
         session.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from None

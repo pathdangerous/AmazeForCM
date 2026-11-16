@@ -4,30 +4,44 @@ The source and its conditions; each requirement that selects the feed now, with 
 requester accepted (note 4: where access is restricted knowingly); the latest file; the latest profile
 with its undeclared and missing columns, and the history; the ProfilerAgent's summary; the sign-offs; the
 registration; and the next action.
+
+Phase 5 (plan, sections 9 and 10): the feed's latest glossary run, and for a registered feed one row per
+column of its latest profile (mapping_table). configuration_proposals() lists the glossary_element and
+mapping proposals for the Glossary and Feed views.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
+from core.domain.configuration import Mapping
 from core.domain.feed import Feed, FeedRegistration
+from core.domain.mapping import GlossaryRun
 from core.domain.profiling import FeedProfile, FeedSignoff
+from core.domain.proposal import Approval
 from core.domain.sourcing import SourceFetch, SourceSummary
+from core.repositories.configuration import MappingRepository
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feed_signoffs import FeedSignoffRepository
+from core.repositories.feeds import FeedRepository
+from core.repositories.glossary import GlossaryRepository
+from core.repositories.glossary_runs import GlossaryRunRepository
+from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.steps.candidates import candidate_list, new_columns
 from core.steps.s02_profile import ProfileSummary, summary_of
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
 
 FeedAction = Literal["profile", "summarise", "sign_off", "register"]
+CONFIGURATION_KINDS = ("glossary_element", "mapping")
 
 
 class FeedRequirement(BaseModel):
@@ -49,6 +63,53 @@ class ProfileOnPage(BaseModel):
     at: datetime
 
 
+WhyNone = Literal["with_glossary_builder", "rejected_by_glossary_owner", "type_does_not_fit"]
+
+
+class PendingMapping(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    proposal_id: UUID
+    candidates: list[str]
+    recommended: str | None  # None: a tie, the steward must choose
+    reason: str
+
+
+class ColumnMapping(BaseModel):
+    """One column of a registered feed's latest profile, as the Mapping table shows it (phase 5 plan, section 10)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    type: str | None
+    source_says: str | None  # the field the spec declares for this column
+    mapped_to: str | None
+    mapped_version: int | None
+    pending: PendingMapping | None
+    why_none: WhyNone | None  # only when neither mapped nor pending; None: nothing proposed yet
+    versions: list[Mapping]
+
+
+class ProposalOnPage(BaseModel):
+    """A glossary_element or mapping proposal as the Glossary and Feed views show it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    kind: str
+    status: str
+    created_at: datetime
+    decided_at: datetime | None
+    feed_id: UUID
+    feed_code: str
+    feed_name: str
+    column: str
+    payload: dict[str, Any]  # the options (glossary) or the candidates (mapping)
+    reason: str  # the agent's
+    required_approver_roles: list[str]
+    decisions: list[Approval]
+
+
 class FeedPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -65,6 +126,69 @@ class FeedPage(BaseModel):
     signoffs: list[FeedSignoff]
     registration: FeedRegistration | None
     next_action: FeedAction | None
+    glossary_run: GlossaryRun | None  # phase 5: the latest
+    columns: list[ColumnMapping]  # phase 5: a registered feed's mapping table; empty before registration
+
+
+def _why_none(column, *, last_glossary, with_builder: set[str], glossary) -> WhyNone | None:
+    if column.name in with_builder or (last_glossary is not None and last_glossary.status == "pending"):
+        return "with_glossary_builder"
+    if last_glossary is not None and last_glossary.status == "rejected":
+        return "rejected_by_glossary_owner"
+    candidates = candidate_list(column.name, column.type, glossary)
+    if candidates and not any(c.type_fits for c in candidates):
+        return "type_does_not_fit"
+    return None
+
+
+def mapping_table(session: Session, feed: Feed, profile: FeedProfile | None) -> list[ColumnMapping]:
+    """Read only. Per column: the current mapping, the pending proposal, or why there is none."""
+    if feed.stage != "registered" or profile is None:
+        return []
+    mappings, proposals = MappingRepository(session), ProposalRepository(session)
+    current = {m.source_field: m for m in mappings.current_for_feed(feed.id)}
+    pending = {p.payload["source_field"]: p for p in proposals.list_for_feed(feed.id, "mapping", status="pending")}
+    last_glossary = {p.payload["source_field"]: p for p in proposals.list_for_feed(feed.id, "glossary_element")}
+    run = GlossaryRunRepository(session).active(feed.id)
+    with_builder = ({c.name for c in new_columns(profile.columns, profile.spec, sent_back=run.columns)}
+                    if run is not None else set())
+    glossary = GlossaryRepository(session).list_current()
+    rows = []
+    for column in profile.columns:
+        mapped, waiting = current.get(column.name), pending.get(column.name)
+        why = None
+        if mapped is None and waiting is None:
+            why = _why_none(column, last_glossary=last_glossary.get(column.name), with_builder=with_builder,
+                            glossary=glossary)
+        rows.append(ColumnMapping(
+            name=column.name, type=column.type, source_says=profile.spec.columns.get(column.name),
+            mapped_to=mapped.element_key if mapped else None, mapped_version=mapped.version if mapped else None,
+            pending=None if waiting is None else PendingMapping(
+                proposal_id=waiting.id, candidates=waiting.payload["candidates"],
+                recommended=waiting.payload["recommended"], reason=waiting.payload["reason"]),
+            why_none=why, versions=mappings.history(feed.id, column.name) if mapped else []))
+    return rows
+
+
+def configuration_proposals(session: Session, *, kind: str | None = None, status: str | None = None,
+                            feed_id: UUID | None = None) -> list[ProposalOnPage]:
+    """Read only. The glossary_element and mapping proposals, newest first, with their feed and decisions."""
+    proposals = ProposalRepository(session)
+    found = [p for k in ((kind,) if kind else CONFIGURATION_KINDS) for p in proposals.list(status=status, kind=k)
+             if feed_id is None or p.feed_id == feed_id]
+    found.sort(key=lambda p: (p.created_at, str(p.id)), reverse=True)
+    return [proposal_on_page(session, p.id) for p in found]
+
+
+def proposal_on_page(session: Session, proposal_id: UUID) -> ProposalOnPage:
+    proposals = ProposalRepository(session)
+    p = proposals.get(proposal_id)
+    feed = FeedRepository(session).get(p.feed_id)
+    return ProposalOnPage(
+        id=p.id, kind=p.kind, status=p.status, created_at=p.created_at, decided_at=p.decided_at, feed_id=feed.id,
+        feed_code=feed.code, feed_name=feed.name, column=p.payload["source_field"], payload=p.payload,
+        reason=p.payload.get("reason", ""), required_approver_roles=p.required_approver_roles,
+        decisions=proposals.approvals(p.id))
 
 
 def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedPage:
@@ -109,4 +233,5 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         undeclared_columns=undeclared, missing_columns=missing,
         profiles=[ProfileOnPage(version=p.version, outcome=p.outcome, at=p.created_at) for p in profiles],
         summary=summary, summary_status=proposal.status if proposal else None, signoffs=signoffs,
-        registration=FeedRegistrationRepository(session).current(feed.id), next_action=next_action)
+        registration=FeedRegistrationRepository(session).current(feed.id), next_action=next_action,
+        glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest))

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from agents.discovery_assistant import DiscoveryAssistant
 from agents.intent import IntentAgent
+from agents.mapping import MappingAgent
 from agents.profiler import ProfilerAgent
 from agents.source_discovery import SourceDiscoveryAgent
 from ports.config import Settings, get_settings
@@ -125,3 +126,33 @@ def backend_team_user(user: Annotated[User, Depends(backend_user)]) -> User:
 def get_source_discovery_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
                                blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> SourceDiscoveryAgent:
     return SourceDiscoveryAgent(provider=provider, blob_store=blob_store)
+
+
+# ---- phase 5: steps 05 and 06 (plan, section 9)
+
+
+def get_mapping_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                      blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> MappingAgent:
+    return MappingAgent(provider=provider, blob_store=blob_store)
+
+
+def get_glossary_kick(request: Request) -> Callable[[], None]:
+    """Wakes the step 05 worker (app.state.glossary_runs) through the scheduler. Called after a commit that
+    queued a run; tests replace it to record the kicks."""
+    from apps.api.jobs import kick_glossary_runs
+
+    return lambda: kick_glossary_runs(request.app.state.scheduler, request.app.state.glossary_runs)
+
+
+def glossary_run_user(user: Annotated[User, Depends(backend_user)]) -> User:
+    """Run the glossary builder: the glossary owner or the backend team."""
+    if not {"glossary_owner", "backend_team"} & set(user.roles):
+        raise HTTPException(status_code=403, detail="Glossary owner or backend team role required")
+    return user
+
+
+def data_steward_user(user: Annotated[User, Depends(backend_user)]) -> User:
+    """Propose mappings (step 06): the data steward only."""
+    if "data_steward" not in user.roles:
+        raise HTTPException(status_code=403, detail="Data steward role required")
+    return user

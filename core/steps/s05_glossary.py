@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -31,7 +32,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from core.domain.glossary import GlossaryElement, GlossaryElementDraft
-from core.domain.mapping import ElementOption, GlossaryBuilderInput, GlossaryProposalPayload, GlossaryRun, NewColumn
+from core.domain.mapping import (
+    GLOSSARY_OUTCOMES,
+    ElementOption,
+    GlossaryBuilderInput,
+    GlossaryProposalPayload,
+    GlossaryRun,
+    NewColumn,
+)
 from core.repositories.configuration import MappingRepository
 from core.repositories.errors import (
     FeedNotProfiled,
@@ -98,6 +106,32 @@ class ElementDecided(BaseModel):
     proposal_id: UUID
     decision: Literal["approved", "rejected"]
     element: GlossaryElement | None
+
+
+class RunOnBanner(BaseModel):
+    """One run as the banner shows it: its feed, and per outcome how many columns got it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    feed_id: UUID
+    feed_code: str
+    feed_name: str
+    status: str
+    reason: str
+    attempt: int
+    created_at: datetime
+    finished_at: datetime | None
+    error: str | None
+    counts: dict[str, int]
+
+
+class RunsBanner(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    active: list[RunOnBanner]
+    finished: list[RunOnBanner]  # the last five, newest first
+    waiting_proposals: int  # glossary_element proposals that wait for the glossary owner
 
 
 @dataclass(frozen=True)
@@ -188,6 +222,22 @@ def record_run(session: Session, *, plan: BuilderPlan, agent: RunsAgent | None, 
                             body=f"The glossary builder proposed {len(results)} change(s) for feed {feed.code} "
                                  f"({feed.name}). Each waits for a glossary owner's decision.")
     return RunRecorded(run=finished, results=results)
+
+
+def runs_banner(session: Session) -> RunsBanner:
+    """Read only: what the backend-ui banner shows (plan, section 10)."""
+    runs, feeds = GlossaryRunRepository(session), FeedRepository(session)
+
+    def on_banner(run: GlossaryRun) -> RunOnBanner:
+        feed = feeds.get(run.feed_id)
+        counts = Counter(v for v in (run.results or {}).values() if v in GLOSSARY_OUTCOMES)
+        return RunOnBanner(id=run.id, feed_id=feed.id, feed_code=feed.code, feed_name=feed.name, status=run.status,
+                           reason=run.reason, attempt=run.attempt, created_at=run.created_at,
+                           finished_at=run.finished_at, error=run.error, counts=dict(sorted(counts.items())))
+
+    waiting = len(ProposalRepository(session).list(status="pending", kind="glossary_element"))
+    return RunsBanner(active=[on_banner(r) for r in runs.list_active()],
+                      finished=[on_banner(r) for r in runs.recent_finished()], waiting_proposals=waiting)
 
 
 def fail_run(session: Session, *, run: GlossaryRun, error: str) -> GlossaryRun:

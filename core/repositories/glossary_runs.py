@@ -72,6 +72,17 @@ class GlossaryRunRepository:
         rows = self._session.scalars(select(Row).where(Row.feed_id == feed_id).order_by(Row.created_at, Row.id))
         return [GlossaryRun.model_validate(r) for r in rows]
 
+    def list_active(self) -> list[GlossaryRun]:
+        """Every queued or running run, oldest first (the banner)."""
+        rows = self._session.scalars(select(Row).where(Row.status.in_(ACTIVE)).order_by(Row.created_at, Row.id))
+        return [GlossaryRun.model_validate(r) for r in rows]
+
+    def recent_finished(self, limit: int = 5) -> list[GlossaryRun]:
+        """The last finished runs (done or failed), newest first (the banner)."""
+        rows = self._session.scalars(select(Row).where(Row.status.not_in(ACTIVE))
+                                     .order_by(Row.finished_at.desc(), Row.id).limit(limit))
+        return [GlossaryRun.model_validate(r) for r in rows]
+
     def claim(self, *, lease_seconds: int) -> GlossaryRun | None:
         """Take one run for this worker, or None. Runs that ran out of attempts are failed on the way."""
         while True:
