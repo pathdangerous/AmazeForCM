@@ -92,7 +92,7 @@ export type ChoiceOnPage = {
   action: "selected" | "released";
   source_code: string;
   source_name: string;
-  reason: "source_down_n_days" | "requester_asked" | null;
+  reason: "source_down_n_days" | "requester_asked" | "candidate_rejected" | null;
   at: string;
 };
 
@@ -115,6 +115,8 @@ export type RequirementPage = {
   listed: SourceCandidate[];
   choices: ChoiceOnPage[];
   can_release: boolean;
+  // Phase 4: the gaps of an accepting sign-off, shown under the onboarding message.
+  signoff_note: string | null;
 };
 
 type FetchOutcome = { outcome: "fetched" | "source_down" } | null;

@@ -71,6 +71,7 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
         <>
           <div className={warn ? "result warn" : "result"} role="status" data-testid="requirement-message">
             <strong>{shown}</strong>
+            {page.signoff_note && <div data-testid="signoff-note">{page.signoff_note}</div>}
           </div>
           <dl>
             <dt>Asked for</dt>
@@ -184,6 +185,7 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
                     Version {c.version}: {c.action} {c.source_name}
                     {c.reason === "requester_asked" && " (you asked)"}
                     {c.reason === "source_down_n_days" && " (it did not answer)"}
+                    {c.reason === "candidate_rejected" && " (rejected by the backend team)"}
                     , {new Date(c.at).toLocaleString()}
                   </li>
                 ))}
