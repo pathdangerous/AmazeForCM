@@ -233,6 +233,29 @@ async def test_a_glossary_proposal_is_decided_by_the_glossary_owner_only(client,
         await decide(client, first["id"], "rejected", note="no", headers=headers, expect=403)
 
 
+async def test_a_backend_user_without_the_approver_role_gets_403_and_nothing_is_decided(client, bond, kicks, drain,
+                                                                                      db_session):
+    """Both kinds: the role is the proposal's, checked by the step (NotAnApprover -> 403, never 500)."""
+    from core.repositories.proposals import ProposalRepository
+
+    proposed = await propose(client, bond)
+    mapping_id = next(r for r in proposed["result"]["recommended"] if r["source_field"] == "cpn")["proposal_id"]
+    await call(client, "POST", f"feeds/{bond}/glossary/run", headers=GLENN)
+    drain()
+    glossary_id = next(p for p in await call(client, "GET", "proposals", kind="glossary_element", status="pending")
+                       if p["column"] == "rating")["id"]
+    for proposal_id, others in ((glossary_id, (SAM, BLAKE)), (mapping_id, (GLENN, BLAKE))):
+        for headers in others:
+            for decision in ("approved", "rejected"):
+                response = await client.post(f"/api/amaze/proposals/{proposal_id}/decision", headers=headers,
+                                             json={"decision": decision, "note": "not mine"})
+                assert response.status_code == 403, response.text
+                assert "needs role" in response.json()["detail"]
+        db_session.expire_all()
+        proposal = ProposalRepository(db_session).get(uuid.UUID(proposal_id))
+        assert proposal.status == "pending" and ProposalRepository(db_session).approvals(proposal.id) == []
+
+
 async def test_refused_input_is_422(client, bond, kicks, drain):
     proposed = await propose(client, bond)
     tie = next(r for r in proposed["result"]["results"] if r["outcome"] == "tie_to_steward")

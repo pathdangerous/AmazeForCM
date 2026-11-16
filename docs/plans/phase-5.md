@@ -632,6 +632,8 @@ Notes only; nothing here is built in phase 5.
 4. The go-live summary (step 11) should list the unmapped columns and the rejected glossary proposals of the feed.
 5. `rules` rows need the same "matches its proposal" guard that `0016` gives `mappings`.
 
+Note 12 (added at checkpoint 3's approval; numbered last so notes 6 to 11 keep their numbers): **test time.** The full suite takes 160 to 163 s at phase 5's checkpoint 3 (three runs), against 74 s at the start of phase 4. The phase 6 plan must reduce it or hold it where it is: name the expected added time per task, as assumption 47 does, and say how (for example, fewer schema-per-test cases, or one shared migrated schema for read-only tests).
+
 **Phase 7**
 
 6. A structure change (step 12, `additive_parked`) is a new column: it is the builder's and the mapping agent's input, on the load's profile, not the signed-off one.
