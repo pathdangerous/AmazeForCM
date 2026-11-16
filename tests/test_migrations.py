@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0014"
+HEAD = "0015"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -399,6 +399,25 @@ def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_sch
     command.upgrade(config, "0014")
     command.downgrade(config, "0013")
     assert not PHASE_4_TABLES & set(inspect(engine).get_table_names())
+
+
+def test_0015_downgrade_restores_the_0014_guards(scratch_schema):
+    """0015 only replaces or adds guards, so it downgrades with rows in place."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0015")
+    command.downgrade(config, "0014")
+    with engine.connect() as connection:
+        triggers = connection.execute(text(
+            "SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+            "WHERE c.relnamespace = current_schema()::regnamespace AND tgname LIKE 'trg_feed_registrations_%' "
+            "ORDER BY tgname")).scalars().all()
+        stage = connection.execute(text(
+            "SELECT prosrc FROM pg_proc WHERE proname = 'amaze_guard_feed_stage' "
+            "AND pronamespace = current_schema()::regnamespace")).scalar_one()
+    assert "trg_feed_registrations_c_once" not in triggers
+    assert "is not the latest sign-off" not in stage
+    command.upgrade(config, "0015")
 
 
 def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):

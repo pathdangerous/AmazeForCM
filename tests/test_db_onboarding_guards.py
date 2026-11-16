@@ -376,6 +376,64 @@ def test_no_other_change_of_stage_and_a_registered_owner_is_fixed(world):
             id=world.feed)
 
 
+# ---------------------------------------------------------------- 0015: the stage change checks what the registration rests on
+
+
+def _registered_on(world, signoff, owner="dev-data-owner"):
+    world.s.execute(text(World.REGISTRATION), world.registration_params(signoff, owner=owner))
+
+
+def test_a_registration_followed_by_a_rejecting_signoff_does_not_register(world):
+    """The independent review's scenario: registration 1 on an accepting sign-off, then a newer profile
+    signed off as rejected; the feed must not become registered on the older registration."""
+    _, accepting = world.accepted()
+    _registered_on(world, accepting)
+    world.accepted(outcome="rejected", reasons=["Prices are a day late"])
+    refused(world.s, "cannot be registered: its registration's sign-off .* is not the latest sign-off", REGISTER,
+            id=world.feed, owner="dev-data-owner")
+
+
+def test_registered_needs_the_registrations_signoff_to_be_the_latest(world):
+    _, first = world.accepted()
+    _registered_on(world, first)
+    world.accepted(outcome="meets_with_gaps", gaps=["g"])  # a newer accepting sign-off, not registered
+    refused(world.s, "cannot be registered: its registration's sign-off .* is not the latest sign-off", REGISTER,
+            id=world.feed, owner="dev-data-owner")
+
+
+def test_registered_needs_the_registrations_signoff_on_the_latest_profile(world):
+    _, signoff = world.accepted()
+    _registered_on(world, signoff)
+    world.profile()  # a newer profile waits for a sign-off
+    refused(world.s, "cannot be registered: a newer profile waits for a sign-off", REGISTER, id=world.feed,
+            owner="dev-data-owner")
+
+
+def test_registered_needs_an_accepting_signoff_behind_the_registration_guard(world):
+    """Reachable only with trg_feed_registrations_b_guard removed, which refuses a registration on a
+    rejecting sign-off first. The trigger is dropped inside the test's transaction (rolled back)."""
+    _, rejecting = world.accepted(outcome="rejected", reasons=["No data"])
+    world.s.execute(text("DROP TRIGGER trg_feed_registrations_b_guard ON feed_registrations"))
+    _registered_on(world, rejecting)
+    refused(world.s, "cannot be registered: sign-off .* does not accept the feed", REGISTER, id=world.feed,
+            owner="dev-data-owner")
+
+
+def test_rejected_needs_the_rejected_signoff_on_the_latest_profile(world):
+    world.accepted(outcome="rejected", reasons=["No data"])
+    world.profile()  # a newer profile waits for a sign-off
+    refused(world.s, "cannot be rejected: its rejected sign-off is not on the latest profile", REJECT, id=world.feed)
+
+
+def test_a_feed_is_registered_once(world):
+    """Phase 4 registers once: a second registration (another owner) is refused while the feed is still a
+    candidate, as after it is registered."""
+    _, signoff = world.accepted()
+    _registered_on(world, signoff)
+    refused(world.s, "is registered once in phase 4", World.REGISTRATION,
+            **world.registration_params(signoff, owner="dev-checker"))
+
+
 def test_a_candidates_owner_may_still_be_set(world):
     world.s.execute(text("UPDATE feeds SET owner_id = 'dev-data-owner' WHERE id = :id"), {"id": world.feed})
 
