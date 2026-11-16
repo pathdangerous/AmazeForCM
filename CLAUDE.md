@@ -36,7 +36,9 @@ The system is three platforms, in the order data moves:
 ```
 apps/
   api/                    FastAPI app, routers per platform; jobs.py: the one daily source fetch, registered
-                          at every start-up, reading the feeds table when it runs
+                          at every start-up, reading the feeds table when it runs; and GlossaryRuns, the
+                          step 05 worker: kicked (Scheduler.run_soon) after the commit that queues a run,
+                          and once at start-up for queued runs and expired leases
   backend-ui/             Amaze workbenches (data owner, steward, glossary owner, operations)
   consumer-ui/            Marketplace portal for end users
 core/
@@ -55,8 +57,11 @@ core/
                           requester sees, and every requester message). Phase 4: profiling.py (DuckDB in
                           memory over one CSV, and coverage against each requirement), s02_profile.py,
                           s03_signoff.py, s04_register.py (steps 02-04) and feed_page.py (what the backend
-                          team sees about one feed). A step that needs an agent receives it as an argument,
-                          so core/steps never imports agents
+                          team sees about one feed). Phase 5: candidates.py (at most 10 candidate elements
+                          per column or term, scored on names, aliases and type), s05_glossary.py (queue,
+                          claim and record a glossary builder run; the owner's decision) and s06_map.py
+                          (propose mappings; the steward's decision). A step that needs an agent receives it
+                          as an argument, so core/steps never imports agents
   engine/                 Deterministic run engine (step 13). No AI imports allowed here.
   entitlement/            Rules-based entitlement decisions (decide.py). No AI imports allowed here.
 agents/
@@ -66,6 +71,8 @@ agents/
   registry.py             Agent registry, current prompt versions and a hash of every prompt file
   prompt_loader.py        Loads and renders prompts/<prompt_id>.<version>.yaml
   <agent_name>.py         One file per agent
+  evaluation.py           Scores a provider's mappings against fixtures/gold/mappings.json;
+                          evaluate_mappings.py runs it (logs to EVAL_DATABASE_URL, never DATABASE_URL)
   prompts/                Versioned prompt templates (YAML). Never edit one: save a new version
 ports/                    Ports (interfaces) and adapters — see Placeholders. Named ports/, not
                           platform/, because a package named platform hides Python's own platform module.
@@ -136,7 +143,7 @@ Each agent extends `agents/base.Agent`, declares `autonomy` (A1 assist or A2 rec
 | S1 | IntentAgent: scope (public or private, who provides, where to search) | A2 | Requester |
 | S2 | SourceDiscoveryAgent: candidate sources with coverage, licence, approvals needed | A2 | Requester picks (S3) |
 | 02 | ProfilerAgent: summarises the DuckDB profile against the requirement | A2 | Backend team (03) |
-| 05 | GlossaryBuilderAgent: new elements only, runs in the background | A2 | Glossary owner |
+| 05 | GlossaryBuilderAgent: new columns only (a new element, or an alias on an existing one), runs in the background | A2 | Glossary owner |
 | 06 | MappingAgent: source fields to the standard model | A2 | Data steward |
 | 09 | RuleRecommenderAgent: SQL rules, back-tested on past loads | A2 | Steward, then checker |
 | 11 | ReviewSummariserAgent: summary for go-live | A1 | Data owner |
@@ -183,10 +190,11 @@ Order of precedence when they disagree:
 - Follow the Superpowers flow for each phase: brainstorm → plan in `docs/plans/` → tests for the step's negative outcomes first → implement → review.
 - Keep `core/engine/`, `core/entitlement/`, `core/domain/`, `core/repositories/` and `core/steps/` free of `agents` and `ports.llm` imports; a test enforces this. An agent-backed step receives its agent as an argument; the API builds the agent (phase 3 plan, assumption 22). No file outside `agents/base.py` calls `.complete(`; a test enforces this too.
 - Every step that changes a requirement (or any row others may change at the same time) locks that row first (`RequirementRepository.lock()`), and the API maps each named conflict to 409, never 500 (`apps/api/transactions.py`).
-- One lock order for every step that takes more than one lock (phase 4 plan, assumption 46): the advisory lock on the source code (`lock_source()`), then the feed row (`FeedRepository.lock()`, `FOR NO KEY UPDATE`), then the requirement rows in id order. The next version of a feed's profile, sign-off or registration is read only after the feed row is locked.
+- One lock order for every step that takes more than one lock (phase 4 plan, assumption 46): the advisory lock on the source code (`lock_source()`), then the feed row (`FeedRepository.lock()`, `FOR NO KEY UPDATE`), then the requirement rows in id order. The next version of a feed's profile, sign-off or registration is read only after the feed row is locked. Phase 5 extends it (phase 5 plan, assumption 49): source lock, feed row, proposal row, requirements, the `glossary_runs` row, then the glossary advisory lock (`GlossaryRepository.lock()`); the next mapping or element version is read only after the feed row or the glossary lock is held.
+- A glossary builder run is a `glossary_runs` row (one active run per feed), queued in the same transaction as the registration or the steward's request, and run by the worker in `apps/api/jobs.py` with a lease (`GLOSSARY_RUN_LEASE_SECONDS`); an answer that arrives after its lease was taken again is discarded (logged, not used). No agent input holds the whole glossary: each column or term gets at most 10 candidate elements (`core/steps/candidates.py`); a test enforces this.
 - Step 02 reads the file only through `BlobStore.get()` and runs DuckDB with no database connection held, like a model call: read, end the transaction, profile, lock, check again, write.
 - No database connection is held during a model call. Every agent-backed step follows one pattern: (1) a read-only `*_input()` builds the agent's input and checks the status; (2) the API ends that read transaction (`Agent.run()` refuses a session still in one with `SessionInTransaction`; one-session chains for step tests live in `tests/step_chains.py`, never in `core/`); (3) `Agent.run(..., before_write=...)` calls the model; (4) in `before_write` the step locks the row and checks its status again; (5) only then are the log row, the proposals and the status change written, in one transaction. `Agent.run()` commits the call's `proposal_log` row in its own short transaction right after the call, before the request writes anything; a change during the call gives 409 and a second, append-only row in `proposal_log_discards` pointing at it, with no proposal. Every answered model call has exactly one call row. `tests/test_concurrency.py` checks `pool.checkedout() == 0` during every call. The source fetch (S4) follows the same read / end transaction / call / lock / write pattern.
-- Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. From `0014`, a sign-off needs its decided `profile_summary` proposal (approved when the person's outcome is the recommended one, rejected when it differs), a registration needs the feed's latest accepting sign-off, and `feeds.stage` changes only candidate → registered (with a registration) or candidate → rejected (with a rejected sign-off); tests make such feeds with `tests/onboarded.py`. Never work around these triggers; add a new version instead.
+- Rules 1 and 7 are also enforced by the database: append-only tables refuse UPDATE, DELETE and TRUNCATE, and `mappings`, `rules` and non-seed `glossary_elements` rows need an approved proposal of the matching kind. From `0014`, a sign-off needs its decided `profile_summary` proposal (approved when the person's outcome is the recommended one, rejected when it differs), a registration needs the feed's latest accepting sign-off, and `feeds.stage` changes only candidate → registered (with a registration) or candidate → rejected (with a rejected sign-off); tests make such feeds with `tests/onboarded.py`. From `0016`, a mapping must match its approved proposal (the column, one of its candidates, a registered feed) and a non-seed glossary element must be one of its proposal's options; a feed column has at most one pending glossary or mapping proposal; tests write configuration with `tests/configured.py`. Never work around these triggers; add a new version instead.
 - At the end of each phase, append any UI polish items found to `docs/ui-polish.md` (one line each: screen, issue, proposed fix). Do not fix them unless asked; phase 7.5 does.
 - Edit files only with the file tools (Read, Edit, Write). Never rewrite or patch files through PowerShell, sed or other shell commands.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.

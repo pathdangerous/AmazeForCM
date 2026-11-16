@@ -75,6 +75,18 @@ data owner; open or restricted). `issue date` picks Instrument lifecycle, whose 
 dates: sign it off with gaps and the requester sees them. `lot size` picks Listing details, whose file
 has no rows: Meets is not offered; a rejection tells the requester why. A `volume` request after its
 feed is registered is linked to it at once, with no new fetch.
+
+Phase 5, steps 05 and 06 (glossary builder and mapping). Registering a feed queues a glossary builder run
+(a `glossary_runs` row) and starts it in the background, with no click; the banner under the header shows
+it running, then how many proposals wait for the glossary owner. As Glenn Glossary, open Glossary:
+approve or reject each proposal (a new element, an alias on an existing element, or a conflict, which can
+only be rejected with a note). As Sam Steward, open a registered feed: Propose mappings, then approve each
+recommendation, choose one candidate of a tie, or reject with a note; Propose again on a mapped column makes
+a new version, and the old one stays listed. A column with no element is sent back to the glossary builder.
+Try it on Open ESG scores (Run the glossary builder, approve both new elements, then map its three columns)
+and on Bond terms (its file holds four undeclared columns: `rating`, `venue_mic_code`, `date`, `maturity`).
+Bond terms is only reached by a requirement for `coupon rate` while the demo product Bond reference data is
+not loaded: with `--demo`, that request is answered by the product (reuse).
 `/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
 Azure stub.
 
@@ -82,7 +94,7 @@ Check:
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0015 (head)
+.\.venv\Scripts\python -m alembic current     # expect: 0016 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```

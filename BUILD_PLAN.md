@@ -58,6 +58,7 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - MappingAgent proposes source → standard model mappings; steward approves; ties go to the steward.
 - Gold mappings in `fixtures/gold/` and an evaluation script that scores any `LLMProvider` against them (needed when Azure OpenAI replaces the mock).
 - **Done when:** approved mappings are stored as a versioned configuration.
+- As built (phase 5 plan, `docs/plans/phase-5.md`): registering a feed queues one `glossary_runs` row (one active run per feed), committed with the registration; the worker claims it with a lease (`GLOSSARY_RUN_LEASE_SECONDS`), calls the builder with no connection held and records one proposal per new column (`proposed`, `duplicate_alias` as an alias proposal, or `conflict_to_owner`). Both agents see at most 10 candidate elements per column, never the whole glossary; the DiscoveryAssistant too. Step 06 runs in the steward's request; a column with no element goes back to step 05 as a `sent_back` run. Migration `0016` makes `mappings` and non-seed `glossary_elements` match their approved proposal, allows one pending proposal per feed column, and guards the run table. `python -m agents.evaluate_mappings` logs to `amaze_eval` (`EVAL_DATABASE_URL`); the mock scores 25 of 31.
 
 ## Phase 6 — Rules, approval and the run engine (09, 11, 13)
 
