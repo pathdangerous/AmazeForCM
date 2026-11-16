@@ -719,3 +719,51 @@ Notes only; nothing here is built in phase 5.
 
 **Full suite at checkpoint 2:** `1662 passed in 128.17s`, nothing skipped, no warnings. Then `alembic upgrade head` on the application database: `0015` → `0016 (head)`; any later fix is `0017`.
 
+### Checkpoint 3 (tasks 10 and 11)
+
+**The evaluation against `amaze_eval`** (created by you, at `0016`, 0 `proposal_log` rows before): `Score: 25 of 31 (80.6%)`, mean tie size 5.0, candidate recall 27 of 28 (not offered: case 8 `price_currency`), wrong maps 2 (15 `quote_ccy -> currency`, 19 `high -> high_price`): checkpoint 2's figures. It left 4 `proposal_log` rows and 0 proposals in `amaze_eval`. The server refused the password in `.env`'s `EVAL_DATABASE_URL` (it differs from `DATABASE_URL`'s, which `amaze_eval` accepts), so the run went through the script's own `main(secrets=...)` with `DATABASE_URL`'s credentials pointed at `amaze_eval` (a scratch script outside the repository); `.env` was not edited.
+
+**Task 10, assumptions the plan did not state, and deviations**
+1. The kick is a dependency, `get_glossary_kick()`, a no-argument callable built from `app.state.scheduler` and `app.state.glossary_runs`; tests replace it. It runs after the commit of register (when `registered`), of `glossary/run` (always: a kick with nothing waiting does nothing), and of `mappings/propose` when a `sent_back` run was queued. The plan named only the first two; without the third, a sent-back column waits for the next start-up.
+2. `NotAnApprover` becomes 403 for every endpoint (`FORBIDDEN` in `apps/api/transactions.py`): the proposal's approver role is checked by the step, after the proposal is read. Before phase 5 it was not mapped (a 500); no existing test reached it.
+3. The decision's `choice` is an option index (`glossary_element`) or an element key (`mapping`); the other type is 422 (`ChoiceNotOffered`). A decision on a proposal of another kind is 404.
+4. Only the `MappingAgent` is a FastAPI dependency. The `GlossaryBuilderAgent` is built by the worker's `agent_factory`, which is replaceable through `app.state.glossary_runs`; the plan said "the two agents".
+5. The banner lists the active runs and the last five finished ones; a run's counts are its results that are outcome names. Built by `s05_glossary.runs_banner()` with two new repository reads, `list_active()` and `recent_finished()`.
+6. The feed page's `columns` (`feed_page.mapping_table()`), for a registered feed only. `why_none`, in this order: `with_glossary_builder` (a pending glossary proposal for the column, or an active run whose new columns include it), `rejected_by_glossary_owner` (its latest glossary proposal was rejected), `type_does_not_fit` (it has candidates and none fits), otherwise none. A column covered by name shows "with the glossary builder" while a `registered` run is active, because the run's new columns include it until the builder skips it.
+7. `GET /proposals` lists the two kinds only, newest first; another `kind` is 422. `source_description` for step 06 is the catalogue entry's description (none for a feed without a source).
+
+**Task 10:** RED `10 errors in 2.81s` (no `get_glossary_kick`) and `1 failed` (register kick); GREEN `23 passed in 5.52s`, neighbouring files `166 passed`. The done-when test by name: `test_done_when_approved_mappings_are_stored_as_versioned_configuration PASSED`, `1 passed in 2.30s`.
+
+**Task 11, commit visibility:** six tests, `6 passed` against the task 10 code (they were written after it, so the RED is each commit removed with the Edit tool, run, restored):
+
+| Test | Commit removed | Result |
+|---|---|---|
+| `test_register_commits_the_glossary_run` | register: `in_transaction(..., keep=False)` | `1 failed` |
+| `test_the_glossary_job_commits_its_proposals` | `GlossaryRuns._run_one`: the `session.commit()` after `record_run` | `1 failed` |
+| `test_glossary_run_commits_the_queued_run` | `glossary/run`: `keep=False` | `1 failed` |
+| `test_propose_commits_the_mapping_proposals` | `mappings/propose`: `keep=False` | `1 failed` (the call row is still committed by `Agent.run`; the proposals are not) |
+| `test_a_glossary_decision_commits_the_element`, `test_a_mapping_decision_commits_the_mapping` | decision: `keep=False` | `2 failed` |
+
+**Task 11, races:** nine tests (the no-connection test gains the mapping call; eight new), `58 passed in 81.03s` with the rest of both files. Each shown failing against what it protects (Edit tool, run, restored):
+
+| Test | Removed | Result |
+|---|---|---|
+| `test_no_connection_is_held_during_any_model_call` (MappingAgent) | `read(session, build)` → `build()` | `1 failed` |
+| `test_no_connection_is_held_during_the_glossary_job` | the worker's `session.rollback()` that ends the read | `1 failed` |
+| `test_two_workers_at_once_run_a_queued_run_once` | claim's lease check (any running run is taken) | `1 failed` |
+| `test_two_requests_for_a_run_of_one_feed_give_one_active_run` | feed lock alone: `1 passed`; feed lock and `ON CONFLICT`: `1 failed`; `ON CONFLICT` alone: `1 failed` (UniqueViolation) | see below |
+| `test_a_late_answer_after_the_lease_writes_nothing_and_is_discarded` | the run's attempt check in `before_write` | `1 failed` (after the test fix below) |
+| `test_after_a_restart_a_queued_run_and_an_expired_one_are_run` | the start-up kick: `1 failed`; claim's expired-lease clause: `1 failed` | |
+| `test_two_mapping_requests_of_one_feed_at_once_give_200_and_409` | the pending check in `_still_mappable` | `1 failed` (UniqueViolation, not 409) |
+| `test_two_decisions_of_one_mapping_at_once_give_200_and_409` | step's status check alone: `1 passed`; with `record_decision`'s too: `1 failed` (IndexError); step's check without the feed and proposal locks (repository check removed): `1 failed` | see below |
+| `test_two_alias_approvals_of_one_element_at_once_take_the_next_versions` | `glossary.lock()` | `1 failed` (the option trigger refuses a stale version 2; after the test fix below) |
+
+**Unexpected results and their root causes**
+1. *One active run without the feed lock.* `GlossaryRunRepository.queue()` finds the active run only through `ON CONFLICT DO NOTHING` on `uq_glossary_runs_one_active_per_feed`; it never reads before it inserts. So `ON CONFLICT` is what this race needs: with it, the feed lock is not needed; without it, even requests the feed lock keeps apart fail on the index. The feed lock stays for the lock order.
+2. *Two decisions.* Two layers, each enough alone: the step's status check under the feed and proposal locks, and `record_decision()`'s check under its own row lock. The test fails only when both go.
+3. *The late answer passed without the attempt check.* The late worker's proposals then hit `uq_proposals_one_pending_per_feed_column` and `Agent.run` discarded the answer anyway, with reason `IntegrityError`. The test now asserts the discard reason starts with `RunSuperseded`, so it fails without the check, and it passes with it.
+4. *The alias race passed without the glossary lock.* `_slow()` slept before the read, so the second request read after the first committed: no race. The pause is now after the read (`after=True`), so the read can go stale. Without the lock, the second request then writes version 2 again and the 0016 option trigger refuses it.
+5. Two bugs in my tests: the glossary job test counted every `proposal_log` row, but `registered_feed()` logs a ProfilerAgent call; and the alias test's expected aliases were guessed rather than read from the seed. Both fixed in the tests.
+
+**Test time (assumption 47: about 145 s, between 135 and 175 s).** Three full runs, back to back: `1687 passed in 162.92s`, `1687 passed in 163.31s`, `1687 passed in 160.11s`; nothing skipped, no warnings. Inside the range, about 16 s above the most likely figure. From checkpoint 2 (`1662 passed in 128.17s`) to checkpoint 3: +25 tests, +33 s, almost all from the 14 schema-per-test cases (6 commit visibility, 8 races) and the longer no-connection test.
+
