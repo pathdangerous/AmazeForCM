@@ -189,6 +189,7 @@
     - Then step 04 answers `duplicate_linked` at once, by rule: nothing is fetched, profiled, signed off or registered again. The requirement is linked to the registered feed (its `source_choices` row) and moves from `source_selected` to `onboarding`. The backend team is told once. The requester sees the onboarding message.
     - It runs right after the selection is committed, in place of the first fetch, in its own transaction.
     - People decided when the feed was registered, so nobody is asked again, as for a known source.
+    - A requirement that selects the feed, or is linked to it, after a `meets_with_gaps` sign-off sees the gaps note under the onboarding message on its page and gets no notification; only the requesters who selected the feed at the sign-off are notified (decision A, independent review finding 10; `test_s03_signoff.py::test_a_requirement_that_comes_after_meets_with_gaps_sees_the_gaps_and_is_not_notified`).
     - Not compared: two catalogue codes that read the same file. Open question 2.
 33. **A registered feed is a regular feed** (note 4a). `FeedRepository.list_to_fetch()` keeps its two cases; a feed registered by step 04 is fetched daily even when every requirement has released it.
 34. **What the database enforces on registration** (section 6):

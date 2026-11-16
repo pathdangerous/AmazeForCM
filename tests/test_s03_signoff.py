@@ -144,6 +144,41 @@ def test_a_rejection_goes_to_no_source_found_when_none_is_left(db_session, gloss
     assert riley(db_session)[0][1] == message
 
 
+def test_a_requirement_that_comes_after_meets_with_gaps_sees_the_gaps_and_is_not_notified(db_session, glossary):
+    """Decision A (independent review, finding 10; plan, assumption 32): a requirement that selects the feed
+    after its meets_with_gaps sign-off, or is linked to it once registered (duplicate_linked), sees the gaps
+    note under the onboarding message on its page; only the requesters who selected the feed at the
+    sign-off get the notification."""
+    from core.steps.s04_register import link_to_registered_feed, register_feed
+    from ports.identity.dev import DevIdentity
+
+    repo = RequirementRepository(db_session)
+    first = repo.create(requester_id="dev-requester", title="volume", element_keys=["volume"])
+    feed = find_known_source(db_session, requirement_id=first.id, catalogue=CATALOGUE).feed
+    repo.advance(first.id, "onboarding")
+    summarised(db_session, feed, "meets_with_gaps")
+    decide(db_session, feed, "meets_with_gaps", gaps=["Volumes before 2026-11-02 are missing"])
+    note = "The backend team accepted Exchange daily volumes with gaps: Volumes before 2026-11-02 are missing."
+
+    def told():
+        return [n for n in NotificationRepository(db_session).list_for("dev-requester")
+                if n.subject == "Accepted with gaps: Exchange daily volumes"]
+
+    after = repo.create(requester_id="dev-requester", title="volume after", element_keys=["volume"])
+    find_known_source(db_session, requirement_id=after.id, catalogue=CATALOGUE)
+    repo.advance(after.id, "onboarding")  # as its fetch would
+    register_feed(db_session, feed_id=feed.id, user=BACKEND, owner_id="dev-data-owner", visibility="open",
+                  catalogue=CATALOGUE, identity=DevIdentity(), notifier=InAppNotifier(db_session))
+    linked = repo.create(requester_id="dev-requester", title="volume linked", element_keys=["volume"])
+    find_known_source(db_session, requirement_id=linked.id, catalogue=CATALOGUE)
+    link_to_registered_feed(db_session, requirement_id=linked.id, feed_id=feed.id, notifier=InAppNotifier(db_session),
+                            backend_team=TEAM)
+    for req in (first, after, linked):
+        page = requirement_page(db_session, repo.get(req.id), CATALOGUE)
+        assert (page.status, page.message, page.signoff_note) == ("onboarding", ONBOARDING, note), req.title
+    assert [n.body for n in told()] == [note]  # one notification: the first requester's, at the sign-off
+
+
 def test_only_requirements_that_select_the_feed_now_are_told_and_released(db_session, glossary):
     """Note 4b: feeds.requirement_id keeps the first requirement, even after it released the feed."""
     from core.steps.release import release_source
