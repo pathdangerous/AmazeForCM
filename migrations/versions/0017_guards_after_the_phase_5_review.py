@@ -9,8 +9,16 @@ Phase 5 plan, section 17, "Fixes after the independent review".
   version already has. The row is otherwise exactly the option (last version plus the alias), so 0016 let
   it through with the alias twice.
 
-Function bodies are written out here on purpose, the 0016 ones too (for the downgrade). PostgreSQL 14 or
-older only: = ANY(array), jsonb operators, plpgsql.
+- proposals (finding 4): ck_proposals_names_a_column is replaced. A glossary_element or mapping proposal has
+  a feed, and its payload's source_field is a JSON string that is not blank. With no feed, or with
+  {"source_field": null}, uq_proposals_one_pending_per_feed_column never conflicted (NULLs are distinct).
+- glossary_runs (finding 4): amaze_guard_glossary_run() checks a new run: its profile is a profile of its
+  feed, and the feed is registered.
+
+Every check on a nullable value spells NULL out (feed_id IS NOT NULL; COALESCE on jsonb_typeof of a key that
+may be missing). Function bodies are written out here on purpose, the 0016 ones too (for the downgrade).
+The downgrade restores the 0016 check, which every row that passes the 0017 one also passes. PostgreSQL 14
+or older only: = ANY(array), jsonb operators and jsonb_typeof, plpgsql.
 """
 
 from alembic import op
@@ -89,9 +97,91 @@ GLOSSARY_OPTION_0017 = _GLOSSARY_OPTION_HEAD.rstrip("\n") + _ALIAS_IS_NEW.rstrip
 GLOSSARY_OPTION_0016 = _GLOSSARY_OPTION_HEAD.rstrip("\n") + _GLOSSARY_OPTION_TAIL
 
 
+# jsonb_typeof of a missing key is NULL, and NULL = 'string' would let the row through: COALESCE
+NAMES_A_COLUMN_0017 = ("kind NOT IN ('glossary_element', 'mapping') "
+                       "OR (feed_id IS NOT NULL "
+                       "AND COALESCE(jsonb_typeof(payload -> 'source_field') = 'string', false) "
+                       "AND length(btrim(payload ->> 'source_field')) > 0)")
+NAMES_A_COLUMN_0016 = ("kind NOT IN ('glossary_element', 'mapping') "
+                       "OR (jsonb_typeof(payload) = 'object' AND payload ? 'source_field')")
+
+_RUN_HEAD = """
+CREATE OR REPLACE FUNCTION amaze_guard_glossary_run() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    fixed text[] := ARRAY['status', 'attempt', 'lease_until', 'started_at', 'finished_at', 'proposal_log_id',
+                          'results', 'error'];
+    f_stage text;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'glossary_runs: DELETE refused; a run is history' USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status IS DISTINCT FROM 'queued' OR NEW.attempt IS DISTINCT FROM 0 THEN
+            RAISE EXCEPTION 'glossary_runs: a new run is queued at attempt 0, not % at %', NEW.status, NEW.attempt
+                USING ERRCODE = 'check_violation';
+        END IF;
+"""
+
+# 0017: the run's profile is one of its feed's, and the feed is registered (a missing feed has no stage)
+_RUN_FEED = """
+        IF NOT EXISTS (SELECT 1 FROM feed_profiles WHERE id = NEW.profile_id AND feed_id = NEW.feed_id) THEN
+            RAISE EXCEPTION 'glossary_runs: profile % is not a profile of feed %', NEW.profile_id, NEW.feed_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+        SELECT stage INTO f_stage FROM feeds WHERE id = NEW.feed_id;
+        IF f_stage IS DISTINCT FROM 'registered' THEN
+            RAISE EXCEPTION 'glossary_runs: feed % is %, not registered', NEW.feed_id, COALESCE(f_stage, 'missing')
+                USING ERRCODE = 'check_violation';
+        END IF;
+"""
+
+_RUN_TAIL = """
+        RETURN NEW;
+    END IF;
+    IF OLD.status = 'done' OR OLD.status = 'failed' THEN
+        RAISE EXCEPTION 'glossary_runs: run % is %, and a finished run never changes', OLD.id, OLD.status
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF (to_jsonb(NEW) - fixed - 'columns') IS DISTINCT FROM (to_jsonb(OLD) - fixed - 'columns') THEN
+        RAISE EXCEPTION 'glossary_runs: the feed, profile, reason and requester of run % are fixed', OLD.id
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF OLD.status = 'queued' AND NEW.status = 'queued'
+       AND (to_jsonb(NEW) - 'columns') IS NOT DISTINCT FROM (to_jsonb(OLD) - 'columns')
+       AND NEW.columns @> OLD.columns THEN
+        RETURN NEW;  -- another column sent back while the run waits
+    END IF;
+    IF NEW.columns IS DISTINCT FROM OLD.columns THEN
+        RAISE EXCEPTION 'glossary_runs: the columns of run % only grow while it is queued', OLD.id
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF (OLD.status = 'queued' AND NEW.status = 'running' AND NEW.attempt = OLD.attempt + 1)
+       OR (OLD.status = 'running' AND NEW.status = 'running' AND NEW.attempt > OLD.attempt)
+       OR (OLD.status = 'running' AND (NEW.status = 'done' OR NEW.status = 'failed') AND NEW.attempt = OLD.attempt) THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'glossary_runs: run % cannot move from % (attempt %) to % (attempt %)', OLD.id, OLD.status,
+        OLD.attempt, NEW.status, NEW.attempt USING ERRCODE = 'check_violation';
+END $$;
+"""
+
+RUN_STATUS_0017 = _RUN_HEAD.rstrip("\n") + _RUN_FEED.rstrip("\n") + _RUN_TAIL
+# The 0016 body, restored by downgrade (its unused f_stage variable is harmless).
+RUN_STATUS_0016 = _RUN_HEAD.rstrip("\n") + _RUN_TAIL
+
+
+def _names_a_column(condition: str) -> None:
+    op.drop_constraint(op.f("ck_proposals_names_a_column"), "proposals", type_="check")
+    op.create_check_constraint(op.f("ck_proposals_names_a_column"), "proposals", condition)
+
+
 def upgrade() -> None:
     op.execute(GLOSSARY_OPTION_0017)
+    _names_a_column(NAMES_A_COLUMN_0017)
+    op.execute(RUN_STATUS_0017)
 
 
 def downgrade() -> None:
+    op.execute(RUN_STATUS_0016)
+    _names_a_column(NAMES_A_COLUMN_0016)
     op.execute(GLOSSARY_OPTION_0016)

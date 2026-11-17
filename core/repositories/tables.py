@@ -103,9 +103,12 @@ class ProposalRow(Base):
         CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="status"),
         CheckConstraint("(status = 'pending') = (decided_at IS NULL)", name="decided_at_matches_status"),
         Index("ix_proposals_status", "status"),
-        # 0016: these kinds name their column; one pending proposal of them per feed and column
+        # 0016, 0017: these kinds have a feed and name their column (a non-blank JSON string); one pending
+        # proposal of them per feed and column
         CheckConstraint("kind NOT IN ('glossary_element', 'mapping') "
-                        "OR (jsonb_typeof(payload) = 'object' AND payload ? 'source_field')", name="names_a_column"),
+                        "OR (feed_id IS NOT NULL "
+                        "AND COALESCE(jsonb_typeof(payload -> 'source_field') = 'string', false) "
+                        "AND length(btrim(payload ->> 'source_field')) > 0)", name="names_a_column"),
         Index("uq_proposals_one_pending_per_feed_column", "kind", "feed_id", text("(payload ->> 'source_field')"),
               unique=True, postgresql_where=text("status = 'pending' AND kind IN ('glossary_element', 'mapping')")),
     )

@@ -84,7 +84,11 @@ PROPOSAL = ("INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, re
 
 
 @pytest.mark.parametrize(("kind", "role"), [("mapping", "data_steward"), ("glossary_element", "glossary_owner")])
-@pytest.mark.parametrize("payload", ['{"candidates": ["close_price"]}', '{}', 'null', '"source_field"'])
+@pytest.mark.parametrize("payload", [
+    '{"candidates": ["close_price"]}', '{}', 'null', '"source_field"',
+    # 0017 (review finding 4): the column is a non-blank JSON string; the JSON null case is the first
+    '{"source_field": null}', '{"source_field": 5}', '{"source_field": ["px"]}', '{"source_field": ""}',
+    '{"source_field": "  "}'])
 def test_a_glossary_or_mapping_proposal_names_its_column(s, feed, kind, role, payload):
     from tests.configured import logged_call
 
@@ -92,6 +96,19 @@ def test_a_glossary_or_mapping_proposal_names_its_column(s, feed, kind, role, pa
     answered_by(s, "ck_proposals_names_a_column", PROPOSAL,
                 {"log": log, "kind": kind, "payload": payload, "role": role, "feed": feed},
                 "ALTER TABLE proposals DROP CONSTRAINT ck_proposals_names_a_column")
+
+
+@pytest.mark.parametrize(("kind", "role"), [("mapping", "data_steward"), ("glossary_element", "glossary_owner")])
+def test_a_glossary_or_mapping_proposal_has_a_feed(s, feed, kind, role):
+    """0017 (review finding 4): with no feed, the one-pending-per-column index never conflicted (NULLs are
+    distinct). The same payload with the feed is accepted."""
+    from tests.configured import logged_call
+
+    params = {"log": logged_call(s, "MappingAgent", "mapping").id, "kind": kind, "role": role,
+              "payload": '{"source_field": "px", "candidates": ["close_price"]}'}
+    answered_by(s, "ck_proposals_names_a_column", PROPOSAL, {**params, "feed": None},
+                "ALTER TABLE proposals DROP CONSTRAINT ck_proposals_names_a_column")
+    s.execute(text(PROPOSAL), {**params, "feed": feed})
 
 
 def test_other_kinds_need_no_column(s, feed):
@@ -258,14 +275,10 @@ def test_a_mapping_of_another_feed_is_refused(s, feed, px):
                 _branch_off(MATCHES, "mapping: proposal % is for feed %, not %"))
 
 
-def test_a_mapping_from_a_proposal_with_no_feed_is_refused(s, feed, approved_proposal):
-    no_feed = approved_proposal(kind="mapping", payload={"source_field": "px", "candidates": ["close_price"]})
-    answered_by(s, "is for feed no feed", MAP, map_row(feed, no_feed.id),
-                _branch_off(MATCHES, "mapping: proposal % is for feed %, not %"))
-
-
 def test_a_mapping_of_another_column_is_refused(s, feed, approved_proposal):
-    """A proposal with no source_field (the NULL case) cannot exist: ck_proposals_names_a_column (fix B)."""
+    """A proposal with no source_field (the NULL case) cannot exist: ck_proposals_names_a_column (fix B).
+    Nor can a mapping proposal with no feed, from 0017 (test_a_glossary_or_mapping_proposal_has_a_feed); the
+    trigger's "no feed" wording stays."""
     proposal = approved_proposal(kind="mapping", feed_id=feed, payload={"source_field": "qty",
                                                                         "candidates": ["close_price"]})
     answered_by(s, "mapping: proposal .* is for column", MAP, map_row(feed, proposal.id),
@@ -330,6 +343,24 @@ def a_run(s, run_feed, *, status="queued", attempt=0, lease="interval '60 second
 def test_a_new_run_is_queued_at_attempt_0(s, run_feed, status, attempt):
     answered_by(s, "a new run is queued at attempt 0", RUN, {**run_feed, "status": status, "attempt": attempt},
                 _branch_off(RUN_GUARD, "glossary_runs: a new run is queued at attempt 0, not % at %"))
+
+
+def test_a_new_runs_profile_is_a_profile_of_its_feed(s, run_feed):
+    """0017 (review finding 4): a run row names the profile its builder reads."""
+    other = a_registered_feed(s, "syn_guards_other")
+    params = {**run_feed, "p": FeedProfileRepository(s).latest(other).id, "status": "queued", "attempt": 0}
+    answered_by(s, "is not a profile of feed", RUN, params,
+                _branch_off(RUN_GUARD, "glossary_runs: profile % is not a profile of feed %"))
+
+
+def test_a_new_runs_feed_is_registered(s):
+    """0017 (review finding 4): the builder runs on a registered feed, by the database too."""
+    from tests.onboarded import profiled
+
+    candidate = FeedRepository(s).create_candidate(code="syn_guards_candidate", name="Candidate").id
+    params = {"f": candidate, "p": profiled(s, candidate).id, "by": GLENN, "status": "queued", "attempt": 0}
+    answered_by(s, "is candidate, not registered", RUN, params,
+                _branch_off(RUN_GUARD, "glossary_runs: feed % is %, not registered"))
 
 
 MOVE = "UPDATE glossary_runs SET {set} WHERE id = :id"

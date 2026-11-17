@@ -170,10 +170,16 @@ def make_proposal(db_session, logged_call):
     from core.repositories.proposals import ProposalRepository
 
     def _make(kind="mapping", roles=("data_steward",), autonomy="A2", payload=None, **links):
+        configures = kind in ("glossary_element", "mapping")
         if payload is None:  # 0016: a glossary_element or mapping proposal names its column
             payload = {"note": "synthetic"}
-            if kind in ("glossary_element", "mapping"):
+            if configures:
                 payload["source_field"] = f"synthetic_{uuid.uuid4().hex[:8]}"
+        if configures and "feed_id" not in links:  # 0017: and it has a feed (a candidate one will do)
+            from core.repositories.feeds import FeedRepository
+
+            code = f"syn_proposal_{uuid.uuid4().hex[:8]}"
+            links["feed_id"] = FeedRepository(db_session).create_candidate(code=code, name=code).id
         return ProposalRepository(db_session).create(
             proposal_log_id=logged_call.id, kind=kind, payload=payload,
             autonomy=autonomy, required_approver_roles=list(roles), **links,

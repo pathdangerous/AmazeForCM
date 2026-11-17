@@ -165,9 +165,10 @@ def claim_run(session: Session, *, lease_seconds: int) -> GlossaryRun | None:
 
 
 def builder_input(session: Session, run: GlossaryRun) -> BuilderPlan:
-    """Read only. The latest profile's new columns (assumption 8), less those covered (assumption 9)."""
+    """Read only. The new columns (assumption 8) of the run's own profile (the feed's latest when the run
+    was queued; 0017 checks it is the feed's), less those covered (assumption 9)."""
     feed = FeedRepository(session).get(run.feed_id)
-    profile = FeedProfileRepository(session).latest(run.feed_id)
+    profile = FeedProfileRepository(session).get(run.profile_id)
     glossary = GlossaryRepository(session).list_current()
     mapped = {m.source_field for m in MappingRepository(session).current_for_feed(run.feed_id)}
     asked = {p.payload.get("source_field") for p in ProposalRepository(session).list_for_feed(run.feed_id,

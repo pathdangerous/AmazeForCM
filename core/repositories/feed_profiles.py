@@ -37,6 +37,10 @@ class FeedProfileRepository:
         self._session.flush()
         return FeedProfile.model_validate(row)
 
+    def get(self, profile_id: UUID) -> FeedProfile | None:
+        row = self._session.get(Row, profile_id)
+        return None if row is None else FeedProfile.model_validate(row)
+
     def latest(self, feed_id: UUID) -> FeedProfile | None:
         row = self._session.scalars(select(Row).where(Row.feed_id == feed_id).order_by(Row.version.desc()).limit(1)).first()
         return None if row is None else FeedProfile.model_validate(row)

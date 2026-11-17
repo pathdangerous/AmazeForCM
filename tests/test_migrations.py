@@ -213,6 +213,11 @@ REVIEWED_NULLABLE_CHECKS = {
     "glossary_runs.ck_glossary_runs_finished_at_matches_status":
         "IS NOT NULL on finished_at; status is NOT NULL: never NULL",
     "glossary_runs.ck_glossary_runs_call_only_when_done": "IS NULL on proposal_log_id; status is NOT NULL: never NULL",
+    # 0017 (phase 5 plan, section 17). Its NULL cases (no feed, a JSON null column) are in
+    # test_db_configuration_guards.py.
+    "proposals.ck_proposals_names_a_column":
+        "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
+        "source_field; kind and payload are NOT NULL: never NULL",
 }
 
 
@@ -435,6 +440,29 @@ def test_0016_downgrade_restores_the_0015_guards(scratch_schema):
     assert not {"trg_proposals_no_truncate", "trg_glossary_elements_b_option", "trg_mappings_b_matches_proposal"} & triggers
     assert "glossary_runs" not in set(inspect(engine).get_table_names())
     command.upgrade(config, "0016")
+
+
+def test_0017_downgrade_restores_the_0016_guards(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+
+    def guards():
+        with engine.connect() as connection:
+            bodies = dict(connection.execute(text(
+                "SELECT proname, prosrc FROM pg_proc WHERE pronamespace = current_schema()::regnamespace "
+                "AND proname IN ('amaze_require_glossary_option', 'amaze_guard_glossary_run')")).all())
+            check = connection.execute(text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_proposals_names_a_column' "
+                "AND connamespace = current_schema()::regnamespace")).scalar_one()
+        return ("already has the alias" in bodies["amaze_require_glossary_option"],
+                "is not a profile of feed" in bodies["amaze_guard_glossary_run"], "feed_id IS NOT NULL" in check)
+
+    command.upgrade(config, "0017")
+    assert guards() == (True, True, True)
+    command.downgrade(config, "0016")
+    assert guards() == (False, False, False)
+    command.upgrade(config, "0017")
+    assert guards() == (True, True, True)
 
 
 def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_schema):

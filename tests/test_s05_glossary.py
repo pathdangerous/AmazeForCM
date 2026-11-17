@@ -163,6 +163,18 @@ def test_no_new_column_is_done_with_no_call_and_no_log_row(db_session, glossary,
     assert db_session.scalar(select(func.count()).select_from(ProposalLogEntry)) == before
 
 
+def test_the_input_is_built_from_the_runs_own_profile(db_session, bond):
+    """Review finding 4: the profile the run names, not the feed's latest one (phase 7 profiles every load)."""
+    from core.repositories.feed_profiles import FeedProfileRepository
+    from tests.onboarded import profiled
+
+    run, _ = queue_run(db_session, feed_id=bond.id, reason="registered", requested_by="dev-backend-team")
+    later = profiled(db_session, bond.id, spec=BOND_SPEC, columns=[*BOND_COLUMNS, col("added_later", "VARCHAR")])
+    assert FeedProfileRepository(db_session).latest(bond.id).id == later.id != run.profile_id
+    plan = builder_input(db_session, claim_run(db_session, lease_seconds=60))
+    assert [c.name for c in plan.agent_input.columns] == ["date", "venue_mic_code", "rating"]
+
+
 def test_the_input_holds_candidates_only_and_no_values(db_session, bond):
     queue_run(db_session, feed_id=bond.id, reason="registered", requested_by="dev-backend-team")
     plan = builder_input(db_session, claim_run(db_session, lease_seconds=60))

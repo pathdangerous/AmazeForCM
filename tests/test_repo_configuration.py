@@ -88,14 +88,13 @@ def test_mapping_for_an_unknown_feed(mappings, feed, db_session):
         mappings.add_version(feed_id=uuid.uuid4(), source_field="X", element_key="isin", proposal_id=proposal.id)
 
 
-def test_proposal_approved_for_another_feed(mappings, feed, db_session, approved_proposal):
+def test_proposal_approved_for_another_feed(mappings, feed, db_session):
+    """A mapping proposal with no feed cannot exist from 0017 (ck_proposals_names_a_column)."""
     from tests.configured import a_registered_feed, mapping_proposal
 
     other = mapping_proposal(db_session, a_registered_feed(db_session, "other_feed"), "X", ["isin"], decision="approved")
-    no_feed = approved_proposal(kind="mapping", payload={"source_field": "X", "candidates": ["isin"]})
-    for proposal in (other, no_feed):
-        with pytest.raises(ProposalForAnotherFeed):
-            mappings.add_version(feed_id=feed.id, source_field="X", element_key="isin", proposal_id=proposal.id)
+    with pytest.raises(ProposalForAnotherFeed):
+        mappings.add_version(feed_id=feed.id, source_field="X", element_key="isin", proposal_id=other.id)
 
 
 def test_a_mapping_needs_the_proposals_column_and_one_of_its_candidates(mappings, feed, db_session):
