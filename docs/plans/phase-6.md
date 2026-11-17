@@ -1,6 +1,7 @@
 # Phase 6 plan — Rules, go-live approval and the run engine (steps 09, 11, 13)
 
-**Status:** written on 2026-11-17; **not approved**. Veto assumptions by number (section 4).
+**Decisions (2026-11-17):** every assumption approved as written; 15, 16 and 30 accepted by name; risk 4 accepted for phase 6 (no start-up sweep; phase 7 note 3); the test-time ceiling is **195 s per full run**, not 213 s (assumption 35, done-when 8, section 13); task 3 gains a row-count proof.
+**Status:** approved 2026-11-17 with the decisions above.
 **Date:** 2026-11-17. **Branch:** `phase-6`, created from `main` at `ea233a1`. **Scope:** phase 6 of `BUILD_PLAN.md`, phase 5 plan section 16 (notes 1 to 5 and 12), phase 4 plan section 16 (notes 3 and 4), and four items of the planning request (the `run_soon` early fire, the stub-scheduler status, load history fixtures, test time). Local only; nothing is pushed.
 
 **Lean mode.** Two checkpoints: (1) after the migration task (task 5), (2) at the end. Guard proofs for new guards only. Race tests only where two writers really meet (assumption 33). Every task names its behaviour, test, files, added seconds and what is out of scope (section 12).
@@ -16,7 +17,7 @@
 5. Agent-proposed SQL runs only in a locked-down DuckDB (no file or network access beyond the one file): guard proof in section 6.
 6. Each of the seven outcome names has a named test (section 5.3); each committing endpoint and job has one commit-visibility test; the three race pairs of assumption 33 have tests.
 7. `0018`'s guards each have a raw-SQL test shown failing without the guard.
-8. `pytest` passes with nothing skipped and no warnings, in three back-to-back runs at or below 213 s (assumption 35).
+8. `pytest` passes with nothing skipped and no warnings, in three back-to-back runs, each at or below 195 s (assumption 35).
 
 ## 2. State at the start (checked on 2026-11-17)
 
@@ -43,7 +44,7 @@
 | Note 3: the rule agent gets candidates and a small input | assumption 7; task 8 |
 | Note 4: the go-live summary lists unmapped columns and rejected glossary proposals | assumption 23; task 9 |
 | Note 5: `rules` rows match their approved proposal | assumption 32, guard G5; task 5 |
-| Note 12: test time, per task, held at or below 213 s | assumption 35; task 3 and section 12 |
+| Note 12: test time, per task, held at or below 195 s | assumption 35; task 3 and section 12 |
 | Phase 4 note 3: DuckDB locked down before agent SQL runs | assumption 6, guard proof S1; task 6 |
 | Phase 4 note 4: the owner's first decision; the owner no longer a data owner | assumption 24 |
 | Stub-scheduler status pinned | assumption 30; task 2 |
@@ -100,7 +101,7 @@
 32. **Guards** (section 6): G1 to G11, each with a raw-SQL test and a removal proof.
 33. **Race pairs, three** (each on its own schema, the second started by an event inside the first): R1 two rule proposals of one feed at once (two stewards, or a double click): 200 and 409. R2 the owner's go-live approval and the checker's rule approval of one feed at once: both lock the feed row; never a go-live that pins a rule set other than the current one at its commit. R3 the daily job's load and operations' Load now of one feed: one load; the other 409 `LoadInProgress` (the job logs it). Not raced: two decisions of one proposal (phase 5's `record_decision` lock, same code).
 34. **Commit visibility, six, happy path, through the API or job:** rules propose; the checker's decision; go-live summary; the owner's decision; Load now; the daily job's load. Plus the two new calls in `test_no_connection_is_held_during_any_model_call`, and one new `test_no_connection_is_held_during_a_load_run` (`pool.checkedout() == 0` in `BlobStore.get()` and in the sandbox).
-35. **Test time (note 12).** Today 162 to 173 s (section 2). Added: 10 schema-per-test cases at about 2.5 s (25 s) and about 170 ordinary tests (about 10 s): +35 s. Cut first (task 3): `own_schema` replays the offline DDL generated once per session (0.40 → 0.15 s per schema, measured: about 17 s over 66 schemas); the HTTP failed-fetch test at `timeout_s=0.5` (about 1.5 s); the live-lease restart test with a 1 s lease and 0.2 s grace (about 1.8 s). **Expected: 175 to 195 s; ceiling 213 s.** Back to 160 s needs parallel runs (a schema per pytest-xdist worker), not in phase 6 (section 14): your decision.
+35. **Test time (note 12).** Today 162 to 173 s (section 2). Added: 10 schema-per-test cases at about 2.5 s (25 s) and about 170 ordinary tests (about 10 s): +35 s. Cut first (task 3): `own_schema` replays the offline DDL generated once per session (0.40 → 0.15 s per schema, measured: about 17 s over 66 schemas); the HTTP failed-fetch test at `timeout_s=0.5` (about 1.5 s); the live-lease restart test with a 1 s lease and 0.2 s grace (about 1.8 s). **Expected: 175 to 195 s; ceiling 195 s per full run.** A run above 195 s stops the builder, who reports it with `pytest --durations=20`. Back to 160 s needs parallel runs (a schema per pytest-xdist worker), not in phase 6 (section 14): your decision.
 36. **Lock order, extended at its end:** source lock, feed row, proposal row, requirements by id, `glossary_runs` row, glossary lock, **load row**. The next rule or go-live version is read after the feed row is locked.
 37. **Synthetic data only**; every new file and code starts with `syn_` or sits under `history/`.
 38. **Documents** (task 14): `CLAUDE.md` (layout of `core/engine/`, the three steps, lock order, the `0018` guards, the sandbox rule), `BUILD_PLAN.md` (phase 6 as built), `README.md` (`0018 (head)`, the demo rows), `.env.example` (`RULE_TIMEOUT_SECONDS`, `HYPERCARE_DAYS`).
@@ -237,7 +238,7 @@ Method for every task (followed by hand, `CLAUDE.md`): assumptions the plan does
 | 0 | This plan updated with your decisions | none | this file | 0 | |
 | 1 | A delayed `run_soon` never runs before its delay (assumption 29) | `test_port_scheduler.py`: the strict test unchanged; new `test_a_timer_that_fires_early_waits_out_the_rest` (a `Timer` patched to fire 50 ms early) | `ports/scheduler/local.py` | +0.5 | the Azure stub |
 | 2 | A failed post-commit kick leaves 200 and the committed row, taken later (assumption 30) | `test_api_amaze_onboarding.py`: `== 200`, then `drain()` makes the run `done` | `apps/api/deps.py` | +0.3 | start-up kick changes |
-| 3 | Test time cut before tests are added (assumption 35) | three full runs before and after, pasted; the 56 schema tests unchanged in body | `tests/test_commit_visibility.py` (`own_schema`), `tests/conftest.py`, `test_port_connectors.py`, `test_concurrency.py` (lease values only) | −20 | xdist |
+| 3 | Test time cut before tests are added (assumption 35) | three full runs before and after, pasted; the 56 schema tests unchanged in body; **proof:** one schema built from the offline DDL and one by `alembic upgrade head`, a row count of every table in both, pasted side by side; any difference stops task 3 | `tests/test_commit_visibility.py` (`own_schema`), `tests/conftest.py`, `test_port_connectors.py`, `test_concurrency.py` (lease values only) | −20 | xdist |
 | 4 | **Migration tests first:** every G1–G11 refusal and the downgrade, written and run against `0017` | `test_db_rule_guards.py`, `test_db_go_live_guards.py`, `test_db_load_guards.py`, `test_migrations.py`, `test_append_only.py`: RED pasted (fail or error, none pass) | tests only | +4 | code |
 | 5 | `0018`, `tables.py`, domain models, repositories, `tests/configured.py` helpers | task 4's tests GREEN; `test_repo_configuration.py`, `test_repo_loads.py`; each guard removed in turn, its tests shown failing. **CHECKPOINT 1:** pytest summary, the 11 removal proofs, the downgrade test | section 11's migration, `core/domain/`, `core/repositories/`, `tests/configured.py` | +2 | applying `0018` to `amaze` |
 | 6 | The sandbox (assumption 6, S1) | `test_engine_sandbox.py`: the 12 refusals; a rule over the time limit stopped (limit 0.2 s); the two removal proofs | `core/engine/sandbox.py`, `ports/config.py` | +2 | |
@@ -259,7 +260,7 @@ Run from `F:\amaze-cm-poc` in Windows PowerShell, each as `.\.venv\Scripts\pytho
 
 | Command | Expected |
 |---|---|
-| `pytest -q`, three times back to back | all pass, 0 skipped, 0 warnings; each at or below 213 s |
+| `pytest -q`, three times back to back | all pass, 0 skipped, 0 warnings; each at or below 195 s (above it: stop, report with `--durations=20`) |
 | `alembic upgrade head`, then `alembic current` (for `amaze`, and with `DATABASE_URL` set to `amaze_eval`) | `0018 (head)` on both |
 | `agents.evaluate_mappings` | unchanged: `25 of 31 (80.6%)` |
 | `npm --prefix apps\backend-ui run build`, the same for consumer-ui, `.\scripts\dev.ps1` | exit 0; three `OK` lines and health `ok` |
@@ -279,10 +280,10 @@ Run from `F:\amaze-cm-poc` in Windows PowerShell, each as `.\.venv\Scripts\pytho
 1. **The 0.5 share is a guess.** A strict rule on a dirty source is returned; a loose one passes. The share is in the payload so the steward sees it.
 2. **The mock's rules come from templates**; a real model writes free SQL, which the sandbox and statement check must hold (S1). Phase 8 evaluates it.
 3. **Configuration changed since go-live fails loads** (assumption 15) until the owner approves again; a steward's re-map stops the daily load. The notice says why.
-4. **A load left `received` by a dead process blocks the feed** (G9) until a person acts; nothing in phase 6 clears it.
+4. **A load left `received` by a dead process blocks the feed** (G9) until a person acts; nothing in phase 6 clears it. Accepted for phase 6 (2026-11-17): no start-up sweep; it stays phase 7 note 3.
 5. **`after_answer` changes the sealed base class.** It is one argument with its own tests; every existing agent test must pass unchanged.
 6. **History lives in the catalogue**, not in loads, until phase 7.
-7. **Test time** varies 162 to 213 s on this laptop for unchanged code; three runs are reported.
+7. **Test time** varies 162 to 213 s on this laptop for unchanged code; three runs are reported. A run at the slow end would pass the 195 s ceiling with no code cause, and still stops the builder.
 8. **`run_soon` evidence is intermittent** (1 in 10 runs today); the patched-timer test makes the fix provable without luck.
 
 ## 16. Carried forward
