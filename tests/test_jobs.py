@@ -426,6 +426,166 @@ def test_a_kick_that_leaves_no_live_lease_schedules_nothing(db_session, glossary
     assert scheduler.calls == [(GLOSSARY_RUNS_JOB_ID, 0.0)]
 
 
+# ---------------------------------------------------------------- phase 6: the job loads live feeds (task 10)
+
+
+@pytest.fixture
+def live(db_session, glossary):
+    """A registered feed reading syn_exchange_volumes, three mappings, an approved go-live (hypercare 10 days)."""
+    from core.repositories.feeds import FeedRepository
+    from tests.configured import approved_mapping, go_live
+
+    def _live(code="syn_exchange_volumes", hypercare_days=10, mapped=True):
+        feed = FeedRepository(db_session).create_candidate(
+            code=code, name="Exchange daily volumes", source_code=code, connector="local_file",
+            source_ref="files/exchange_volumes.csv")
+        registered_feed(db_session, feed.id)
+        if mapped:
+            for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"),
+                               ("traded_qty", "volume")):
+                approved_mapping(db_session, feed.id, field, key)
+        live_ = go_live(db_session, feed.id, hypercare_days=hypercare_days) if mapped else None
+        db_session.commit()
+        return feed, live_
+
+    return _live
+
+
+def loads_of(db_session, feed):
+    from core.repositories.loads import LoadRepository
+
+    return LoadRepository(db_session).list_for_feed(feed.id)
+
+
+def subjects(db_session, recipient):
+    from sqlalchemy import select
+
+    from ports.notify.inapp import NotificationRow
+
+    return [n.subject for n in db_session.scalars(select(NotificationRow).where(NotificationRow.recipient == recipient))]
+
+
+def test_the_daily_job_loads_a_live_feed_after_its_fetch(db_session, daily, live):
+    from core.repositories.loads import LoadRepository
+    from core.repositories.standard_records import StandardRecordRepository
+
+    feed, approved = live()
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    (scheduled, test_load) = loads_of(db_session, feed)
+    assert (scheduled.purpose, scheduled.status, scheduled.go_live_id) == ("scheduled", "loaded", approved.id)
+    assert scheduled.fetch_id == SourceFetchRepository(db_session).latest_fetched(feed.id).id
+    assert [s.outcome for s in LoadRepository(db_session).stages(scheduled.id)] == ["stage_completed"] * 4
+    assert StandardRecordRepository(db_session).count(scheduled.id) == 1  # the one row of the sample file
+    assert test_load.purpose == "go_live_test"
+
+
+def test_a_feed_without_a_go_live_is_fetched_but_not_loaded(db_session, daily, live):
+    feed, _ = live(mapped=False)
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    assert loads_of(db_session, feed) == []
+
+
+def test_when_the_source_is_down_there_is_no_load(db_session, daily, live):
+    from ports.connectors.base import SourceUnavailable
+
+    class Down:
+        name = "down"
+
+        def fetch(self, ref):
+            raise SourceUnavailable(ref)
+
+        def close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+
+    feed, _ = live()
+    assert daily(lambda name: Down()).run() == {"syn_exchange_volumes": "source_down"}
+    assert [load.purpose for load in loads_of(db_session, feed)] == ["go_live_test"]  # only the go-live's own
+
+
+def test_under_hypercare_every_load_is_reported(db_session, daily, live):
+    """Phase 6 plan, assumption 27: while today is at or before hypercare_until the owner and operations hear of
+    each scheduled load; afterwards only a failure is reported (to operations and the backend team)."""
+    import dataclasses
+
+    feed, _ = live()
+    job = dataclasses.replace(daily(), operations=lambda: ["dev-operations"])
+    job.run()
+    assert subjects(db_session, "dev-data-owner") == ["Load loaded: syn_exchange_volumes"]
+    assert subjects(db_session, "dev-operations") == ["Load loaded: syn_exchange_volumes"]
+
+
+def test_after_hypercare_a_good_load_is_not_reported(db_session, daily, live):
+    import dataclasses
+
+    live(hypercare_days=-1)  # it ended yesterday
+    dataclasses.replace(daily(), operations=lambda: ["dev-operations"]).run()
+    assert subjects(db_session, "dev-data-owner") == [] and subjects(db_session, "dev-operations") == []
+
+
+def test_a_failed_load_is_reported_to_operations_and_the_backend_team_after_hypercare(db_session, daily, live,
+                                                                                     sources):
+    import dataclasses
+
+    live(hypercare_days=-1)
+    (sources / "files" / "exchange_volumes.csv").write_bytes(b"instr_id,trade_date,traded_qty\nsyn-1,2026-11-02,12x\n")
+    dataclasses.replace(daily(), operations=lambda: ["dev-operations"]).run()
+    assert subjects(db_session, "dev-operations") == ["Load failed: syn_exchange_volumes"]
+    assert subjects(db_session, "dev-backend-team") == ["Load failed: syn_exchange_volumes"]
+    assert subjects(db_session, "dev-data-owner") == []  # not under hypercare, and not a configuration change
+
+
+def test_a_configuration_change_after_go_live_fails_the_load_and_tells_the_owner(db_session, daily, live):
+    import dataclasses
+
+    from tests.configured import approved_mapping
+
+    feed, _ = live(hypercare_days=-1)
+    approved_mapping(db_session, feed.id, "traded_qty", "lot_size")  # a steward re-maps after go-live
+    db_session.commit()
+    dataclasses.replace(daily(), operations=lambda: ["dev-operations"]).run()
+    (failed, _test) = loads_of(db_session, feed)
+    assert (failed.status, failed.failed_stage) == ("failed_rolled_back", "raw")
+    assert subjects(db_session, "dev-data-owner") == ["Load failed: syn_exchange_volumes"]
+    assert "new go-live" in db_session.execute(text_of_notification(feed)).scalar_one()
+
+
+def text_of_notification(feed):
+    from sqlalchemy import text
+
+    return text("SELECT body FROM notifications WHERE recipient = 'dev-data-owner' AND subject LIKE 'Load failed%'")
+
+
+def test_load_now_fetches_and_loads_one_feed_and_needs_a_go_live(db_session, daily, live):
+    from core.repositories.errors import NotLive
+
+    feed, _ = live()
+    other, _none = live(code="syn_other_live", mapped=False)
+    job = daily()
+    with pytest.raises(NotLive):
+        job.fetch_and_load(other.id)
+    assert job.fetch_and_load(feed.id) == {"fetch": "fetched", "load": "loaded"}
+    assert [load.purpose for load in loads_of(db_session, feed)] == ["scheduled", "go_live_test"]
+
+
+def test_a_load_that_meets_one_in_progress_does_not_start_a_second(db_session, daily, live):
+    from core.repositories.loads import LoadRepository
+
+    feed, approved = live()
+    LoadRepository(db_session).create(feed_id=feed.id, file_ref="raw/x.csv", purpose="scheduled",
+                                      go_live_id=approved.id)  # operations' load is running
+    db_session.commit()
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    assert [(load.purpose, load.status) for load in loads_of(db_session, feed)] == [
+        ("scheduled", "received"), ("go_live_test", "loaded")]  # the job found it in progress and logged it
+    assert daily().load_feed(feed.id) == "load_in_progress"
+
+
 async def test_the_app_under_test_runs_no_worker_of_its_own():
     """Phase 5 plan, assumption 48: running_app puts a do-nothing worker in app.state.glossary_runs, and the
     start-up kick reaches it, not a worker on the application database."""
