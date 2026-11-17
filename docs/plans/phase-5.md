@@ -835,3 +835,13 @@ Console errors: one, the browser's log line for the expected 409 of row S. API 4
 
 **Test time.** 222 to 234 s, against 160 to 163 s at checkpoint 3, with one test added (3 s). Not the code: the only Python change since `02594e2` is that test, and `test_concurrency.py` with `test_commit_visibility.py`, unchanged files over unchanged code, went from `58 passed in 81.03s` to `58 passed in 105.42s`, the time in fixture set-up, not in the tests. Not the test database: one schema, catalogs vacuumed, no dead tuples. The machine was on mains power at about 85% processor performance; the cause is not isolated further. Phase 6 note 12 stands.
 
+### Fixes after the independent review
+
+**Checkpoint 4 approved** (2026-11-17). The independent review of `main..phase-5` at `dffab7f` was accepted: findings 1 to 8 are fixed on `phase-5` before the merge, with two more items (10 and 11). One commit per item, test first. Database changes are in `0017`.
+
+**Item 9, recorded, no code change (review finding 9): the 10-element cap is per term or per column, not per input.**
+- `candidates.term_candidates()` builds one list of at most 10 elements for each unmatched term of a search; the DiscoveryAssistant's input holds their union, each element once. The glossary builder's and the mapping agent's inputs hold at most 10 candidates per column.
+- So an input can hold more than 10 elements: a search with four or more unmatched terms can carry most of the 33 seed elements. Row T's "at most 10 elements, not 33" is true of that row's one term.
+- This is the plan's wording (done-when 5, assumption 6: "per column or term") and what `test_no_agent_input_holds_the_whole_glossary.py` checks. It is not a cap on the whole input, and no document should say it is. `AssistantInput`'s docstring now says so (item 8).
+- For phase 8: if the model's input size matters, cap the number of unmatched terms sent, not the list per term.
+
