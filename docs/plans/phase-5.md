@@ -845,3 +845,60 @@ Console errors: one, the browser's log line for the expected 409 of row S. API 4
 - This is the plan's wording (done-when 5, assumption 6: "per column or term") and what `test_no_agent_input_holds_the_whole_glossary.py` checks. It is not a cap on the whole input, and no document should say it is. `AssistantInput`'s docstring now says so (item 8).
 - For phase 8: if the model's input size matters, cap the number of unmatched terms sent, not the list per term.
 
+**The items** (RED is the failing summary line before the fix; GREEN the same files after it)
+
+| # | What changed | RED | GREEN | Commit |
+|---|---|---|---|---|
+| 1 | An alias the element already has: `decide_element` raises `AliasAlreadyOnElement` (409) before the draft is built, and `GlossaryRepository.add_version` too; `classify_element`'s single-hit branch never offers such an alias (one hit that already has it is a `conflict_to_owner` with no option); `0017` refuses the row | `5 failed, 140 deselected`. Both scenarios through the API ended in `ValidationError: an alias can appear only once` (a 500): A, two feeds with `venue_mic_code`; B, `ccy` sent back after the steward rejected `currency` | `196 passed in 25.08s` | `e3c367a` |
+| 2 | A run left running with a live lease: `Scheduler.run_soon(..., delay_seconds=)` (local: a daemon timer, one waiting per job id, dropped at shutdown; stub: same signature); after each drain, `kick_glossary_runs` asks `GlossaryRuns.lease_wait()` and schedules one more kick `LEASE_GRACE_SECONDS` (1 s) after the earliest live lease | `6 failed, 1 passed`. Through the app: `AssertionError: no kick came after the lease passed` | `118 passed in 9.46s` and `5 passed` (the restart tests) | `92ae337` |
+| 3 | `alias_of` puts `col_` before a name that starts with a digit; `candidates.glossary_payloads()` skips a column whose option is not valid and step 05 records `skipped: <why>` in the run's results; the other columns get their proposals | `4 failed, 4 passed`. Through the worker: the run was `failed` with `string_pattern_mismatch` | `165 passed in 7.98s` | `9936eb2` |
+| 4 | `0017`: `ck_proposals_names_a_column` needs a feed and a non-blank JSON string `source_field`; `amaze_guard_glossary_run()` checks a new run's profile is its feed's and the feed is registered. `builder_input` reads `run.profile_id` | `15 failed, 8 passed` (the JSON-null case among them) | `383 passed in 29.68s` | `bfe5501`, `61a97b1` |
+| 5 | Step 06's `before_write` compares each input column's current mapping and rejected elements with the input: `MappingChangedMeanwhile` (409, a discard row) | `3 failed`. Through the app: 200 and a second pending proposal for `cpn`, mapped during the call | `41 passed in 5.62s` and `3 passed` (the race tests) | `64ee1d3` |
+| 6 | The mock's mean tie size (5.0), candidate recall (27 of 28) and its one miss (case 8, `price_currency`) are pinned; `PhraseTaken` and `ElementAlreadyMapped` are in `test_a_wrong_state_is_409` | none: both pin what exists (`2 passed` at once) | `30 passed in 4.56s` | `5e9cbd0` |
+| 7 | The API sets `app.state.glossary_runs` whatever the scheduler | `1 failed`: `AttributeError: 'State' object has no attribute 'glossary_runs'` after register's commit | `49 passed in 7.97s` | `acc5d86` |
+| 8 | Propose again on a mapped column that gets no element queues no glossary run; section 5.3 says the choice is on the configuration row; `AssistantInput`'s docstring | `1 failed` (a run id where none is expected) | `141 passed in 6.49s` | `c7ec571` |
+| 9 | Recorded above; no code | none | none | `cddb52b` |
+| 10 | A rejection with no note, or a blank one, is `NoteNeeded` (422) in `decide_element` and `decide_mapping` | `3 failed` (200, not 422, for a missing, empty and blank note) | `57 passed in 9.08s` | `ababbda` |
+| 11 | The demo data overlap moved from `docs/ui-polish.md` to section 16, phase 7, note 13 | none | none | `3487a92` |
+
+**Proofs**
+- Item 6 has no RED, so it has a removal proof: with `ElementAlreadyMapped` and `PhraseTaken` taken out of `CONFLICTS` (Edit tool), `test_a_wrong_state_is_409`: `1 failed`; restored: `30 passed`. `git grep PROOF` finds nothing.
+- Each new `0017` refusal goes through `answered_by()`: refused with its message, and no longer refused with that message when only that branch or constraint is removed.
+- `test_0017_downgrade_restores_the_0016_guards`: upgrade, downgrade to `0016`, upgrade again; the three guards are there, gone, there.
+
+**Assumptions the request did not state, and deviations**
+1. Three new named errors: `AliasAlreadyOnElement` and `MappingChangedMeanwhile` (409, in `CONFLICTS`), `NoteNeeded` (422, a `StepInputError`). The note is checked before any lock, so a user without the role who rejects with no note gets 422, not 403.
+2. Item 2: the later kick is scheduled by `kick_glossary_runs` after `drain()` returns, not inside `drain()`, because the worker does not hold the scheduler. The worker gains `lease_wait()`; the test doubles (`NoGlossaryRuns`, the two `Watched`) gain it too. A delayed call replaces the one that waits for the same job id, so many kicks leave one timer.
+3. Item 3: a name with no letter or digit at all (`%`) gives no alias and is the skipped case. The run's result for it is the text `skipped: alias: String should match pattern ...`; the feed page shows it as it is.
+4. Item 4: `tests/conftest.py::make_proposal` gives a glossary or mapping proposal a candidate feed when the test names none. `test_a_mapping_from_a_proposal_with_no_feed_is_refused` is removed (such a proposal cannot be built; the check's own test replaces it), and `test_proposal_approved_for_another_feed` loses its no-feed case. `FeedProfileRepository.get()` is new.
+5. Item 4, a slip: I ran a subset after the change and missed `test_concurrency.py::_rows_for_lock_tests`, which made a mapping proposal with no feed. The two lock tests failed (`CheckViolation`) until `61a97b1`; found when item 10's files were run.
+6. Item 7: `running_app(glossary_runs=False)` leaves the worker unset so the app builds its own; used only by the stub-scheduler test. By the code path the answer is 503 (the stub's `run_soon`); the test accepts 200 or 503. The registration and its queued run are committed either way.
+7. `0017` builds each function body from shared parts (the `0016` body, and the same with the new lines), so the downgrade's body is the upgrade's less those lines.
+8. `README.md` says `0017 (head)`; `CLAUDE.md` gains one sentence on the `0017` guards.
+9. `amaze_eval` was not upgraded: it is still at `0016`. The evaluation writes only `proposal_log` rows, which `0017` does not touch, and it ran (below). Risk 12 asks for the same head; that is one `alembic upgrade head` with `DATABASE_URL` pointed at it (README).
+
+**Rows in the application database that each new guard would refuse, counted before `0017` was applied** (database `amaze`, at `0016`; 15 proposals of the two kinds, 3 glossary runs, 37 glossary elements)
+
+| Count | Rows |
+|---|---|
+| 0 | `glossary_element` or `mapping` proposals with no feed |
+| 0 | `glossary_element` or `mapping` proposals whose `source_field` is not a non-blank JSON string (JSON null included) |
+| 0 | proposals the new check refuses, in all |
+| 0 | glossary runs whose profile is not a profile of their feed |
+| 0 | glossary runs whose feed is not registered |
+| 0 | glossary elements with an alias twice |
+| 0 | alias rows whose added alias the version before already had |
+
+**Results**
+
+| Command | Result |
+|---|---|
+| `alembic upgrade head` (application database) | `Running upgrade 0016 -> 0017, guards after the independent review of phase 5` |
+| `alembic current` | `0017 (head)` |
+| `pytest -q` | `1730 passed in 159.79s (0:02:39)`; 0 failed, 0 skipped, 0 warnings. 42 tests more than checkpoint 4's 1688 |
+| `python -m agents.evaluate_mappings` | provider `mock`; `Score: 25 of 31 (80.6%)`; mean tie size 5.0; candidate recall 27 of 28 (not offered: case 8 `price_currency`); wrong maps 2 (15 `quote_ccy -> currency`, 19 `high -> high_price`); `Logged 4 calls to database amaze_eval`; exit 0 |
+
+**Test time.** Two of the new tests use a schema of their own: the live-lease restart (3.4 s in the test, waiting for a 2 s lease and the 1 s grace, plus the schema) and the mapping race (under 1 s plus the schema). The three delay tests of the scheduler add about 1.5 s. The run above is inside checkpoint 3's range (160 to 163 s); checkpoint 4's 222 s did not come back.
+
+**Not done here:** no merge. The backend-ui was not rebuilt or run in the browser: no UI file changed.
+
