@@ -98,6 +98,9 @@ class NoGlossaryRuns:
         self.kicked.set()
         return {}
 
+    def lease_wait(self) -> None:
+        return None  # no run is running: no later kick
+
 
 @asynccontextmanager
 async def running_app(engine=None, settings=None, session=None, glossary_runs=None):

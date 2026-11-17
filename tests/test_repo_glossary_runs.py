@@ -81,6 +81,21 @@ def test_claim_takes_nothing_when_nothing_waits(runs, feed):
     assert runs.claim(lease_seconds=60) is None  # running, lease not passed
 
 
+def test_seconds_to_live_lease_is_the_earliest_lease_that_has_not_passed(runs, feed, db_session):
+    """Review finding 2: what the worker waits for before one more kick. None: nothing running, or passed."""
+    assert runs.seconds_to_live_lease() is None
+    queue(runs, feed)
+    assert runs.seconds_to_live_lease() is None  # queued: the next claim takes it
+    runs.claim(lease_seconds=PASSED)
+    assert runs.seconds_to_live_lease() is None  # running, lease passed: the next claim takes it
+    other = a_registered_feed(db_session, "syn_runs_live")
+    queue(runs, (other, FeedProfileRepository(db_session).latest(other).id))
+    assert runs.claim(lease_seconds=PASSED).feed_id == feed[0]  # the oldest claimable: attempt 2, passed again
+    assert runs.claim(lease_seconds=PASSED).feed_id == feed[0]  # attempt 3
+    assert runs.claim(lease_seconds=90).feed_id == other  # feed's run gave up; the other is running, live
+    assert 80 < runs.seconds_to_live_lease() <= 90
+
+
 def test_a_running_run_whose_lease_passed_is_claimed_again_on_the_next_attempt(runs, feed, db_session):
     run, _ = queue(runs, feed)
     runs.claim(lease_seconds=PASSED)

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from core.repositories.errors import RunSuperseded
 from core.repositories.feeds import FeedRepository
+from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.requirements import RequirementRepository
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
@@ -158,6 +159,7 @@ def register_daily_fetch(scheduler: Scheduler, daily: DailyFetch) -> None:
 # ---------------------------------------------------------------- phase 5: the glossary runs worker
 
 GLOSSARY_RUNS_JOB_ID = "glossary-runs"
+LEASE_GRACE_SECONDS = 1.0  # the later kick comes this long after the lease it waits for
 
 
 @dataclass
@@ -201,6 +203,14 @@ class GlossaryRuns:
                 return results
             results[run.id] = self._run_one(run)
 
+    def lease_wait(self) -> float | None:
+        """Seconds until the earliest live lease of a running run passes; None when there is none. Such a
+        run may belong to a worker that died with the last process: nothing claims it before its lease."""
+        with self.session_factory() as session:
+            wait = GlossaryRunRepository(session).seconds_to_live_lease()
+            session.rollback()
+        return wait
+
     def _run_one(self, run) -> str:
         with self.session_factory() as session:
             notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
@@ -227,6 +237,16 @@ class GlossaryRuns:
                 return "superseded"
 
 
-def kick_glossary_runs(scheduler: Scheduler, runs: GlossaryRuns) -> None:
-    """After a commit that queued a run, and at every start-up (rows left by the last process)."""
-    scheduler.run_soon(GLOSSARY_RUNS_JOB_ID, runs.drain)
+def kick_glossary_runs(scheduler: Scheduler, runs: GlossaryRuns, *, delay_seconds: float = 0.0) -> None:
+    """After a commit that queued a run, and at every start-up (rows left by the last process). When the
+    drain leaves a running run whose lease has not passed (its worker may have died with the last process,
+    and nothing claims it before its lease), one more kick is scheduled just after the earliest such lease
+    (independent review, finding 2). The scheduler keeps one waiting kick, the newest."""
+
+    def work() -> None:
+        runs.drain()
+        wait = runs.lease_wait()
+        if wait is not None:
+            kick_glossary_runs(scheduler, runs, delay_seconds=wait + LEASE_GRACE_SECONDS)
+
+    scheduler.run_soon(GLOSSARY_RUNS_JOB_ID, work, delay_seconds=delay_seconds)

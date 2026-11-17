@@ -103,6 +103,15 @@ class GlossaryRunRepository:
             self._session.flush()
             return self.get(row.id)
 
+    def seconds_to_live_lease(self) -> float | None:
+        """Seconds until the earliest lease of a running run passes; None when no running run has a lease
+        that has not passed (a run whose lease has passed is taken by the next claim()). A run left running
+        by a worker that died is claimed only after its lease, so the worker asks for one more kick then."""
+        seconds = self._session.scalar(
+            select(func.min(func.extract("epoch", Row.lease_until - func.clock_timestamp())))
+            .where(Row.status == "running", Row.lease_until >= func.clock_timestamp()))
+        return None if seconds is None else max(float(seconds), 0.0)
+
     def lock(self, run_id: UUID, *, attempt: int) -> GlossaryRun:
         """The run row, locked; RunSuperseded unless it is still running on this attempt."""
         row = self._session.scalars(select(Row).where(Row.id == run_id).with_for_update()

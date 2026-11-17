@@ -389,6 +389,43 @@ def test_a_model_that_does_not_answer_fails_the_run_and_keeps_its_reason(db_sess
     assert (bond.status, bond.error) == ("failed", "LLMUnavailable: the model did not answer")
 
 
+class RecordingScheduler:
+    """Runs an immediate run_soon in the caller and only records a delayed one."""
+
+    def __init__(self):
+        self.calls = []
+
+    def run_soon(self, job_id, func, *, delay_seconds=0.0):
+        self.calls.append((job_id, delay_seconds))
+        if not delay_seconds:
+            func()
+
+
+def test_a_kick_that_leaves_a_live_lease_schedules_one_more_just_after_it(db_session, glossary_runs, two_queued):
+    """Review finding 2: the first run's worker stopped with its lease live; the kick runs the other run,
+    then asks for one more kick a moment after that lease."""
+    from apps.api.jobs import GLOSSARY_RUNS_JOB_ID, LEASE_GRACE_SECONDS, kick_glossary_runs
+    from core.repositories.glossary_runs import GlossaryRunRepository
+
+    runs = GlossaryRunRepository(db_session)
+    assert runs.claim(lease_seconds=120).id == two_queued[0].id  # its worker stopped here
+    db_session.commit()
+    scheduler = RecordingScheduler()
+    kick_glossary_runs(scheduler, glossary_runs())
+    assert runs.get(two_queued[1].id).status == "done" and runs.get(two_queued[0].id).status == "running"
+    [(first, at_once), (later, delay)] = scheduler.calls
+    assert (first, at_once, later) == (GLOSSARY_RUNS_JOB_ID, 0.0, GLOSSARY_RUNS_JOB_ID)
+    assert 120 - 5 + LEASE_GRACE_SECONDS < delay <= 120 + LEASE_GRACE_SECONDS
+
+
+def test_a_kick_that_leaves_no_live_lease_schedules_nothing(db_session, glossary_runs, two_queued):
+    from apps.api.jobs import GLOSSARY_RUNS_JOB_ID, kick_glossary_runs
+
+    scheduler = RecordingScheduler()
+    kick_glossary_runs(scheduler, glossary_runs())
+    assert scheduler.calls == [(GLOSSARY_RUNS_JOB_ID, 0.0)]
+
+
 async def test_the_app_under_test_runs_no_worker_of_its_own():
     """Phase 5 plan, assumption 48: running_app puts a do-nothing worker in app.state.glossary_runs, and the
     start-up kick reaches it, not a worker on the application database."""

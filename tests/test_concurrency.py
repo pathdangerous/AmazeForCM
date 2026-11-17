@@ -1081,11 +1081,45 @@ async def test_after_a_restart_a_queued_run_and_an_expired_one_are_run(own_schem
             drained.set()
             return out
 
+        def lease_wait(self):
+            return worker.lease_wait()
+
     async with running_app(engine=own_schema, settings=Settings(_env_file=None), glossary_runs=Watched()):
         assert await asyncio.to_thread(drained.wait, 15), "the start-up kick never ran the worker"
     assert out == {expired: "done", waiting: "done"}
     assert committed(own_schema, "SELECT id, status, attempt FROM glossary_runs ORDER BY attempt") == [
         (waiting, "done", 1), (expired, "done", 2)]
+
+
+async def test_after_a_restart_a_run_with_a_live_lease_is_run_when_its_lease_passes(own_schema, tmp_path):
+    """Review finding 2: a run was running when its worker stopped, and its lease has not passed when the API
+    starts again. The start-up kick claims nothing, sees the live lease and schedules one more kick just after
+    it; the run then completes on attempt 2 with no other kick (no request is sent)."""
+    from core.repositories.glossary_runs import GlossaryRunRepository
+    from ports.config import Settings
+    from ports.db import get_sessionmaker
+    from tests.conftest import running_app
+
+    run_id = uuid.UUID(queued_run(own_schema, bond_feed(own_schema)))
+    with get_sessionmaker(own_schema)() as session:
+        assert GlossaryRunRepository(session).claim(lease_seconds=2).id == run_id  # its worker stopped here
+        session.commit()
+    worker, finished, drains = glossary_worker(own_schema, tmp_path), threading.Event(), []
+
+    class Watched:
+        def drain(self):
+            drains.append(worker.drain())
+            if drains[-1]:
+                finished.set()
+            return drains[-1]
+
+        def lease_wait(self):
+            return worker.lease_wait()
+
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None), glossary_runs=Watched()):
+        assert await asyncio.to_thread(finished.wait, 8), "no kick came after the lease passed"
+    assert drains == [{}, {run_id: "done"}]  # the start-up kick found the lease live; the later one ran it
+    assert committed(own_schema, "SELECT status, attempt FROM glossary_runs") == [("done", 2)]
 
 
 async def test_two_mapping_requests_of_one_feed_at_once_give_200_and_409(own_schema, flow):

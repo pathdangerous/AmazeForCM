@@ -41,9 +41,10 @@ class Scheduler(Protocol):
         """Run the job once, now. Raises JobNotFound."""
         ...
 
-    def run_soon(self, job_id: str, func: Callable[[], None]) -> None:
-        """Run func once, in the background, as soon as possible (phase 5 plan, assumption 11). Nothing is
-        kept afterwards. Calls may overlap, so func must be safe to run twice at once."""
+    def run_soon(self, job_id: str, func: Callable[[], None], *, delay_seconds: float = 0.0) -> None:
+        """Run func once, in the background, as soon as possible (phase 5 plan, assumption 11), or after
+        delay_seconds. Nothing is kept afterwards. Calls may overlap, so func must be safe to run twice at
+        once. One delayed run waits per job id: a later delayed call replaces it."""
         ...
 
     def remove(self, job_id: str) -> None:

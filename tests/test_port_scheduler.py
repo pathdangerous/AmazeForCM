@@ -99,6 +99,41 @@ def test_run_soon_calls_may_overlap(scheduler):
     assert sorted(gate) == [0, 1]  # both ran at the same time (the barrier needs two waiting threads)
 
 
+def test_run_soon_with_a_delay_runs_after_it_not_before(scheduler):
+    """Review finding 2: a kick for after a lease. Once, in the background, after delay_seconds."""
+    import threading
+    import time
+
+    ran, at = threading.Event(), []
+    scheduler.start()
+    asked = time.monotonic()
+    scheduler.run_soon("glossary-runs", lambda: (at.append(time.monotonic()), ran.set()), delay_seconds=0.4)
+    assert not ran.wait(0.2)
+    assert ran.wait(5) and at[0] - asked >= 0.4
+
+
+def test_a_later_delayed_run_replaces_the_one_that_waits(scheduler):
+    """One waiting delayed run per job id: many kicks that see a live lease leave one timer, the newest."""
+    import threading
+
+    calls, ran = [], threading.Event()
+    scheduler.start()
+    scheduler.run_soon("glossary-runs", lambda: calls.append("old"), delay_seconds=0.3)
+    scheduler.run_soon("glossary-runs", lambda: (calls.append("new"), ran.set()), delay_seconds=0.3)
+    assert ran.wait(5)
+    assert not threading.Event().wait(0.3) and calls == ["new"]
+
+
+def test_shutdown_drops_a_delayed_run_that_waits(scheduler):
+    import threading
+
+    ran = threading.Event()
+    scheduler.start()
+    scheduler.run_soon("glossary-runs", ran.set, delay_seconds=0.3)
+    scheduler.shutdown()
+    assert not ran.wait(0.6)
+
+
 def test_run_soon_before_start_runs_at_start(scheduler):
     import threading
 

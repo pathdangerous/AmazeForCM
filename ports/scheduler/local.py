@@ -27,17 +27,22 @@ class LocalScheduler:
         self._scheduler = BackgroundScheduler(timezone=UTC)
         self._times: dict[str, tuple[int, int]] = {}
         self._soon_lock = threading.Lock()
-        self._soon_pending: list[tuple[str, Callable[[], None]]] = []
+        self._soon_pending: list[tuple[str, Callable[[], None], float]] = []
+        self._soon_timers: dict[str, threading.Timer] = {}  # the one delayed run that waits, per job id
 
     def start(self) -> None:
         with self._soon_lock:
             if not self._scheduler.running:
                 self._scheduler.start()
             pending, self._soon_pending = self._soon_pending, []
-        for job_id, guarded in pending:
-            threading.Thread(target=guarded, name=f"{job_id}:{uuid.uuid4().hex[:8]}", daemon=True).start()
+            for job_id, guarded, delay_seconds in pending:
+                self._launch(job_id, guarded, delay_seconds)
 
     def shutdown(self) -> None:
+        with self._soon_lock:
+            for timer in self._soon_timers.values():
+                timer.cancel()
+            self._soon_timers.clear()
         if self._scheduler.running:
             self._scheduler.shutdown(wait=False)
 
@@ -52,11 +57,13 @@ class LocalScheduler:
     def run_now(self, job_id: str) -> None:
         self._job(job_id).func()
 
-    def run_soon(self, job_id: str, func: Callable[[], None]) -> None:
+    def run_soon(self, job_id: str, func: Callable[[], None], *, delay_seconds: float = 0.0) -> None:
         """Each call on a daemon thread of its own, at once (or at start, if called before), so calls may
-        overlap. Not an APScheduler job: APScheduler 3 sets its state to stopped before it takes its job-store
-        lock in shutdown(), so a one-off job finishing then raises JobLookupError in its thread (phase 5 plan,
-        section 17). An exception in func is logged, never raised in the thread."""
+        overlap. With delay_seconds, on a daemon timer thread after the delay; one waits per job id, a later
+        delayed call replaces it, and shutdown() drops it. Not an APScheduler job: APScheduler 3 sets its
+        state to stopped before it takes its job-store lock in shutdown(), so a one-off job finishing then
+        raises JobLookupError in its thread (phase 5 plan, section 17). An exception in func is logged, never
+        raised in the thread."""
 
         def guarded() -> None:
             try:
@@ -66,9 +73,23 @@ class LocalScheduler:
 
         with self._soon_lock:
             if not self._scheduler.running:
-                self._soon_pending.append((job_id, guarded))
+                self._soon_pending.append((job_id, guarded, delay_seconds))
                 return
-        threading.Thread(target=guarded, name=f"{job_id}:{uuid.uuid4().hex[:8]}", daemon=True).start()
+            self._launch(job_id, guarded, delay_seconds)
+
+    def _launch(self, job_id: str, guarded: Callable[[], None], delay_seconds: float) -> None:
+        """Called with _soon_lock held."""
+        name = f"{job_id}:{uuid.uuid4().hex[:8]}"
+        if delay_seconds <= 0:
+            threading.Thread(target=guarded, name=name, daemon=True).start()
+            return
+        waiting = self._soon_timers.pop(job_id, None)
+        if waiting is not None:
+            waiting.cancel()
+        timer = threading.Timer(delay_seconds, guarded)
+        timer.name, timer.daemon = name, True
+        self._soon_timers[job_id] = timer
+        timer.start()
 
     def remove(self, job_id: str) -> None:
         self._job(job_id)
