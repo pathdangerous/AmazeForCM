@@ -15,6 +15,8 @@ from sqlalchemy.orm import Session
 
 from core.repositories.errors import (
     AliasAlreadyOnElement,
+    ArrivalNotChecked,
+    NotAScheduledLoad,
     ElementAlreadyMapped,
     FeedHasNoFile,
     FeedNotACandidate,
@@ -67,7 +69,9 @@ CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyH
              AliasAlreadyOnElement, MappingChangedMeanwhile,
              # phase 6 (plan, sections 7 and 9)
              RulesAlreadyProposed, ConfigurationChangedMeanwhile, ConfigurationChangedSinceSummary, NothingToGoLive,
-             GoLiveAlreadyProposed, OwnerNotADataOwner, LoadInProgress, LoadNotReceived, NotLive)
+             GoLiveAlreadyProposed, OwnerNotADataOwner, LoadInProgress, LoadNotReceived, NotLive,
+             # phase 7 (plan, section 9): step 12 comes first
+             ArrivalNotChecked, NotAScheduledLoad)
 NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound,
              LoadNotFound)
 FORBIDDEN = (NotAnApprover, NotTheFeedsOwner)  # the step checks who may decide (403)

@@ -243,16 +243,18 @@ def _after_selection(session: Session, feed_id: UUID, requirement_id: UUID, *, i
                         blob_store=blob_store, connector_factory=connector_factory, settings=settings), None
 
 
-def _page(session: Session, requirement_id: UUID, catalogue: SourceCatalogue, settings: Settings) -> RequirementPage:
+def _page(session: Session, requirement_id: UUID, catalogue: SourceCatalogue, settings: Settings,
+          identity: Identity | None = None) -> RequirementPage:
     return requirement_page(session, RequirementRepository(session).get(requirement_id), catalogue,
-                            settings.source_down_release_days)
+                            settings.source_down_release_days,
+                            display_name=_display_name(identity) if identity else (lambda user_id: user_id))
 
 
 @router.get("/requirements/{requirement_id}", response_model=RequirementPage)
 def requirement_detail(requirement_id: UUID, session: DbSession, user: Requester, catalogue: Catalogue,
-                       settings: AppSettings) -> RequirementPage:
+                       settings: AppSettings, identity: IdentityPort) -> RequirementPage:
     _own_requirement(session, user, requirement_id)
-    return _page(session, requirement_id, catalogue, settings)
+    return _page(session, requirement_id, catalogue, settings, identity)
 
 
 @router.post("/requirements/{requirement_id}/find-source", response_model=FindSourceResponse)

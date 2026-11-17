@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from apps.api.jobs import DailyFetch, GlossaryRuns, kick_glossary_runs, register_daily_fetch
-from apps.api.routers import amaze, consumer, dev_identity, health
+from apps.api.routers import amaze, consumer, dev_identity, health, notifications
 from ports.config import get_settings
 from ports.identity import get_identity
 from ports.llm.base import LLMUnavailable
@@ -73,3 +73,4 @@ app.include_router(health.router)
 app.include_router(dev_identity.router)
 app.include_router(amaze.router)
 app.include_router(consumer.router)
+app.include_router(notifications.router)

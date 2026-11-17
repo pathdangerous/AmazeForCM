@@ -58,6 +58,8 @@ def test_seeding_twice_inserts_3_then_0(db_session):
     products = {p.code: p for p in ProductRepository(db_session).list_with_elements()}
     assert products["demo_bond_reference"].visibility == "restricted"
     assert products["demo_bid_ask_quotes"].element_keys == ["ask_price", "bid_price", "instrument_id", "price_date"]
+    # phase 7 assumption 36: coupon_rate is left out, so a coupon rate request reaches source picking (Bond terms)
+    assert products["demo_bond_reference"].element_keys == ["instrument_id", "isin", "issuer_name", "maturity_date"]
 
 
 def test_a_missing_glossary_gives_the_named_message(db_session):

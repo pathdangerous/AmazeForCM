@@ -73,6 +73,26 @@ def test_step_13_outcomes_are_claude_mds():
     assert union_outcomes(RunResult) == claude_md_outcomes("13 Run") == ["stage_completed", "failed_rolled_back"]
 
 
+def test_step_12_outcomes_are_claude_mds():
+    from core.steps.s12_arrival import ArrivalResult
+
+    assert union_outcomes(ArrivalResult) == claude_md_outcomes("12 Arrival and structure") == [
+        "on_time_complete", "late_alert", "resent_quarantined", "additive_parked", "breaking_held"]
+
+
+def test_step_15_outcomes_are_claude_mds():
+    from core.steps.s15_certify import CertifyResult
+
+    assert union_outcomes(CertifyResult) == claude_md_outcomes("15 Certify") == ["released", "held_consumers_warned"]
+
+
+def test_step_20_outcomes_are_claude_mds():
+    from core.steps.s20_create_product import Step20Result
+
+    assert union_outcomes(Step20Result) == claude_md_outcomes("20 Create product") == [
+        "created", "data_not_in_domains"]
+
+
 def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("17 Discover") == ["found", "not_entitled_visible"]
     assert claude_md_outcomes("Routing checks") == ["reuse", "compose", "create_product", "raise_requirement"]

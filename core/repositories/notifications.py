@@ -13,6 +13,7 @@ class NotificationRepository:
     def __init__(self, session: Session):
         self._session = session
 
-    def list_for(self, recipient: str) -> list[Notification]:
-        query = select(Row).where(Row.recipient == recipient).order_by(Row.created_at.desc(), Row.id)
+    def list_for(self, recipient: str, limit: int | None = None) -> list[Notification]:
+        """Newest first; `limit` keeps only that many (the inbox shows 50)."""
+        query = select(Row).where(Row.recipient == recipient).order_by(Row.created_at.desc(), Row.id).limit(limit)
         return [Notification.model_validate(r) for r in self._session.scalars(query)]

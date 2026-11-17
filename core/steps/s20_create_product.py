@@ -138,12 +138,9 @@ def _create_product(session: Session, load: Load, context: FinishContext) -> tup
     if product is None:
         product, new = _new_product(session, feed_id, waiting[0].id if waiting else None), True
     held = products.elements_of(product.id)
-    glossary = GlossaryRepository(session)
-    named = {p for key in held for p in phrases(glossary.get_current(key))}
     results: list[Step20Result] = []
     for requirement in waiting:
-        missing = [key for key in requirement.elements if key not in held]
-        outstanding = [term for term in requirement.terms if words(term) not in named]
+        missing, outstanding = uncovered(session, held, requirement.elements, requirement.terms)
         if missing or outstanding:
             results.append(DataNotInDomains(requirement_id=requirement.id, missing=missing, terms=outstanding))
             _tell_backend(context, product.name, requirement.title, missing, outstanding)
@@ -162,6 +159,16 @@ def _create_product(session: Session, load: Load, context: FinishContext) -> tup
         results.append(Created(requirement_id=requirement.id, product_code=product.code, product_new=new,
                                status=status))
     return product.code, results
+
+
+def uncovered(session: Session, held: Sequence[str], elements: Sequence[str],
+              terms: Sequence[str]) -> tuple[list[str], list[str]]:
+    """(the element keys a product holding `held` lacks, the ticked terms none of its elements covers). A term is
+    covered when glossary phrase matching finds it among the names and aliases of the product's elements
+    (assumption 25). Read only; the requirement page uses it too."""
+    glossary = GlossaryRepository(session)
+    named = {p for key in held for p in phrases(glossary.get_current(key))}
+    return ([key for key in elements if key not in held], [term for term in terms if words(term) not in named])
 
 
 def _new_product(session: Session, feed_id: UUID, requirement_id: UUID | None):

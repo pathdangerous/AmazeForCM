@@ -12,6 +12,6 @@
     {"code": "demo_bond_reference", "name": "Bond reference data", "domain": "security_master", "visibility": "restricted",
      "owner_id": "dev-data-owner",
      "description": "Synthetic reference data for debt instruments: identifiers, issuer and terms.",
-     "element_keys": ["instrument_id", "isin", "issuer_name", "maturity_date", "coupon_rate"]}
+     "element_keys": ["instrument_id", "isin", "issuer_name", "maturity_date"]}
   ]
 }

@@ -229,6 +229,30 @@ async def test_load_now_needs_a_go_live_then_fetches_and_loads(client, exchange)
     loaded = await call(client, "POST", f"feeds/{exchange.id}/loads", {}, headers=OPAL)
     assert loaded["result"] == {"fetch": "fetched", "load": "released"}  # was "loaded" before phase 7
     assert loaded["feed"]["loads"][0]["purpose"] == "scheduled"
+    # phase 7: the answer's feed page carries the arrival, the certification and the product
+    newest = loaded["feed"]["loads"][0]
+    assert (newest["arrival_outcome"], newest["arrival_detail"]["columns"]) == (
+        "on_time_complete", ["instr_id", "trade_date", "traded_qty", "note"])
+    assert newest["certification"]["outcome"] == "released" and newest["certification"]["rows"] == 4
+    assert loaded["feed"]["product"]["code"] == CODE and loaded["feed"]["parked_columns"] == []
+    # a go-live test load has no arrival or certification
+    test_load = next(l for l in loaded["feed"]["loads"] if l["purpose"] == "go_live_test")
+    assert (test_load["arrival_outcome"], test_load["certification"]) == (None, None)
+
+
+async def test_the_feed_page_lists_the_columns_a_delivery_parked(client, exchange, db_session):
+    from core.domain.profiling import FileColumn
+    from core.repositories.feed_profiles import FeedProfileRepository
+
+    exchange.job.run()
+    before = FeedProfileRepository(db_session).latest(exchange.id)
+    FeedProfileRepository(db_session).add_version(
+        feed_id=exchange.id, fetch_id=before.fetch_id, outcome="profiled", row_count=1, coverage=[],
+        columns=[*before.columns, FileColumn(name="rating", type="VARCHAR", null_count=0, null_rate=0.0,
+                                             distinct_count=1)],
+        spec=before.spec, engine=before.engine, profiled_by="step_12")
+    page = await call(client, "GET", f"feeds/{exchange.id}")
+    assert page["parked_columns"] == ["rating"]
 
 
 async def test_the_proposals_list_gains_rules_and_summaries(client, exchange):

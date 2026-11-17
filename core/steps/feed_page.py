@@ -22,11 +22,13 @@ from sqlalchemy.orm import Session
 from core.domain.configuration import Mapping
 from core.domain.feed import Feed, FeedRegistration
 from core.domain.go_live import GoLive
-from core.domain.load import Load, LoadStage
+from core.domain.load import Load, LoadCertification, LoadStage
 from core.domain.mapping import GlossaryRun
+from core.domain.product import Product
 from core.domain.profiling import FeedProfile, FeedSignoff
 from core.domain.proposal import Approval
 from core.domain.sourcing import SourceFetch, SourceSummary
+from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feed_registrations import FeedRegistrationRepository
@@ -36,6 +38,7 @@ from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
+from core.repositories.products import ProductRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
@@ -135,6 +138,8 @@ class FeedPage(BaseModel):
     rules: RulesOnPage  # phase 6
     go_live: GoLiveOnPage
     loads: list[LoadOnPage]  # the latest LOADS_ON_PAGE, newest first
+    product: Product | None = None  # phase 7: the product made at the feed's first release
+    parked_columns: list[str] = []  # phase 7: step 12's new columns, not mapped yet
 
 
 class RuleOnPage(BaseModel):
@@ -178,6 +183,10 @@ class LoadOnPage(BaseModel):
     failure: str | None
     go_live_id: UUID | None
     stages: list[LoadStage]
+    # Phase 7: step 12's arrival and step 15's certification (None for a go-live test load, and before they ran)
+    arrival_outcome: str | None = None
+    arrival_detail: dict[str, Any] | None = None
+    certification: LoadCertification | None = None
 
 
 LOADS_ON_PAGE = 10
@@ -186,7 +195,24 @@ LOADS_ON_PAGE = 10
 def load_on_page(session: Session, load: Load) -> LoadOnPage:
     return LoadOnPage(id=load.id, purpose=load.purpose, status=load.status, received_at=load.received_at,
                       finished_at=load.finished_at, failed_stage=load.failed_stage, failure=load.failure,
-                      go_live_id=load.go_live_id, stages=LoadRepository(session).stages(load.id))
+                      go_live_id=load.go_live_id, stages=LoadRepository(session).stages(load.id),
+                      arrival_outcome=load.arrival_outcome, arrival_detail=load.arrival_detail,
+                      certification=LoadCertificationRepository(session).for_load(load.id))
+
+
+def parked_columns(session: Session, feed_id: UUID) -> list[str]:
+    """Columns step 12 found in a delivery that the feed did not have, which no current mapping names yet (they
+    wait for the glossary builder, the mapping step and a new go-live)."""
+    profiles = FeedProfileRepository(session).history(feed_id)
+    mapped = {m.source_field for m in MappingRepository(session).current_for_feed(feed_id)}
+    seen: set[str] = set()
+    parked: list[str] = []
+    for profile in profiles:
+        names = [c.name for c in profile.columns]
+        if profile.profiled_by == "step_12":
+            parked += [n for n in names if n not in seen and n not in mapped and n not in parked]
+        seen |= set(names)
+    return parked
 
 
 def _rules_on_page(session: Session, feed: Feed) -> RulesOnPage:
@@ -315,7 +341,8 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         registration=FeedRegistrationRepository(session).current(feed.id), next_action=next_action,
         glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest),
         rules=_rules_on_page(session, feed), go_live=_go_live_on_page(session, feed, date.today()),
-        loads=[load_on_page(session, load) for load in LoadRepository(session).list_for_feed(feed.id)[:LOADS_ON_PAGE]])
+        loads=[load_on_page(session, load) for load in LoadRepository(session).list_for_feed(feed.id)[:LOADS_ON_PAGE]],
+        product=ProductRepository(session).for_feed(feed.id), parked_columns=parked_columns(session, feed.id))
 
 
 FeedPage.model_rebuild()  # its phase 6 sections are declared below it
