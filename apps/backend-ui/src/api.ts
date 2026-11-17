@@ -106,7 +106,18 @@ export type FeedPage = {
   rules: RulesOnPage; // phase 6
   go_live: GoLiveOnPage;
   loads: LoadOnPage[]; // the latest 10, newest first
+  product: { code: string; name: string; visibility: "open" | "restricted"; owner_id: string; created_at: string } | null;
+  parked_columns: string[]; // phase 7: new columns step 12 found, not mapped yet
 };
+
+// ---- phase 7: steps 12, 15 and 20, and the inbox
+export type ArrivalOutcome = "on_time_complete" | "resent_quarantined" | "additive_parked" | "breaking_held";
+export type Certification = {
+  rows: number; flagged_rows: number; trust_score: string; threshold: string;
+  outcome: "released" | "held_consumers_warned"; warned: string[];
+};
+export type Notification = { id: string; created_at: string; subject: string; body: string; link: string | null;
+                             read_at: string | null };
 
 // ---- phase 6: steps 09, 11 and 13
 
@@ -144,6 +155,10 @@ export type LoadStageRow = {
 export type LoadOnPage = {
   id: string; purpose: "go_live_test" | "scheduled"; status: string; received_at: string; finished_at: string | null;
   failed_stage: string | null; failure: string | null; go_live_id: string | null; stages: LoadStageRow[];
+  arrival_outcome: ArrivalOutcome | null;
+  arrival_detail: { reason?: string | null; columns?: string[]; missing?: string[]; added?: string[];
+                    same_as?: string; not_parked?: string } | null;
+  certification: Certification | null;
 };
 export type ReturnedRule = {
   rule_key: string; sql: string; description: string; share: number; flagged_rows: number; total_rows: number;

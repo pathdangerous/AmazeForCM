@@ -36,6 +36,7 @@ from core.domain.rules import (
     MAX_SHARE,
     Backtest,
     Delivery,
+    LoadHistoryItem,
     ProposedRule,
     RuleCandidateElement,
     RuleRecommenderInput,
@@ -57,6 +58,7 @@ from core.repositories.errors import (
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
+from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.steps.errors import needs_a_note
 from core.steps.result import StepResult
@@ -66,6 +68,9 @@ from ports.connectors.base import SourceConnector, SourceUnavailable
 from ports.connectors.catalogue import SourceCatalogue
 from ports.identity.base import User
 from ports.notify.base import Notifier
+from ports.storage.base import BlobNotFound, BlobStore
+
+LOAD_HISTORY = 10  # the feed's own loads in the back-test (phase 7 assumption 30)
 
 ALREADY_THERE = "The feed already has a rule or a pending proposal with this key."
 WAS_REJECTED = "A steward or checker rejected a rule with this key; it is not proposed again."
@@ -175,17 +180,22 @@ def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue) 
         feed_id=feed.id, feed_code=feed.code, source_name=feed.name, elements=elements,
         feed_templates=feed_offers([e.key for e in elements]), existing_keys=_known_keys(session, feed_id),
         rejected_keys=sorted(RuleRepository(session).rejected_keys(feed_id)), mapping_ids=sorted(m.id for m in mappings),
-        connector=feed.connector, history=list(entry.history) if entry else [])
+        connector=feed.connector, history=list(entry.history) if entry else [],
+        load_history=[LoadHistoryItem(label=f"load {load.received_at:%Y-%m-%d}", file_ref=load.file_ref)
+                      for load in LoadRepository(session).fully_loaded_scheduled(feed_id, LOAD_HISTORY)])
 
 
 # ---------------------------------------------------------------- the back-test (no connection held)
 
 
 def backtest_for(agent_input: RuleRecommenderInput, *, connector_factory: Callable[[str], SourceConnector],
-                 rule_timeout_seconds: float) -> Callable[[RuleRecommenderOutput], RuleRecommenderOutput]:
-    """The after_answer of Agent.run(): a copy of the answer with each rule's verdict, reason and back-test."""
+                 rule_timeout_seconds: float,
+                 blob_store: BlobStore | None = None) -> Callable[[RuleRecommenderOutput], RuleRecommenderOutput]:
+    """The after_answer of Agent.run(): a copy of the answer with each rule's verdict, reason and back-test. The
+    history is the source's synthetic deliveries (through its connector), then the feed's own loads (through
+    BlobStore.get(); without a blob store they are not read)."""
     def run(output: RuleRecommenderOutput) -> RuleRecommenderOutput:
-        return _checked(agent_input, output, connector_factory, rule_timeout_seconds)
+        return _checked(agent_input, output, connector_factory, rule_timeout_seconds, blob_store)
 
     return run
 
@@ -209,7 +219,8 @@ def _refusal(agent_input: RuleRecommenderInput, rule: ProposedRule, seen: set[st
 
 
 def _checked(agent_input: RuleRecommenderInput, output: RuleRecommenderOutput,
-             connector_factory: Callable[[str], SourceConnector], timeout: float) -> RuleRecommenderOutput:
+             connector_factory: Callable[[str], SourceConnector], timeout: float,
+             blob_store: BlobStore | None = None) -> RuleRecommenderOutput:
     seen: set[str] = set()
     verdicts: dict[int, ProposedRule] = {}
     live: list[tuple[int, ProposedRule]] = []
@@ -220,41 +231,53 @@ def _checked(agent_input: RuleRecommenderInput, output: RuleRecommenderOutput,
             verdicts[index] = rule.model_copy(update={"verdict": "refused", "reason": reason})
         else:
             live.append((index, rule))
-    if not live or not agent_input.history or agent_input.connector is None:
+    from_source = bool(agent_input.history) and agent_input.connector is not None
+    from_loads = bool(agent_input.load_history) and blob_store is not None
+    if not live or not (from_source or from_loads):
         for index, rule in live:
             verdicts[index] = rule.model_copy(update={"verdict": "kept", "backtest": Backtest(status="not_back_tested")})
     else:
-        verdicts.update(_run_history(agent_input, live, connector_factory, timeout))
+        verdicts.update(_run_history(agent_input, live, connector_factory, timeout,
+                                    blob_store if from_loads else None, from_source))
     return RuleRecommenderOutput(rules=[verdicts[i] for i in range(len(output.rules))])
 
 
 def _run_history(agent_input: RuleRecommenderInput, live: list[tuple[int, ProposedRule]],
-                 connector_factory: Callable[[str], SourceConnector], timeout: float) -> dict[int, ProposedRule]:
+                 connector_factory: Callable[[str], SourceConnector], timeout: float,
+                 blob_store: BlobStore | None = None, from_source: bool = True) -> dict[int, ProposedRule]:
     columns = [SimpleNamespace(source_field=e.source_field, element_key=e.key, data_type=e.data_type)
                for e in agent_input.elements]
     deliveries: dict[int, list[Delivery]] = defaultdict(list)
     failed: dict[int, str] = {}
-    connector = connector_factory(agent_input.connector)
-    try:
-        for ref in agent_input.history:
-            label = ref.rsplit("/", 1)[-1].removesuffix(".csv")
-            try:
-                content = connector.fetch(ref).content
-            except SourceUnavailable:
-                _exclude(deliveries, live, label, "source_unavailable")
-                continue
-            ran, why = _one_delivery(content, columns, [(i, r) for i, r in live if i not in failed], timeout)
-            if why is not None:
-                _exclude(deliveries, live, label, why)
-                continue
-            rows, results = ran
-            for index, flagged in results.items():
-                if isinstance(flagged, str):
-                    failed[index] = flagged
-                else:
-                    deliveries[index].append(Delivery(label=label, rows=rows, flagged=len(flagged)))
-    finally:
-        connector.close()
+
+    def one(label: str, read: Callable[[], bytes], missing: type[Exception], why_missing: str) -> None:
+        try:
+            content = read()
+        except missing:
+            _exclude(deliveries, live, label, why_missing)
+            return
+        ran, why = _one_delivery(content, columns, [(i, r) for i, r in live if i not in failed], timeout)
+        if why is not None:
+            _exclude(deliveries, live, label, why)
+            return
+        rows, results = ran
+        for index, flagged in results.items():
+            if isinstance(flagged, str):
+                failed[index] = flagged
+            else:
+                deliveries[index].append(Delivery(label=label, rows=rows, flagged=len(flagged)))
+
+    if from_source:
+        connector = connector_factory(agent_input.connector)
+        try:
+            for ref in agent_input.history:
+                one(ref.rsplit("/", 1)[-1].removesuffix(".csv"), lambda ref=ref: connector.fetch(ref).content,
+                    SourceUnavailable, "source_unavailable")
+        finally:
+            connector.close()
+    if blob_store is not None:  # the feed's own loads, after the source's history; no connection is held
+        for item in agent_input.load_history:
+            one(item.label, lambda ref=item.file_ref: blob_store.get(ref), BlobNotFound, "file_missing")
     verdicts = {}
     for index, rule in live:
         if index in failed:

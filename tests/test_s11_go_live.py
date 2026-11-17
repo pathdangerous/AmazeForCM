@@ -74,7 +74,8 @@ def world(db_session, glossary, tmp_path):
 def prepare(world, provider=None, **kw):
     agent = ReviewSummariserAgent(provider=provider or MockProvider(), blob_store=world.blobs)
     return prepare_go_live(world.session, blob_store=world.blobs, agent=agent, feed_id=world.feed,
-                           notifier=world.notifier, backend_team=TEAM, owner_is_data_owner=lambda uid: True, **kw)
+                           notifier=world.notifier, backend_team=TEAM, owner_is_data_owner=lambda uid: True,
+                           operations=OPERATIONS, stale_minutes=30, **kw)
 
 
 def decide(world, summary, *, user=None, decision="approved", note=None, back_to_step=None, hypercare_days=10):
@@ -89,6 +90,28 @@ def told(world, recipient):
 
 
 # ---------------------------------------------------------------- prepare
+
+
+def test_prepare_clears_a_stale_received_load_first(world):
+    """Phase 7 assumption 18: Prepare clears a load a dead process left received, then makes its own test load."""
+    from datetime import UTC, datetime, timedelta
+
+    repo = LoadRepository(world.session)
+    old = repo.create(feed_id=world.feed, file_ref=KEY, purpose="go_live_test",
+                      received_at=datetime.now(UTC) - timedelta(minutes=45))
+    summary = prepare(world)
+    assert isinstance(summary, GoLiveSummary) and summary.test_load.id != old.id
+    assert repo.get(old.id).status == "abandoned"
+    assert "Load abandoned: syn_go_live" in told(world, "dev-operations")
+
+
+def test_prepare_with_a_younger_received_load_is_load_in_progress(world):
+    from core.repositories.errors import LoadInProgress
+
+    young = LoadRepository(world.session).create(feed_id=world.feed, file_ref=KEY, purpose="go_live_test")
+    with pytest.raises(LoadInProgress):
+        prepare(world)
+    assert LoadRepository(world.session).get(young.id).status == "received"
 
 
 def test_prepare_runs_a_test_load_then_drafts_the_summary(world):

@@ -76,8 +76,9 @@ def check_known_source(requirement: Requirement, catalogue: SourceCatalogue,
 def lock_source(session: Session, code: str) -> None:
     """The advisory lock on a source code, held until the transaction ends. First in the lock order of every
     step that takes more than one lock (phase 4 plan, assumption 46): source code, feed row, requirements
-    in id order."""
-    session.execute(select(func.pg_advisory_xact_lock(func.hashtext(code))))
+    in id order. The key includes the schema (phase 7 plan, assumption 2a): advisory locks are database-wide,
+    and one schema holds one deployment (two test workers hold two)."""
+    session.execute(select(func.pg_advisory_xact_lock(func.hashtext(func.concat(func.current_schema(), ":", code)))))
 
 
 def feed_for(session: Session, *, entry: SourceEntry, requirement_id: UUID) -> Feed:

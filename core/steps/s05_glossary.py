@@ -166,7 +166,8 @@ def claim_run(session: Session, *, lease_seconds: int) -> GlossaryRun | None:
 
 def builder_input(session: Session, run: GlossaryRun) -> BuilderPlan:
     """Read only. The new columns (assumption 8) of the run's own profile (the feed's latest when the run
-    was queued; 0017 checks it is the feed's), less those covered (assumption 9)."""
+    was queued; 0017 checks it is the feed's), less those covered (assumption 9). A structure_change run (phase 7,
+    step 12) looks only at its own columns, and none of them is sent back."""
     feed = FeedRepository(session).get(run.feed_id)
     profile = FeedProfileRepository(session).get(run.profile_id)
     glossary = GlossaryRepository(session).list_current()
@@ -174,7 +175,11 @@ def builder_input(session: Session, run: GlossaryRun) -> BuilderPlan:
     asked = {p.payload.get("source_field") for p in ProposalRepository(session).list_for_feed(run.feed_id,
                                                                                                "glossary_element")}
     skipped, columns = {}, []
-    for column in new_columns(profile.columns, profile.spec, sent_back=run.columns):
+    if run.reason == "structure_change":  # step 12 parked these columns: only they are asked about, none sent back
+        looked_at, sent_back = [c for c in profile.columns if c.name in set(run.columns)], ()
+    else:
+        looked_at, sent_back = profile.columns, run.columns
+    for column in new_columns(looked_at, profile.spec, sent_back=sent_back):
         why = covered_by(column, glossary, mapped=mapped, asked=asked)
         if why is not None:
             skipped[column.name] = SKIPPED[why]

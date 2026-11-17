@@ -86,6 +86,25 @@ def pending(db_session, feed, column):
     return ProposalRepository(db_session).pending_for_column("glossary_element", feed.id, column)
 
 
+def test_a_structure_change_run_asks_only_about_its_own_columns(db_session, bond, tmp_path, notifier):
+    """Phase 7 assumption 13: a structure_change run looks at the columns it names (the parked ones) and treats
+    none as sent back, so the profile's other new columns are not asked about again."""
+    queue_run(db_session, feed_id=bond.id, reason="structure_change", requested_by="step_12", columns=["rating"])
+    end_read(db_session)
+    run_ = claim_run(db_session, lease_seconds=300)
+    plan = builder_input(db_session, run_)
+    assert [c.name for c in plan.agent_input.columns] == ["rating"]
+    assert not plan.agent_input.columns[0].sent_back
+    assert "venue_mic_code" not in {c.name for c in plan.agent_input.columns} and plan.skipped == {}
+
+
+def test_a_structure_change_column_that_is_covered_is_skipped_not_asked(db_session, bond, tmp_path, notifier):
+    queue_run(db_session, feed_id=bond.id, reason="structure_change", requested_by="step_12", columns=["cpn"])
+    end_read(db_session)
+    plan = builder_input(db_session, claim_run(db_session, lease_seconds=300))
+    assert plan.agent_input is None  # cpn is declared as an element by the spec: not new, and not sent back
+
+
 # ---------------------------------------------------------------- the three outcomes (section 5.4)
 
 

@@ -493,3 +493,111 @@ async def test_a_provider_that_does_not_answer_gives_503_and_writes_nothing(clie
     assert response.json()["reason"] == reason
     assert (await page(client, requirement_id))["status"] == "defined"
     assert db_session.query(ProposalLogEntry).count() == 0
+
+
+# ---------------------------------------------------------------- phase 7: the requester sees each state (task 9)
+
+EXCHANGE, EXCHANGE_NAME = "syn_exchange_volumes", "Exchange daily volumes"
+HELD_BY_SCORE = "its trust score of 50.0 is below 90.0"
+
+
+def _exchange_feed(db_session):
+    from core.repositories.feeds import FeedRepository
+
+    return FeedRepository(db_session).create_candidate(code=EXCHANGE, name=EXCHANGE_NAME, source_code=EXCHANGE,
+                                                       connector="local_file", source_ref="files/exchange_volumes.csv")
+
+
+def _product(db_session, feed, keys, *, visibility="open"):
+    from core.repositories.products import ProductRepository
+
+    return ProductRepository(db_session).create(
+        code=EXCHANGE, name=EXCHANGE_NAME, domain="pricing", feed_id=feed.id, owner_id="dev-data-owner",
+        visibility=visibility, element_keys=keys)
+
+
+async def test_the_requester_sees_each_onboarding_state_in_turn(client, db_session):
+    """Phase 7 assumptions 33 to 35: the onboarding message stays CLAUDE.md's word for word; a progress line says
+    where the data is; then Ready, with the product, and a note when a later delivery was held."""
+    from core.repositories.loads import LoadRepository
+    from tests.configured import approved_mapping, certified_load, go_live, onboarding_requirement
+    from tests.onboarded import registered_feed
+
+    feed = _exchange_feed(db_session)
+    waiting = onboarding_requirement(db_session, feed.id, title="Daily volume", elements=["volume"])
+    open_term = onboarding_requirement(db_session, feed.id, title="Open term", elements=["instrument_id"],
+                                       terms=["turnover"])
+    mine = str(waiting.id)
+
+    async def state():
+        body = await page(client, mine)
+        assert body["message"] == ONBOARDING and body["status"] == "onboarding"
+        return body["progress"]
+
+    assert await state() == {"state": "checking_file",
+                             "text": f"The backend team is checking the first file from {EXCHANGE_NAME}."}
+    registered_feed(db_session, feed.id)
+    assert await state() == {"state": "setting_up", "text": f"{EXCHANGE_NAME} is registered; the backend team is "
+                                                            "setting up how its data is read and checked."}
+    for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"), ("traded_qty", "volume")):
+        approved_mapping(db_session, feed.id, field, key)
+    live = go_live(db_session, feed.id)
+    assert await state() == {"state": "approved", "text": f"The data owner approved {EXCHANGE_NAME} for loading; the "
+                                                          "first delivery is being checked."}
+    breaking = LoadRepository(db_session).create(feed_id=feed.id, file_ref="raw/x.csv", purpose="scheduled",
+                                                 go_live_id=live.id)
+    LoadRepository(db_session).record_arrival(
+        breaking.id, outcome="breaking_held", content_sha256=None, detail={"reason": "1 column(s) are missing: px"})
+    assert await state() == {"state": "delivery_held", "text": f"The latest delivery from {EXCHANGE_NAME} was held "
+                             "(1 column(s) are missing: px); the next delivery is checked again."}
+    certified_load(db_session, feed.id, "held")
+    assert (await state())["text"].endswith(f"was held ({HELD_BY_SCORE}); the next delivery is checked again.")
+    certified_load(db_session, feed.id, "released")
+    _product(db_session, feed, ["instrument_id"])  # a release that holds instrument_id, not volume
+    assert await state() == {"state": "part_missing", "text": f"{EXCHANGE_NAME} is released, but it does not hold "
+                             "Volume yet; the backend team has been told."}
+    assert (await page(client, str(open_term.id)))["progress"]["text"].endswith(
+        "does not hold turnover yet; the backend team has been told.")
+
+    RequirementRepository(db_session).advance(waiting.id, "ready")
+    ready = await page(client, mine)
+    assert (ready["message"], ready["progress"]) == (f"Ready. Your data is in {EXCHANGE_NAME}.", None)
+    assert ready["product"] == {"code": EXCHANGE, "name": EXCHANGE_NAME, "entitled": True, "route": None}
+    assert ready["held_note"] is None
+    certified_load(db_session, feed.id, "held")  # a later delivery is held; the released data stays
+    loads = LoadRepository(db_session).list_for_feed(feed.id)
+    held = loads[0]
+    released = next(load for load in loads if load.status == "released")
+    assert (await page(client, mine))["held_note"] == (
+        f"The delivery of {held.received_at:%Y-%m-%d} was held ({HELD_BY_SCORE}); you still see the data released "
+        f"on {released.received_at:%Y-%m-%d}.")
+
+
+async def test_access_restricted_names_the_product_and_the_route(client, db_session):
+    from tests.configured import certified_load, onboarding_requirement
+    from tests.onboarded import registered_feed
+
+    feed = _exchange_feed(db_session)
+    waiting = onboarding_requirement(db_session, feed.id, title="Daily volume", elements=["volume"])
+    registered_feed(db_session, feed.id, visibility="restricted")
+    certified_load(db_session, feed.id, "released")
+    _product(db_session, feed, ["volume"], visibility="restricted")
+    RequirementRepository(db_session).advance(waiting.id, "access_restricted")
+    body = await page(client, str(waiting.id))
+    assert body["message"] == (f"Access restricted. Your data is in {EXCHANGE_NAME}. "
+                               f"Ask Devon Owner for access to {EXCHANGE_NAME}.")
+    assert body["product"] == {"code": EXCHANGE, "name": EXCHANGE_NAME, "entitled": False,
+                               "route": f"Ask Devon Owner for access to {EXCHANGE_NAME}"}
+
+
+async def test_an_outstanding_ticked_term_is_listed_on_the_page(client, db_session):
+    from tests.configured import certified_load, onboarding_requirement
+    from tests.onboarded import registered_feed
+
+    feed = _exchange_feed(db_session)
+    waiting = onboarding_requirement(db_session, feed.id, elements=["volume"], terms=["turnover", "traded volume"])
+    registered_feed(db_session, feed.id)
+    certified_load(db_session, feed.id, "released")
+    _product(db_session, feed, ["volume"])  # "traded volume" is an alias of volume; "turnover" is not covered
+    assert (await page(client, str(waiting.id)))["progress"]["text"] == (
+        f"{EXCHANGE_NAME} is released, but it does not hold turnover yet; the backend team has been told.")

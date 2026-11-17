@@ -1,8 +1,9 @@
 """Load: one delivery (file) of a registered feed, tracked through steps 12 to 15.
 
 Statuses are the names in CLAUDE.md, plus `loaded` (phase 6, migration 0018): the engine (step 13) ended with
-all four stages completed. Phase 7 adds more by migration (for example quarantined, for the
-resent_quarantined outcome). A load has a purpose: `go_live_test` (step 11's test load, before the owner
+all four stages completed; and, from migration 0019 (phase 7), `quarantined` (the resent_quarantined outcome of
+step 12) and `abandoned` (a load left received by a dead process). A scheduled load has an arrival (step 12:
+the SHA-256 of its file, an outcome and its detail) and, once loaded, a certification (step 15). A load has a purpose: `go_live_test` (step 11's test load, before the owner
 approves) or `scheduled` (the daily job, after a go-live; it names that go-live). Each stage of the engine is
 a LoadStage row; each file row that reached the standard model is a StandardRecord.
 """
@@ -10,6 +11,7 @@ a LoadStage row; each file row that reached the standard model is a StandardReco
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal, get_args
 from uuid import UUID
 
@@ -17,8 +19,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.domain.common import NonBlank
 
-LoadStatus = Literal["received", "loaded", "held", "failed_rolled_back", "released"]
+LoadStatus = Literal["received", "loaded", "held", "failed_rolled_back", "released", "quarantined", "abandoned"]
 LOAD_STATUSES: tuple[str, ...] = get_args(LoadStatus)
+
+ArrivalOutcome = Literal["on_time_complete", "resent_quarantined", "additive_parked", "breaking_held"]
+ARRIVAL_OUTCOMES: tuple[str, ...] = get_args(ArrivalOutcome)
+
+CertificationOutcome = Literal["released", "held_consumers_warned"]
+CERTIFICATION_OUTCOMES: tuple[str, ...] = get_args(CertificationOutcome)
 
 LoadPurpose = Literal["go_live_test", "scheduled"]
 LOAD_PURPOSES: tuple[str, ...] = get_args(LoadPurpose)
@@ -61,6 +69,40 @@ class Load(BaseModel):
     finished_at: datetime | None
     failed_stage: Stage | None
     failure: str | None
+    content_sha256: str | None  # step 12: the SHA-256 of the delivered file (a scheduled load)
+    arrival_outcome: ArrivalOutcome | None
+    arrival_detail: dict[str, Any] | None
+    arrival_profile_id: UUID | None  # additive_parked: the feed_profiles row of the load's own file
+
+
+class LoadCertificationDraft(BaseModel):
+    """Step 15's result for one loaded scheduled load. The database recounts rows and flagged rows from the
+    load's standard records and checks the score and the outcome (migration 0019, G14)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    load_id: UUID
+    feed_id: UUID
+    rows: int = Field(ge=0)
+    flagged_rows: int = Field(ge=0)
+    rule_counts: dict[str, Any] = Field(default_factory=dict)  # the validated stage's per-rule counts
+    trust_score: Decimal = Field(ge=0, le=100)  # 100 x unflagged / rows, one decimal
+    threshold: Decimal = Field(ge=1, le=100)
+    outcome: CertificationOutcome
+    warned: list[str] = Field(default_factory=list)  # the user ids told when the load is held
+
+    @model_validator(mode="after")
+    def _flagged_within_rows(self) -> LoadCertificationDraft:
+        if self.flagged_rows > self.rows:
+            raise ValueError("flagged_rows cannot exceed rows")
+        return self
+
+
+class LoadCertification(LoadCertificationDraft):
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    created_at: datetime
 
 
 class LoadStageDraft(BaseModel):

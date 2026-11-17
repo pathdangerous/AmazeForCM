@@ -79,6 +79,13 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - Step 15: certification with a simple trust score; `released` or `held_consumers_warned`.
 - On release, the product is created (step 20) and the requester gets "Ready" (or "Access restricted").
 - **Done when:** the Playwright test runs the full PoC story, including one held delivery.
+- **As built (phase 7, `docs/plans/phase-7.md`):** migration `0019` (arrival fields and the `quarantined` and
+  `abandoned` statuses on loads, `load_certifications`, `products.feed_id`, the `structure_change` glossary run
+  reason; guards G12 to G16); steps 12, 15 and 20 (`s12_arrival.py`, `s15_certify.py`, `s20_create_product.py`),
+  run in one finishing transaction after the engine; the stale clear; the daily job and Load now run 12, 13, 15
+  and 20; the back-test also reads the feed's own loads; requester states up to "Ready"; `GET /api/notifications`
+  and a Notifications tab in both UIs; parallel test runs (`pytest -q -n 6`, a schema per worker). The done-when
+  test is `e2e/tests/poc_story.spec.ts`, on `amaze_test` schema `e2e_story`.
 
 ## Phase 7.5 — UI polish
 

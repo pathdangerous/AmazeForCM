@@ -8,6 +8,7 @@ Secrets such as DATABASE_URL are not read here; they go through the Secrets port
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Literal, get_args
@@ -48,6 +49,14 @@ class Settings(BaseSettings):
     # after go-live in which every scheduled load is reported to the owner and operations (hypercare).
     rule_timeout_seconds: int = Field(default=5, ge=1)
     hypercare_days: int = Field(default=10, ge=1)
+    # Phase 7: a load left received this long by a process that died is abandoned before the next load (step 12).
+    load_stale_minutes: int = Field(default=30, ge=1)
+    # Phase 7: a scheduled load whose trust score (100 x unflagged rows / rows) is at or above this is released
+    # (step 15); below it the load is held and its consumers are warned.
+    trust_release_threshold: Decimal = Field(default=Decimal("90"), ge=1, le=100)
+    # Phase 7 (plan risk 6): false registers no daily job (the glossary runs worker still runs); the e2e API sets it
+    # so the 06:00 UTC fetch cannot fire during a Playwright run.
+    daily_job_enabled: bool = True
 
     @field_validator("source_catalogue")
     @classmethod

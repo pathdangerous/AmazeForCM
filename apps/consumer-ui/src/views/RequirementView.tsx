@@ -60,7 +60,7 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
 
   const shown = message ?? page?.message;
   const warn = page?.last_fetch?.outcome === "source_down" || page?.status === "no_source_found"
-    || message?.includes("can be used only under these conditions");
+    || page?.status === "access_restricted" || message?.includes("can be used only under these conditions");
 
   return (
     <section>
@@ -73,6 +73,19 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
             <strong>{shown}</strong>
             {page.signoff_note && <div data-testid="signoff-note">{page.signoff_note}</div>}
           </div>
+          {page.progress && (
+            <p className="muted" data-testid="progress" data-state={page.progress.state}>{page.progress.text}</p>
+          )}
+          {page.product && (
+            <p data-testid="product">
+              Product: <strong>{page.product.name}</strong> ({page.product.code}){" "}
+              <span className={page.product.entitled ? "badge ok" : "badge warn"}>
+                {page.product.entitled ? "Available" : "Access restricted"}
+              </span>
+              {page.product.route && <span className="route" data-testid="product-route"> {page.product.route}.</span>}
+            </p>
+          )}
+          {page.held_note && <p className="warn" data-testid="held-note">{page.held_note}</p>}
           <dl>
             <dt>Asked for</dt>
             <dd>{page.title}</dd>

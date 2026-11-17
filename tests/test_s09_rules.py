@@ -25,6 +25,7 @@ from core.repositories.errors import (
     WrongProposalKind,
 )
 from core.repositories.feeds import FeedRepository
+from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.tables import ProposalLogDiscardRow, ProposalLogEntry
 from core.steps.errors import NoteNeeded
@@ -87,7 +88,7 @@ def agent_of(world, output=None):
 
 def propose(world, output=None, **kw):
     return propose_rules(world.session, feed_id=world.feed, agent=agent_of(world, output), catalogue=world.catalogue,
-                         connector_factory=kw.pop("connectors", world.connectors), **kw)
+                         connector_factory=kw.pop("connectors", world.connectors), blob_store=world.blobs, **kw)
 
 
 def answer(*rules):
@@ -124,6 +125,55 @@ def test_a_feed_with_no_current_mapping_has_no_rules_to_propose(db_session, glos
     registered_feed(db_session, feed.id)
     with pytest.raises(NothingToMap, match="mapping"):
         rules_input(db_session, feed_id=feed.id, catalogue=catalogue)
+
+
+# ---------------------------------------------------------------- the feed's own loads in the history (phase 6 note 1)
+
+LOADED_HEADER = "instr_id,trade_date,traded_qty\n"
+
+
+def a_scheduled_load(world, status, rows_text, name):
+    from tests.configured import certified_load
+
+    ref = f"raw/syn_exchange_volumes/{name}.csv"
+    world.blobs.put(ref, (LOADED_HEADER + rows_text).encode())
+    return certified_load(world.session, world.feed, status, file_ref=ref)
+
+
+def test_the_back_test_includes_the_feeds_loaded_scheduled_loads(world):
+    """Phase 7 assumption 30: the newest scheduled loads that completed all four stages (loaded, held, released),
+    read through BlobStore.get() after the catalogue's history; a failed or abandoned load is not included."""
+    released = a_scheduled_load(world, "released", "syn-1,2026-11-02,5\nsyn-2,2026-11-02,-7\n", "one")
+    held = a_scheduled_load(world, "held", "syn-3,2026-11-03,9\n", "two")
+    gone = LoadRepository(world.session).create(feed_id=world.feed, file_ref="raw/never.csv", purpose="go_live_test")
+    LoadRepository(world.session).abandon(gone.id, "Synthetic.")
+    agent_input = rules_input(world.session, feed_id=world.feed, catalogue=world.catalogue)
+    assert [h.file_ref for h in agent_input.load_history] == [held.file_ref, released.file_ref]  # newest first
+    assert all(h.label.startswith("load 20") for h in agent_input.load_history)
+    without = agent_input.model_copy(update={"load_history": []})
+    sql = "SELECT _row FROM curated WHERE \"volume\" < 0"
+    base = _checked_backtest(world, without, sql)
+    full = _checked_backtest(world, agent_input, sql)
+    assert (full.total_rows, full.flagged_rows) == (base.total_rows + 3, base.flagged_rows + 1)
+    assert [d.label for d in full.deliveries][-2:] == [h.label for h in agent_input.load_history]
+    assert [d.rows for d in full.deliveries][-2:] == [1, 2]
+
+
+def test_a_load_whose_file_left_the_store_is_left_out_of_the_back_test_with_its_reason(world):
+    a_scheduled_load(world, "released", "syn-1,2026-11-02,5\n", "present")
+    agent_input = rules_input(world.session, feed_id=world.feed, catalogue=world.catalogue)
+    gone = agent_input.load_history[0].model_copy(update={"file_ref": "raw/gone.csv"})  # left the store
+    back = _checked_backtest(world, agent_input.model_copy(update={"load_history": [gone]}), "SELECT _row FROM curated")
+    assert back.deliveries[-1].excluded == "file_missing"
+
+
+def _checked_backtest(world, agent_input, sql):
+    from core.domain.rules import ProposedRule, RuleRecommenderOutput
+
+    checked = backtest_for(agent_input, connector_factory=world.connectors, blob_store=world.blobs,
+                           rule_timeout_seconds=5)(RuleRecommenderOutput(rules=[ProposedRule(
+        rule_key="synthetic_rule", description="Synthetic.", sql=sql, element_keys=["volume"])]))
+    return checked.rules[0].backtest
 
 
 # ---------------------------------------------------------------- rules_proposed / flags_most_history_returned

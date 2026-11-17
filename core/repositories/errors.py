@@ -222,6 +222,15 @@ class LoadNotReceived(RepositoryError):
     """The load is no longer received (another run finished it): the engine writes nothing."""
 
 
+class ArrivalNotChecked(RepositoryError):
+    """A scheduled load is planned for the engine before step 12 passed it (on_time_complete or additive_parked);
+    migration 0019, G13, refuses it too."""
+
+
+class NotAScheduledLoad(RepositoryError):
+    """Step 12 checks the arrival of a scheduled load only; a go_live_test load has none (G12)."""
+
+
 class LoadInProgress(RepositoryError):
     """The feed already has a received load (migration 0018, uq_loads_one_received_per_feed): one at a time."""
 

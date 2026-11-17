@@ -137,6 +137,17 @@ def test_terms_are_cleaned_before_they_are_saved(ask):
     assert result.requirement.requirement.terms == ["carbon footprint", "esg score"]
 
 
+def test_a_coupon_rate_request_with_the_demo_products_reaches_source_picking(ask, db_session):
+    """Phase 5 note 13 (phase 7 assumption 36): no demo product holds coupon_rate, so a request for it is not a
+    reuse of the restricted Bond reference data: a requirement is raised, which goes on to find a source."""
+    from core.seed import seed_demo
+
+    seed_demo(db_session)
+    result = ask("coupon rate", ["coupon_rate"])
+    assert result.routing.outcome == "raise_requirement" and result.requirement.outcome == "defined"
+    assert result.message == RAISED
+
+
 def test_a_term_that_is_a_glossary_phrase_is_refused(ask, db_session):
     with pytest.raises(TermInGlossary, match="closing price"):
         ask("closing price", terms=["Closing Price"])

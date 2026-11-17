@@ -7,10 +7,10 @@ inside a transaction that is rolled back. If the database is unreachable, tests 
 
 from __future__ import annotations
 
+import os
+import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-
-import uuid
 
 import pytest
 from alembic import command
@@ -31,8 +31,15 @@ def alembic_config(url: str) -> Config:
     return config
 
 
+def worker_schema() -> str:
+    """This pytest worker's schema of amaze_test (phase 7 plan, assumption 2): w_gw0, w_gw1, ... under
+    pytest-xdist, w_master without -n. Each worker builds and drops its own, so no worker reads another's."""
+    return "w_" + os.environ.get("PYTEST_XDIST_WORKER", "master")
+
+
 @pytest.fixture(scope="session")
 def test_database_url() -> str:
+    """TEST_DATABASE_URL with this worker's schema as the whole search_path (no public)."""
     secrets = EnvSecrets()
     try:
         url = secrets.get("TEST_DATABASE_URL")
@@ -44,24 +51,31 @@ def test_database_url() -> str:
         app_db = None
     if make_url(url).database == app_db:
         pytest.fail("TEST_DATABASE_URL must not name the application database", pytrace=False)
-    return url
+    return make_url(url).update_query_dict({"options": f"-csearch_path={worker_schema()}"}).render_as_string(
+        hide_password=False)
 
 
 @pytest.fixture(scope="session")
 def migrated_engine(test_database_url) -> Engine:
-    """Test database rebuilt from scratch: empty schema, then upgrade to head.
+    """This worker's schema of the test database rebuilt from scratch: empty, then upgrade to head.
 
     The schema is dropped rather than downgraded, so a migration edited during development (before it
     reaches the application database) cannot break the next run. Downgrades are tested separately in
-    test_migrations.py. test_database_url has already refused the application database.
+    test_migrations.py. test_database_url has already refused the application database. The schema is
+    created and dropped through a base engine (no search_path) and dropped again at the end of the session.
     """
+    schema = worker_schema()
+    base = create_engine(make_url(test_database_url).difference_update_query(["options"]))
+    with base.begin() as connection:
+        connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        connection.execute(text(f"CREATE SCHEMA {schema}"))
     engine = create_engine(test_database_url)
-    with engine.begin() as connection:
-        connection.execute(text("DROP SCHEMA public CASCADE"))
-        connection.execute(text("CREATE SCHEMA public"))
     command.upgrade(alembic_config(test_database_url), "head")
     yield engine
     engine.dispose()
+    with base.begin() as connection:
+        connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+    base.dispose()
 
 
 @pytest.fixture(scope="session")

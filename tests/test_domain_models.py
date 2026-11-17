@@ -1,5 +1,7 @@
 """Domain models validate what the database cannot say simply. Each task adds its models here."""
 
+import uuid
+
 import pytest
 from pydantic import ValidationError
 
@@ -76,7 +78,8 @@ def test_glossary_draft_rejects(bad):
 
 from core.domain.configuration import MappingDraft, RuleDraft  # noqa: E402
 from core.domain.feed import FEED_STAGES, FeedDraft  # noqa: E402
-from core.domain.load import LOAD_STATUSES, LoadDraft  # noqa: E402
+from core.domain.load import (  # noqa: E402
+    ARRIVAL_OUTCOMES, CERTIFICATION_OUTCOMES, LOAD_STATUSES, LoadCertificationDraft, LoadDraft)
 from core.domain.product import ProductDraft  # noqa: E402
 from core.domain.requirement import REQUIREMENT_STATUSES, RequirementDraft  # noqa: E402
 
@@ -89,7 +92,14 @@ def test_status_lists_are_the_names_in_claude_md():
         "no_source_found",  # phase 3b, migration 0009
     )
     assert FEED_STAGES == ("candidate", "registered", "rejected")
-    assert LOAD_STATUSES == ("received", "loaded", "held", "failed_rolled_back", "released")  # loaded: 0018
+    assert LOAD_STATUSES == ("received", "loaded", "held", "failed_rolled_back", "released",  # loaded: 0018
+                             "quarantined", "abandoned")  # 0019
+    assert ARRIVAL_OUTCOMES == ("on_time_complete", "resent_quarantined", "additive_parked", "breaking_held")
+    assert CERTIFICATION_OUTCOMES == ("released", "held_consumers_warned")
+
+
+CERTIFICATION = {"load_id": uuid.uuid4(), "feed_id": uuid.uuid4(), "rows": 10, "flagged_rows": 1, "trust_score": 90,
+                 "threshold": 90, "outcome": "released"}
 
 
 @pytest.mark.parametrize(
@@ -104,6 +114,10 @@ def test_status_lists_are_the_names_in_claude_md():
         (LoadDraft, {"file_ref": "local://raw/x.csv", "purpose": "go_live_test"}, {"file_ref": ""}),
         (LoadDraft, {"file_ref": "local://raw/x.csv", "purpose": "go_live_test"}, {"purpose": "other"}),
         (LoadDraft, {"file_ref": "local://raw/x.csv", "purpose": "go_live_test"}, {"purpose": "scheduled"}),  # no go-live
+        (LoadCertificationDraft, CERTIFICATION, {"outcome": "ok"}),  # 0019
+        (LoadCertificationDraft, CERTIFICATION, {"flagged_rows": 11}),  # more flagged than rows
+        (LoadCertificationDraft, CERTIFICATION, {"trust_score": 100.1}),
+        (LoadCertificationDraft, CERTIFICATION, {"threshold": 0}),
     ],
 )
 def test_drafts_validate(model, valid, bad):
@@ -226,7 +240,8 @@ from core.domain.sourcing import SourceFetchDraft  # noqa: E402
 
 
 def test_requirement_statuses_and_transitions_are_the_plans():
-    """Phase 3 plan, section 5.1: the 13 moves that change a status (3a and 3b), and nothing else."""
+    """Phase 3 plan, section 5.1: the moves that change a status (3a and 3b), phase 4's two, and, from phase 7
+    (assumption 27), the two step 20 makes; nothing else."""
     assert REQUIREMENT_TRANSITIONS == frozenset({
         ("defined", "source_selected"), ("source_selected", "onboarding"),  # 3a
         ("defined", "awaiting_scope_confirmation"),  # S1
@@ -239,8 +254,9 @@ def test_requirement_statuses_and_transitions_are_the_plans():
         ("source_selected", "awaiting_source_choice"), ("source_selected", "no_source_found"),  # release
         ("defined", "no_source_found"), ("scope_not_confirmed", "no_source_found"),  # S1: no channel (review fix 5)
         ("onboarding", "awaiting_source_choice"), ("onboarding", "no_source_found"),  # phase 4: 03 rejected
+        ("onboarding", "ready"), ("onboarding", "access_restricted"),  # phase 7 assumption 27: step 20 -> created
     })
-    assert len(REQUIREMENT_TRANSITIONS) == 17
+    assert len(REQUIREMENT_TRANSITIONS) == 19  # was 17
     assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
 
 
@@ -332,7 +348,7 @@ NEW_ELEMENT = {"key": "score_year", "name": "Score year", "domain": "pricing", "
 
 def test_the_phase_5_lists_are_the_plans():
     assert GLOSSARY_OUTCOMES == ("proposed", "duplicate_alias", "conflict_to_owner")
-    assert GLOSSARY_RUN_REASONS == ("registered", "requested", "sent_back")
+    assert GLOSSARY_RUN_REASONS == ("registered", "requested", "sent_back", "structure_change")  # the fourth: 0019
     assert GLOSSARY_RUN_STATUSES == ("queued", "running", "done", "failed")
 
 

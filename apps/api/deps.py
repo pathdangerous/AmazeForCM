@@ -174,8 +174,13 @@ def get_review_summariser(provider: Annotated[LLMProvider, Depends(get_llm_provi
 def get_daily_fetch(request: Request) -> DailyFetch:
     """The job's code, for operations' "Load now": app.state.daily_fetch when a test (or start-up) set one, else
     one built from the settings."""
-    daily = getattr(request.app.state, "daily_fetch", None)
-    return daily or DailyFetch.from_settings(get_settings(), request.app.state.identity)
+    from apps.api.jobs import kick_glossary_runs
+
+    daily = getattr(request.app.state, "daily_fetch", None) or DailyFetch.from_settings(
+        get_settings(), request.app.state.identity)
+    if daily.kick_glossary is None:  # an additive change wakes the glossary worker after its commit
+        daily.kick_glossary = lambda: kick_glossary_runs(request.app.state.scheduler, request.app.state.glossary_runs)
+    return daily
 
 
 def operations_user(user: Annotated[User, Depends(backend_user)]) -> User:

@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0018"
+HEAD = "0019"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -25,7 +25,8 @@ PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes",  # m
 PHASE_4_TABLES = {"feed_profiles", "feed_signoffs", "feed_registrations"}  # 0014
 PHASE_5_TABLES = {"glossary_runs"}  # 0016
 PHASE_6_TABLES = {"feed_go_lives", "load_stages", "standard_records"}  # 0018
-TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES | PHASE_6_TABLES
+PHASE_7_TABLES = {"load_certifications"}  # 0019
+TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES | PHASE_6_TABLES | PHASE_7_TABLES
 
 
 def _tables(url: str) -> set[str]:
@@ -150,7 +151,7 @@ def test_no_constraint_name_repeats_its_prefix(migrated_engine):
     with migrated_engine.connect() as connection:
         rows = connection.execute(text(
             "SELECT c.conrelid::regclass::text, c.conname FROM pg_constraint c "
-            "JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = 'public'"
+            "JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.oid = current_schema()::regnamespace"
         )).all()
     def repeats(table: str, name: str) -> bool:
         prefix = f"{name.split('_')[0]}_{table}_"  # ck_products_, uq_feeds_, ...
@@ -225,6 +226,9 @@ REVIEWED_NULLABLE_CHECKS = {
         "rule_key or sql; kind and payload are NOT NULL: never NULL",
     "loads.ck_loads_purpose_fits":
         "go_live_id IS NOT NULL / IS NULL spelt out on both sides; purpose is NOT NULL: never NULL",
+    # 0019 (phase 7 plan, section 6). Their NULL case (a load with no arrival) is in test_db_arrival_guards.py.
+    "loads.ck_loads_content_sha256": "content_sha256 IS NULL OR ...: never NULL",
+    "loads.ck_loads_arrival_outcome": "arrival_outcome IS NULL OR ...: never NULL",
 }
 
 
@@ -233,7 +237,7 @@ def test_every_check_on_a_nullable_column_is_reviewed(migrated_engine):
         rows = connection.execute(text(
             "SELECT DISTINCT c.conrelid::regclass::text || '.' || c.conname FROM pg_constraint c "
             "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) "
-            "WHERE c.contype = 'c' AND c.connamespace = 'public'::regnamespace AND NOT a.attnotnull"
+            "WHERE c.contype = 'c' AND c.connamespace = current_schema()::regnamespace AND NOT a.attnotnull"
         )).scalars().all()
     assert sorted(rows) == sorted(REVIEWED_NULLABLE_CHECKS)
 
@@ -547,6 +551,101 @@ def test_0018_downgrade_restores_the_0017_schema(scratch_schema):
     assert not new_triggers & down["triggers"] and not new_indexes & down["indexes"]
     assert not new_constraints & down["constraints"] and not new_functions & down["functions"]
     command.upgrade(config, "0018")
+    assert state() == up
+
+
+@pytest.mark.parametrize("case", ["a certification", "a product with a feed", "a load with an arrival",
+                                  "a quarantined load", "an abandoned load", "a structure_change run"])
+def test_0019_downgrade_refuses_when_phase_7_rows_exist(scratch_schema, case):
+    """0018 has no arrival field, no certification, no product feed, no quarantined or abandoned status and no
+    structure_change reason: the downgrade stops instead of failing half-way. The rows are written with the
+    user triggers off, since the guards of 0019 would refuse most of them without the chain that makes them."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0019")
+    load_sql = "INSERT INTO loads (feed_id, file_ref, purpose{c}) VALUES (:f, 'raw/a.csv', 'go_live_test'{v}) RETURNING id"
+    with engine.begin() as connection:
+        _, feed = _a_log_and_a_feed(connection)
+        for table in ("loads", "load_certifications", "products", "glossary_runs"):
+            connection.execute(text(f"ALTER TABLE {table} DISABLE TRIGGER USER"))
+        if case == "a certification":
+            load = connection.execute(text(load_sql.format(c="", v="")), {"f": feed}).scalar_one()
+            connection.execute(text(
+                'INSERT INTO load_certifications (load_id, feed_id, "rows", flagged_rows, rule_counts, trust_score, '
+                "threshold, outcome) VALUES (:l, :f, 1, 0, '{}', 100.0, 90.0, 'released')"), {"l": load, "f": feed})
+        elif case == "a product with a feed":
+            connection.execute(text("INSERT INTO products (code, name, domain, owner_id, visibility, feed_id) "
+                                    "VALUES ('syn_x', 'X', 'pricing', 'dev-data-owner', 'open', :f)"), {"f": feed})
+        elif case == "a load with an arrival":
+            connection.execute(text(load_sql.format(c=", content_sha256", v=", repeat('a', 64)")), {"f": feed})
+        elif case in ("a quarantined load", "an abandoned load"):
+            status = "quarantined" if case == "a quarantined load" else "abandoned"
+            connection.execute(text(load_sql.format(c=", status", v=f", '{status}'")), {"f": feed})
+        else:
+            fetch = connection.execute(text("INSERT INTO source_fetches (feed_id, outcome, blob_ref, size_bytes) "
+                                            "VALUES (:f, 'fetched', 'raw/a.csv', 1) RETURNING id"), {"f": feed}).scalar_one()
+            profile = connection.execute(text(
+                "INSERT INTO feed_profiles (feed_id, version, fetch_id, outcome, row_count, columns, coverage, spec, "
+                "detail, engine, profiled_by) VALUES (:f, 1, :x, 'spec_only_low_confidence', 0, '[]', '[]', '{}', "
+                "'No data rows.', 'duckdb', 'b') RETURNING id"), {"f": feed, "x": fetch}).scalar_one()
+            connection.execute(text("INSERT INTO glossary_runs (feed_id, profile_id, reason, requested_by) "
+                                    "VALUES (:f, :p, 'structure_change', 'step_12')"), {"f": feed, "p": profile})
+    with pytest.raises(DBAPIError, match="migration 0019 cannot be downgraded"):
+        command.downgrade(config, "0018")
+
+
+def test_0019_downgrade_restores_the_0018_schema(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+
+    def state():
+        with engine.connect() as connection:
+            names = lambda sql: set(connection.execute(text(sql)).scalars())  # noqa: E731
+            definition = lambda name: connection.execute(text(  # noqa: E731
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :n "
+                "AND connamespace = current_schema()::regnamespace"), {"n": name}).scalar_one()
+            return {
+                "tables": set(inspect(engine).get_table_names()),
+                "load_columns": {c["name"] for c in inspect(engine).get_columns("loads")},
+                "product_columns": {c["name"] for c in inspect(engine).get_columns("products")},
+                "status_check": definition("ck_loads_status"),
+                "reason_check": definition("ck_glossary_runs_reason"),
+                "status_guard": connection.execute(text(
+                    "SELECT prosrc FROM pg_proc WHERE proname = 'amaze_guard_load_status' "
+                    "AND pronamespace = current_schema()::regnamespace")).scalar_one(),
+                "triggers": names("SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                                  "WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal"),
+                "indexes": names("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"),
+                "constraints": names("SELECT conname FROM pg_constraint "
+                                     "WHERE connamespace = current_schema()::regnamespace"),
+                "functions": names("SELECT proname FROM pg_proc "
+                                   "WHERE pronamespace = current_schema()::regnamespace"),
+            }
+
+    new_load_columns = {"content_sha256", "arrival_outcome", "arrival_detail", "arrival_profile_id"}
+    new_triggers = {"trg_loads_b_arrival", "trg_load_certifications_b_guard", "trg_load_certifications_append_only",
+                    "trg_load_certifications_no_truncate", "trg_products_b_feed"}
+    new_constraints = {"ck_loads_content_sha256", "ck_loads_arrival_outcome", "ck_load_certifications_outcome",
+                       "ck_load_certifications_counts", "ck_load_certifications_score",
+                       "uq_load_certifications_load_id"}
+    new_functions = {"amaze_guard_load_arrival", "amaze_guard_load_certification", "amaze_guard_product_feed"}
+
+    command.upgrade(config, "0019")
+    up = state()
+    assert PHASE_7_TABLES <= up["tables"] and new_load_columns <= up["load_columns"] and "feed_id" in up["product_columns"]
+    assert "'quarantined'" in up["status_check"] and "'abandoned'" in up["status_check"]
+    assert "'structure_change'" in up["reason_check"] and "quarantined" in up["status_guard"]
+    assert new_triggers <= up["triggers"] and "uq_products_feed_id" in up["indexes"]
+    assert new_constraints <= up["constraints"] and new_functions <= up["functions"]
+    command.downgrade(config, "0018")
+    down = state()
+    assert not PHASE_7_TABLES & down["tables"] and not new_load_columns & down["load_columns"]
+    assert "feed_id" not in down["product_columns"]
+    assert "'quarantined'" not in down["status_check"] and "'structure_change'" not in down["reason_check"]
+    assert "quarantined" not in down["status_guard"] and "moves only to loaded or failed_rolled_back" in down["status_guard"]
+    assert not new_triggers & down["triggers"] and "uq_products_feed_id" not in down["indexes"]
+    assert not new_constraints & down["constraints"] and not new_functions & down["functions"]
+    command.upgrade(config, "0019")
     assert state() == up
 
 

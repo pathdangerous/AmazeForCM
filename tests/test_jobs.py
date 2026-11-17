@@ -432,6 +432,7 @@ def test_a_kick_that_leaves_no_live_lease_schedules_nothing(db_session, glossary
 @pytest.fixture
 def live(db_session, glossary):
     """A registered feed reading syn_exchange_volumes, three mappings, an approved go-live (hypercare 10 days)."""
+    from core.domain.profiling import FileColumn
     from core.repositories.feeds import FeedRepository
     from tests.configured import approved_mapping, go_live
 
@@ -439,7 +440,9 @@ def live(db_session, glossary):
         feed = FeedRepository(db_session).create_candidate(
             code=code, name="Exchange daily volumes", source_code=code, connector="local_file",
             source_ref="files/exchange_volumes.csv")
-        registered_feed(db_session, feed.id)
+        registered_feed(db_session, feed.id, columns=[  # the template step 12 compares each delivery with
+            FileColumn(name=n, type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=1)
+            for n in ("instr_id", "trade_date", "traded_qty")])
         if mapped:
             for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"),
                                ("traded_qty", "volume")):
@@ -472,7 +475,9 @@ def test_the_daily_job_loads_a_live_feed_after_its_fetch(db_session, daily, live
     feed, approved = live()
     assert daily().run() == {"syn_exchange_volumes": "fetched"}
     (scheduled, test_load) = loads_of(db_session, feed)
-    assert (scheduled.purpose, scheduled.status, scheduled.go_live_id) == ("scheduled", "loaded", approved.id)
+    # was "loaded"; from phase 7 a good scheduled load is certified and released (score 100.0, no rule flags)
+    assert (scheduled.purpose, scheduled.status, scheduled.go_live_id) == ("scheduled", "released", approved.id)
+    assert (scheduled.arrival_outcome, scheduled.content_sha256 is not None) == ("on_time_complete", True)
     assert scheduled.fetch_id == SourceFetchRepository(db_session).latest_fetched(feed.id).id
     assert [s.outcome for s in LoadRepository(db_session).stages(scheduled.id)] == ["stage_completed"] * 4
     assert StandardRecordRepository(db_session).count(scheduled.id) == 1  # the one row of the sample file
@@ -569,7 +574,7 @@ def test_load_now_fetches_and_loads_one_feed_and_needs_a_go_live(db_session, dai
     job = daily()
     with pytest.raises(NotLive):
         job.fetch_and_load(other.id)
-    assert job.fetch_and_load(feed.id) == {"fetch": "fetched", "load": "loaded"}
+    assert job.fetch_and_load(feed.id) == {"fetch": "fetched", "load": "released"}  # was "loaded" before phase 7
     assert [load.purpose for load in loads_of(db_session, feed)] == ["scheduled", "go_live_test"]
 
 
@@ -584,6 +589,120 @@ def test_a_load_that_meets_one_in_progress_does_not_start_a_second(db_session, d
     assert [(load.purpose, load.status) for load in loads_of(db_session, feed)] == [
         ("scheduled", "received"), ("go_live_test", "loaded")]  # the job found it in progress and logged it
     assert daily().load_feed(feed.id) == "load_in_progress"
+
+
+def test_a_received_load_older_than_the_stale_limit_is_abandoned_and_the_feed_loads(db_session, daily, live):
+    """Phase 7 assumption 18: a load a dead process left received is abandoned, and the new load goes through
+    steps 12, 13, 15 and 20 (replaces task 5's interim test)."""
+    from datetime import UTC, datetime, timedelta
+
+    from core.repositories.loads import LoadRepository
+
+    feed, approved = live()
+    old = LoadRepository(db_session).create(feed_id=feed.id, file_ref="raw/x.csv", purpose="scheduled",
+                                            go_live_id=approved.id,
+                                            received_at=datetime.now(UTC) - timedelta(minutes=45))
+    db_session.commit()
+    job = daily()
+    job.operations = lambda: ["dev-operations"]
+    assert job.load_stale_minutes == 30
+    assert job.run() == {"syn_exchange_volumes": "fetched"}
+    statuses = {load.id: load.status for load in loads_of(db_session, feed)}
+    assert statuses[old.id] == "abandoned" and sorted(statuses.values()) == ["abandoned", "loaded", "released"]
+    assert "Load abandoned: syn_exchange_volumes" in subjects(db_session, "dev-operations")
+
+
+# ---------------------------------------------------------------- phase 7: steps 12, 15 and 20 in the job (task 7)
+
+
+class Down:
+    """A connector whose source does not answer."""
+
+    name = "down"
+
+    def fetch(self, ref):
+        from ports.connectors.base import SourceUnavailable
+
+        raise SourceUnavailable(ref)
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def test_a_live_feed_whose_daily_fetch_is_down_gives_a_late_alert(db_session, daily, live):
+    import dataclasses
+
+    feed, _ = live()
+    job = dataclasses.replace(daily(lambda name: Down()), operations=lambda: ["dev-operations"])
+    assert job.run() == {"syn_exchange_volumes": "source_down"}
+    assert subjects(db_session, "dev-operations") == ["Delivery late: syn_exchange_volumes"]
+    assert subjects(db_session, "dev-data-owner") == ["Delivery late: syn_exchange_volumes"]
+    assert [load.purpose for load in loads_of(db_session, feed)] == ["go_live_test"]  # no load row for a late feed
+
+
+def test_a_feed_with_no_go_live_whose_fetch_is_down_gives_no_late_alert(db_session, daily, live):
+    live(mapped=False)
+    daily(lambda name: Down()).run()
+    assert subjects(db_session, "dev-data-owner") == []
+
+
+def test_an_unchanged_file_is_quarantined_on_the_next_daily_run(db_session, daily, live):
+    import dataclasses
+
+    feed, _ = live()
+    job = dataclasses.replace(daily(), operations=lambda: ["dev-operations"])
+    job.run()
+    job.run()  # the same bytes again
+    newest, *_ = loads_of(db_session, feed)
+    assert (newest.status, newest.arrival_outcome) == ("quarantined", "resent_quarantined")
+    assert "Delivery resent: syn_exchange_volumes" in subjects(db_session, "dev-operations")
+    assert job.load_feed(feed.id) == "quarantined"
+
+
+def test_a_delivery_missing_a_column_is_held_and_not_loaded(db_session, daily, live, sources):
+    import dataclasses
+
+    feed, _ = live()
+    (sources / "files" / "exchange_volumes.csv").write_bytes(b"instr_id,trade_date\nsyn-1,2026-11-02\n")
+    job = dataclasses.replace(daily(), operations=lambda: ["dev-operations"])
+    job.run()
+    (held, _test) = loads_of(db_session, feed)
+    assert (held.status, held.arrival_outcome) == ("held", "breaking_held")
+    assert "Delivery held: syn_exchange_volumes" in subjects(db_session, "dev-operations")
+    assert "Delivery held: syn_exchange_volumes" in subjects(db_session, "dev-backend-team")
+
+
+def test_a_new_column_is_parked_the_load_goes_on_and_the_glossary_worker_is_kicked(db_session, daily, live, sources):
+    feed, _ = live()
+    (sources / "files" / "exchange_volumes.csv").write_bytes(
+        b"instr_id,trade_date,traded_qty,rating\nsyn-1,2026-11-02,5,AA\n")
+    kicks = []
+    job = daily()
+    job.kick_glossary = lambda: kicks.append(1)
+    job.run()
+    (scheduled, _test) = loads_of(db_session, feed)
+    assert (scheduled.status, scheduled.arrival_outcome) == ("released", "additive_parked")
+    assert kicks == [1]
+    from core.repositories.glossary_runs import GlossaryRunRepository
+
+    run = GlossaryRunRepository(db_session).active(feed.id)
+    assert (run.reason, run.columns) == ("structure_change", ["rating"])
+
+
+async def test_with_the_daily_job_disabled_no_daily_job_is_registered(daily, monkeypatch):
+    """Plan risk 6 (assumption 38): DAILY_JOB_ENABLED=false registers no daily job; the scheduler still starts."""
+    from apps.api import main
+    from ports.config import Settings
+
+    monkeypatch.setattr(main, "get_settings", lambda: Settings(daily_job_enabled=False))
+    jobs, _ = await start_and_stop(daily())
+    assert jobs == []
 
 
 async def test_the_app_under_test_runs_no_worker_of_its_own():

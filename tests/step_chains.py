@@ -91,7 +91,8 @@ def summarise(session: Session, *, feed_id: UUID, agent: RunsAgent):
 
 
 def propose_rules(session: Session, *, feed_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                  connector_factory: Callable[[str], SourceConnector], rule_timeout_seconds: float = 5):
+                  connector_factory: Callable[[str], SourceConnector], rule_timeout_seconds: float = 5,
+                  blob_store: BlobStore | None = None):
     """Step 09 as the API runs it: read the input, end the transaction, then the call (the back-test runs right
     after it, outside any transaction) and the locked write."""
     from core.steps.s09_rules import backtest_for, record_rules, rules_input
@@ -100,12 +101,12 @@ def propose_rules(session: Session, *, feed_id: UUID, agent: RunsAgent, catalogu
     end_read(session)
     return record_rules(session, agent=agent, agent_input=agent_input,
                         backtest=backtest_for(agent_input, connector_factory=connector_factory,
-                                              rule_timeout_seconds=rule_timeout_seconds))
+                                              rule_timeout_seconds=rule_timeout_seconds, blob_store=blob_store))
 
 
 def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent, feed_id: UUID, notifier: Notifier,
                     backend_team: Sequence[str], owner_is_data_owner: Callable[[str], bool],
-                    rule_timeout_seconds: float = 5):
+                    rule_timeout_seconds: float = 5, operations: Sequence[str] = (), stale_minutes: int = 30):
     """Step 11 prepare as the API runs it: the checks, a test load through the engine (plan, end the read, execute
     with no session, locked write), then a TestFailedHeld, or the summary (the agent's call with no connection held)."""
     from core.engine.run import execute_load, plan_load, record_load
@@ -113,7 +114,7 @@ def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent
 
     plan = go_live_plan(session, feed_id=feed_id, owner_is_data_owner=owner_is_data_owner, notifier=notifier,
                         backend_team=backend_team)
-    load = begin_test_load(session, plan)
+    load = begin_test_load(session, plan, stale_minutes=stale_minutes, notifier=notifier, operations=operations)
     end_read(session)
     engine_plan = plan_load(session, load.id)
     end_read(session)
@@ -127,20 +128,61 @@ def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent
     return record_summary(session, agent=agent, agent_input=after)
 
 
+def arrive(session: Session, *, blob_store: BlobStore, load_id: UUID, notifier: Notifier, recipients):
+    """Step 12 as the job runs it: read the plan, end the transaction, read and profile the file with no session,
+    then the locked write and the reports."""
+    from core.steps.s12_arrival import arrival_plan, check_arrival, record_arrival
+
+    plan = arrival_plan(session, load_id=load_id)
+    end_read(session)
+    return record_arrival(session, check_arrival(plan, blob_store=blob_store), notifier=notifier,
+                          recipients=recipients)
+
+
 def run_engine(session: Session, blob_store: BlobStore, feed_id: UUID, *, file_ref: str, purpose: str,
-               go_live_id: UUID | None = None, fetch_id: UUID | None = None, rule_timeout_seconds: float = 5):
+               go_live_id: UUID | None = None, fetch_id: UUID | None = None, rule_timeout_seconds: float = 5,
+               arrival: bool = True):
     """Step 13 as the API runs it: a received load, then plan (read), end the transaction, execute with no
-    session (BlobStore.get() and the DuckDB sandbox), then the locked write of the stages and records."""
+    session (BlobStore.get() and the DuckDB sandbox), then the locked write of the stages and records.
+    A scheduled load first gets the arrival step 12 would have written (on_time_complete, the SHA-256 of its
+    file): the engine's tests are about the engine; step 12 has its own (arrival=False leaves it unchecked)."""
+    import hashlib
+
     from core.engine.run import execute_load, plan_load, record_load
     from core.repositories.loads import LoadRepository
 
     load = LoadRepository(session).create(feed_id=feed_id, file_ref=file_ref, purpose=purpose,
                                           go_live_id=go_live_id, fetch_id=fetch_id)
+    if purpose == "scheduled" and arrival:
+        LoadRepository(session).record_arrival(load.id, outcome="on_time_complete", detail={},
+                                               content_sha256=hashlib.sha256(blob_store.get(file_ref)).hexdigest())
     end_read(session)
     plan = plan_load(session, load.id)
     end_read(session)
     outcome = execute_load(plan, blob_store=blob_store, rule_timeout_seconds=rule_timeout_seconds)
     return record_load(session, plan, outcome)
+
+
+def run_scheduled(session: Session, blob_store: BlobStore, feed_id: UUID, go_live_id: UUID, *, file_ref: str,
+                  context, rule_timeout_seconds: float = 5):
+    """A scheduled load as the job runs it after step 12: plan, end the transaction, execute with no session, then
+    the one finishing transaction (feed, requirements, load; steps 13, 15 and 20). Step 12's arrival is written
+    as run_engine() does."""
+    import hashlib
+
+    from core.engine.run import execute_load, plan_load
+    from core.repositories.loads import LoadRepository
+    from core.steps.s20_create_product import finish_scheduled_load
+
+    load = LoadRepository(session).create(feed_id=feed_id, file_ref=file_ref, purpose="scheduled",
+                                          go_live_id=go_live_id)
+    LoadRepository(session).record_arrival(load.id, outcome="on_time_complete", detail={},
+                                           content_sha256=hashlib.sha256(blob_store.get(file_ref)).hexdigest())
+    end_read(session)
+    plan = plan_load(session, load.id)
+    end_read(session)
+    outcome = execute_load(plan, blob_store=blob_store, rule_timeout_seconds=rule_timeout_seconds)
+    return finish_scheduled_load(session, plan, outcome, context=context)
 
 
 def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],

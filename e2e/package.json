@@ -1,0 +1,13 @@
+{
+  "name": "amaze-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The Playwright story of the PoC (phase 7). Runs on amaze_test, schema e2e_story, never on amaze.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

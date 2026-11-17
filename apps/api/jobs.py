@@ -20,12 +20,13 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.engine.run import execute_load, plan_load, record_load
+from core.engine.run import execute_load, plan_load
 from core.repositories.errors import LoadInProgress, NotLive, RunSuperseded
 from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feeds import FeedRepository
@@ -36,6 +37,15 @@ from core.repositories.requirements import RequirementRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
+from core.steps.s12_arrival import (
+    Recipients,
+    arrival_plan,
+    check_arrival,
+    clear_stale_load,
+    record_arrival,
+    record_late_alert,
+)
+from core.steps.s20_create_product import FinishContext, finish_scheduled_load
 from core.steps.s05_glossary import builder_input, claim_run, fail_run, record_run
 from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
@@ -68,6 +78,15 @@ class DailyFetch:
     # Phase 6: the job also loads a feed that has a go-live, right after its fetch (assumption 28).
     operations: Callable[[], Sequence[str]] = lambda: []
     rule_timeout_seconds: float = 5
+    load_stale_minutes: int = 30  # phase 7: a load left received this long is abandoned before the next (step 12)
+    # Phase 7: who step 12 and step 15 tell or ask, the release threshold (step 15), and the worker to wake after an
+    # additive change queued a glossary run (set by the API; None in a test that does not care).
+    glossary_owners: Callable[[], Sequence[str]] = lambda: []
+    stewards: Callable[[], Sequence[str]] = lambda: []
+    roles_of: Callable[[str], Sequence[str]] = lambda user_id: ()
+    display_name: Callable[[str], str] = lambda user_id: user_id
+    trust_release_threshold: Decimal = Decimal("90")
+    kick_glossary: Callable[[], None] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings, identity: Identity) -> DailyFetch:
@@ -86,6 +105,13 @@ class DailyFetch:
             release_after_days=settings.source_down_release_days,
             operations=lambda: [u.id for u in identity.list_users() if "operations" in u.roles],
             rule_timeout_seconds=settings.rule_timeout_seconds,
+            load_stale_minutes=settings.load_stale_minutes,
+            glossary_owners=lambda: [u.id for u in identity.list_users() if "glossary_owner" in u.roles],
+            stewards=lambda: [u.id for u in identity.list_users() if "data_steward" in u.roles],
+            roles_of=lambda user_id: (identity.get_user(user_id).roles if identity.get_user(user_id) else ()),
+            display_name=lambda user_id: (identity.get_user(user_id).display_name if identity.get_user(user_id)
+                                          else user_id),
+            trust_release_threshold=settings.trust_release_threshold,
         )
 
     def run(self, today: date | None = None) -> dict[str, str]:
@@ -120,6 +146,11 @@ class DailyFetch:
                     self.load_feed(feed_id, today=today)
                 except Exception:
                     log.exception("daily load of feed %s failed", code)
+            elif results[code] == "source_down":
+                try:  # step 12: late_alert, for a feed with a go-live
+                    self._late_alert(feed_id)
+                except Exception:
+                    log.exception("late alert for feed %s failed", code)
         if catalogue is not None:
             self._close_lists_with_nothing_to_pick(catalogue)
         return results
@@ -171,6 +202,9 @@ class DailyFetch:
                 session.rollback()
                 return "not_live" if live is None else "no_file"
             try:
+                notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+                clear_stale_load(session, feed_id=feed_id, stale_minutes=self.load_stale_minutes, notifier=notifier,
+                                 operations=self.operations())
                 load = LoadRepository(session).create(feed_id=feed_id, file_ref=fetch.blob_ref, purpose="scheduled",
                                                       go_live_id=live.id, fetch_id=fetch.id)
             except LoadInProgress:
@@ -183,20 +217,64 @@ class DailyFetch:
                 return "load_in_progress"
             session.commit()  # the received load is visible to everyone, so a second one is refused
             load_id = load.id
+        arrival = self._check_arrival(load_id)  # step 12: read, end the read, the file with no session, locked write
+        if arrival.outcome in ("resent_quarantined", "breaking_held"):  # the load ended on arrival: no engine
+            return "quarantined" if arrival.outcome == "resent_quarantined" else "held"
         with self.session_factory() as session:
             plan = plan_load(session, load_id)
             session.rollback()
         outcome = execute_load(plan, blob_store=self.blob_store, rule_timeout_seconds=self.rule_timeout_seconds)
         with self.session_factory() as session:
             notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
-            try:
-                run = record_load(session, plan, outcome)
-                self._report_load(session, notifier, run, live, today)
+            try:  # steps 13, 15 and 20 in one transaction (phase 7 plan, assumption 19)
+                finished = finish_scheduled_load(session, plan, outcome, context=FinishContext(
+                    notifier=notifier, threshold=self.trust_release_threshold, operations=self.operations(),
+                    backend_team=self.backend_team(), roles_of=self.roles_of, display_name=self.display_name))
+                self._report_load(session, notifier, finished.run, live, today)
                 session.commit()
             except Exception:
                 session.rollback()
                 raise
-        return run.load.status
+        return finished.run.load.status
+
+    def _check_arrival(self, load_id: UUID):
+        """Step 12 on a received scheduled load: its own two transactions around the file work. An additive change
+        wakes the glossary worker after the commit that queued its run."""
+        with self.session_factory() as session:
+            plan = arrival_plan(session, load_id=load_id)
+            session.rollback()
+        checked = check_arrival(plan, blob_store=self.blob_store)
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                arrival = record_arrival(session, checked, notifier=notifier, recipients=Recipients(
+                    glossary_owners=self.glossary_owners(), stewards=self.stewards(),
+                    backend_team=self.backend_team(), operations=self.operations()))
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+        if arrival.outcome == "additive_parked" and self.kick_glossary is not None:
+            try:
+                self.kick_glossary()
+            except Exception:
+                log.exception("the kick after an additive change failed; the run waits for the next kick")
+        return arrival
+
+    def _late_alert(self, feed_id: UUID) -> None:
+        """step 12, late_alert: the fetch of a feed with a go-live found its source down."""
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                if GoLiveRepository(session).latest(feed_id) is None:
+                    session.rollback()
+                    return
+                record_late_alert(session, feed_id=feed_id, notifier=notifier, operations=self.operations(),
+                                  detail="The source did not answer the daily fetch.")
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     def _report_load(self, session: Session, notifier, run, live, today: date) -> None:
         """Assumption 27: while today is at or before hypercare_until each load is reported to the owner and
@@ -205,7 +283,7 @@ class DailyFetch:
         feed = FeedRepository(session).get(run.load.feed_id)
         registration = FeedRegistrationRepository(session).current(feed.id)
         owner = registration.owner_id if registration else None
-        loaded = run.load.status == "loaded"
+        loaded = run.load.status in ("loaded", "released", "held")  # the file's records were written (step 15 follows)
         hypercare = today <= live.hypercare_until
         failure = next((s for s in run.stages if s.outcome == "failed_rolled_back"), None)
         if loaded and hypercare:

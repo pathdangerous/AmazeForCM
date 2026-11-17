@@ -404,9 +404,10 @@ LOAD_RECORDS = 50
 
 @router.post("/feeds/{feed_id}/rules/propose", response_model=ProposeRulesResponse)
 def propose_rules(feed_id: UUID, body: ProposeRulesBody, session: DbSession, user: Steward, catalogue: Catalogue,
-                  agent: RuleAgent, connectors: Connectors, settings: AppSettings) -> ProposeRulesResponse:
+                  agent: RuleAgent, connectors: Connectors, settings: AppSettings,
+                  blobs: Blobs) -> ProposeRulesResponse:
     agent_input = read(session, lambda: rules_input(session, feed_id=feed_id, catalogue=catalogue))
-    backtest = backtest_for(agent_input, connector_factory=connectors,
+    backtest = backtest_for(agent_input, connector_factory=connectors, blob_store=blobs,
                             rule_timeout_seconds=settings.rule_timeout_seconds)  # runs after the call, no connection
     result = in_transaction(session, lambda: record_rules(session, agent=agent, agent_input=agent_input,
                                                            backtest=backtest))
@@ -435,7 +436,9 @@ def go_live_summary(feed_id: UUID, session: DbSession, user: BackendTeam, catalo
             raise
 
     plan = in_transaction(session, checks)
-    load = in_transaction(session, lambda: begin_test_load(session, plan))
+    load = in_transaction(session, lambda: begin_test_load(
+        session, plan, stale_minutes=settings.load_stale_minutes, notifier=notifier,
+        operations=_users_with(identity, "operations")))
     engine_plan = read(session, lambda: plan_load(session, load.id))
     outcome = execute_load(engine_plan, blob_store=blobs, rule_timeout_seconds=settings.rule_timeout_seconds)
     load_run = in_transaction(session, lambda: record_load(session, engine_plan, outcome))

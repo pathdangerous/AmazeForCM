@@ -70,6 +70,7 @@ from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.errors import BackToStepNeeded, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
+from core.steps.s12_arrival import clear_stale_load
 from ports.identity.base import User
 from ports.notify.base import Notifier
 
@@ -150,8 +151,13 @@ def go_live_plan(session: Session, *, feed_id: UUID, owner_is_data_owner: Callab
                       blob_ref=fetch.blob_ref)
 
 
-def begin_test_load(session: Session, plan: GoLivePlan) -> Load:
-    """A received go_live_test load of the feed's latest fetched file. LoadInProgress if one runs."""
+def begin_test_load(session: Session, plan: GoLivePlan, *, stale_minutes: int, notifier: Notifier,
+                    operations: Sequence[str]) -> Load:
+    """A received go_live_test load of the feed's latest fetched file. A load a dead process left received for
+    more than `stale_minutes` is abandoned first (step 12, phase 7 assumption 18); a younger one is
+    LoadInProgress."""
+    clear_stale_load(session, feed_id=plan.feed_id, stale_minutes=stale_minutes, notifier=notifier,
+                     operations=operations)
     return LoadRepository(session).create(feed_id=plan.feed_id, file_ref=plan.blob_ref, purpose="go_live_test",
                                           fetch_id=plan.fetch_id)
 

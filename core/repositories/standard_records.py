@@ -26,6 +26,11 @@ class StandardRecordRepository:
     def count(self, load_id: UUID) -> int:
         return self._session.scalar(select(func.count()).select_from(Row).where(Row.load_id == load_id)) or 0
 
+    def count_flagged(self, load_id: UUID) -> int:
+        """The records of the load that at least one rule flagged."""
+        return self._session.scalar(select(func.count()).select_from(Row).where(
+            Row.load_id == load_id, func.cardinality(Row.flags) > 0)) or 0
+
     def list_for_load(self, load_id: UUID, limit: int = 50) -> list[StandardRecord]:
         """By row number."""
         query = select(Row).where(Row.load_id == load_id).order_by(Row.row_number).limit(limit)

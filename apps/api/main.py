@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from apps.api.jobs import DailyFetch, GlossaryRuns, kick_glossary_runs, register_daily_fetch
-from apps.api.routers import amaze, consumer, dev_identity, health
+from apps.api.routers import amaze, consumer, dev_identity, health, notifications
 from ports.config import get_settings
 from ports.identity import get_identity
 from ports.llm.base import LLMUnavailable
@@ -38,7 +38,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # The daily fetch is registered at every start: it reads the feeds table when it runs, so a
         # restart loses nothing (phase 3 plan, assumption 17). Tests set app.state.daily_fetch.
         daily = getattr(app.state, "daily_fetch", None) or DailyFetch.from_settings(settings, app.state.identity)
-        register_daily_fetch(scheduler, daily)
+        if daily.kick_glossary is None:  # an additive change wakes the glossary worker after its commit
+            daily.kick_glossary = lambda: kick_glossary_runs(scheduler, app.state.glossary_runs)
+        if settings.daily_job_enabled:  # DAILY_JOB_ENABLED=false: none (the e2e API; plan risk 6)
+            register_daily_fetch(scheduler, daily)
         scheduler.start()
         # Kicked at every start so runs left by the last process are taken.
         kick_glossary_runs(scheduler, app.state.glossary_runs)
@@ -70,3 +73,4 @@ app.include_router(health.router)
 app.include_router(dev_identity.router)
 app.include_router(amaze.router)
 app.include_router(consumer.router)
+app.include_router(notifications.router)

@@ -255,7 +255,22 @@ def _standard_records_row(db_session, request):
                                                   {"l": load}).scalar_one()
 
 
+# ---- phase 7 (migration 0019)
+
+
+def _load_certifications_row(db_session, request):
+    from tests.configured import a_registered_feed, go_live
+    from tests.test_db_arrival_guards import CERT, cert_params, scheduled_loaded
+
+    feed = a_registered_feed(db_session, "append_only_phase_7")
+    load = scheduled_loaded(db_session, (feed, go_live(db_session, feed).id))
+    db_session.execute(text(CERT), cert_params(load, feed))
+    return "load_certifications", db_session.execute(text("SELECT id FROM load_certifications WHERE load_id = :l"),
+                                                     {"l": load}).scalar_one()
+
+
 ROWS = {
+    "load_certifications": _load_certifications_row,
     "feed_go_lives": _feed_go_lives_row,
     "load_stages": _load_stages_row,
     "standard_records": _standard_records_row,

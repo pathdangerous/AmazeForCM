@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
+import NotificationsView from "./views/NotificationsView";
 import RequestsView from "./views/RequestsView";
 import RequirementView from "./views/RequirementView";
 import SearchView from "./views/SearchView";
@@ -10,7 +11,7 @@ const STORAGE_KEY = "amaze.consumer-ui.devUser";
 
 // Views, chosen by the URL hash (#/search). No router library (phase 2 plan, decision 16).
 // Phase 3 adds #/requirement/<id>, reached from My requests and after a raise; it is not in the nav.
-const VIEWS = { search: "Search", requests: "My requests" } as const;
+const VIEWS = { search: "Search", requests: "My requests", notifications: "Notifications" } as const;
 type View = keyof typeof VIEWS;
 type Route = { view: View } | { view: "requirement"; id: string };
 
@@ -108,6 +109,7 @@ export default function App() {
       <main>
         {route.view === "search" && <SearchView devUser={devUser} />}
         {route.view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
+        {route.view === "notifications" && <NotificationsView key={devUser} devUser={devUser} />}
         {route.view === "requirement" && (
           <RequirementView key={`${devUser}-${route.id}`} devUser={devUser} requirementId={route.id} />
         )}

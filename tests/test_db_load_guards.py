@@ -60,8 +60,12 @@ def add_stage(s, load, stage, outcome="stage_completed") -> None:
 
 
 def loaded_load(s, feed, *, purpose="go_live_test", go_live=None) -> uuid.UUID:
-    """A load with its four stages completed, moved to loaded."""
+    """A load with its four stages completed, moved to loaded. A scheduled load first passes its arrival check
+    (0019, G13: a scheduled load is loaded only after on_time_complete or additive_parked)."""
     load = new_load(s, feed, purpose=purpose, go_live=go_live)
+    if purpose == "scheduled":
+        s.execute(text("UPDATE loads SET content_sha256 = :sha, arrival_outcome = 'on_time_complete', "
+                       "arrival_detail = '{}'::jsonb WHERE id = :id"), {"sha": uuid.uuid4().hex * 2, "id": load})
     for stage in STAGES:
         add_stage(s, load, stage)
     s.execute(text(MOVE), {"status": "loaded", "id": load})
@@ -109,12 +113,20 @@ def test_a_new_load_is_received(s, feed, status):
 
 def load_in(s, feed, status) -> uuid.UUID:
     """A load in this status, reached the way the guard allows: loaded or failed_rolled_back from received,
-    held or released from loaded (certification, step 15 of phase 7; 0004 already lists both)."""
+    held or released from a scheduled loaded load with a certification of that outcome (0019, G13)."""
     if status == "loaded":
         return loaded_load(s, feed)
     if status == "failed_rolled_back":
         return failed_load(s, feed)
-    load = loaded_load(s, feed)
+    return certified_load_in(s, feed, status)
+
+
+def certified_load_in(s, feed, status) -> uuid.UUID:
+    """A scheduled load moved from loaded to `status` (held or released) under its certification."""
+    from tests.configured import go_live
+    from tests.test_db_arrival_guards import certified
+
+    load = certified(s, (feed, go_live(s, feed).id), **({"flagged": 5} if status == "held" else {}))
     s.execute(text(MOVE), {"status": status, "id": load})
     return load
 
@@ -131,18 +143,20 @@ def test_a_finished_load_does_not_move(s, feed, status, to):
 
 @pytest.mark.parametrize("to", ["held", "released"])
 def test_a_loaded_load_may_be_held_or_released(s, feed, to):
-    """Not a G8 refusal: the one move after loaded that is allowed. Without it no load could ever be released
-    (the consumer side reads released loads; phase 1 tests and step 15 of phase 7 need them)."""
-    load = loaded_load(s, feed)
-    s.execute(text(MOVE), {"status": to, "id": load})
+    """Not a refusal: the one move after loaded that is allowed, for a scheduled load with a certification that
+    says so (0019, G13; step 15). Without it no load could ever be released."""
+    load = certified_load_in(s, feed, to)
     assert s.scalar(text("SELECT status FROM loads WHERE id = :id"), {"id": load}) == to
 
 
-@pytest.mark.parametrize("to", ["held", "released"])
-def test_a_received_load_moves_only_to_loaded_or_failed(s, feed, to):
+@pytest.mark.parametrize(("to", "match", "message"), [
+    ("held", "can be held on arrival only as breaking_held",
+     "loads: load % can be held on arrival only as breaking_held, not %"),
+    ("released", "a received load moves only to loaded, failed_rolled_back, quarantined, held or abandoned",
+     "loads: a received load moves only to loaded, failed_rolled_back, quarantined, held or abandoned, not %")])
+def test_a_received_load_moves_only_to_loaded_or_failed(s, feed, to, match, message):
     load = new_load(s, feed)
-    answered_by(s, "moves only to loaded or failed_rolled_back", MOVE, {"status": to, "id": load},
-                status_guard("loads: a received load moves only to loaded or failed_rolled_back, not %"))
+    answered_by(s, match, MOVE, {"status": to, "id": load}, status_guard(message))
 
 
 @pytest.mark.parametrize("completed", [0, 1, 2, 3])

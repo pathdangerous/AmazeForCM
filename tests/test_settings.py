@@ -113,6 +113,35 @@ def test_phase_6_settings_default_and_are_whole_numbers_of_at_least_one(tmp_path
             load_settings(tmp_path / "missing.env")
 
 
+def test_the_stale_load_limit_defaults_to_thirty_minutes_and_is_a_whole_number_of_at_least_one(tmp_path, monkeypatch):
+    """Phase 7 assumption 38."""
+    monkeypatch.delenv("LOAD_STALE_MINUTES", raising=False)
+    assert load_settings(tmp_path / "missing.env").load_stale_minutes == 30
+    monkeypatch.setenv("LOAD_STALE_MINUTES", "1")
+    assert load_settings(tmp_path / "missing.env").load_stale_minutes == 1
+    for bad in ("0", "-1", "1.5", "soon"):
+        monkeypatch.setenv("LOAD_STALE_MINUTES", bad)
+        with pytest.raises(ConfigError, match="LOAD_STALE_MINUTES"):
+            load_settings(tmp_path / "missing.env")
+    assert "LOAD_STALE_MINUTES=30" in (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+
+
+def test_the_release_threshold_defaults_to_ninety_and_is_between_one_and_a_hundred(tmp_path, monkeypatch):
+    """Phase 7 assumption 38."""
+    from decimal import Decimal
+
+    monkeypatch.delenv("TRUST_RELEASE_THRESHOLD", raising=False)
+    assert load_settings(tmp_path / "missing.env").trust_release_threshold == Decimal("90")
+    for good, expected in (("1", "1"), ("95.5", "95.5"), ("100", "100")):
+        monkeypatch.setenv("TRUST_RELEASE_THRESHOLD", good)
+        assert load_settings(tmp_path / "missing.env").trust_release_threshold == Decimal(expected)
+    for bad in ("0", "0.9", "100.1", "soon"):
+        monkeypatch.setenv("TRUST_RELEASE_THRESHOLD", bad)
+        with pytest.raises(ConfigError, match="TRUST_RELEASE_THRESHOLD"):
+            load_settings(tmp_path / "missing.env")
+    assert "TRUST_RELEASE_THRESHOLD=90" in (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+
+
 def test_env_example_names_the_phase_6_settings():
     text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     assert "RULE_TIMEOUT_SECONDS=5" in text and "HYPERCARE_DAYS=10" in text
