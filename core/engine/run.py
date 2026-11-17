@@ -6,7 +6,8 @@ an unmapped column is not loaded.
 
 Three parts, as for the fetch and the profile, so no database connection is held while the file is read or a
 rule runs:
-    plan_load(session, load_id)       reads: the load, the feed, the current mappings and rules, the element
+    plan_load(session, load_id)       reads (ArrivalNotChecked for a scheduled load step 12 has not passed): the
+                                      load, the feed, the current mappings and rules, the element
                                       types, and whether a scheduled load's configuration still is the one the
                                       latest go-live approved. The caller then ends the transaction.
     execute_load(plan, blob_store=..) no session: BlobStore.get() and the DuckDB sandbox. Never raises for an
@@ -38,7 +39,7 @@ from core.engine.curate import Found, curated_rows_sql, curated_sql, match_heade
 from core.engine.passthrough import PASS_THROUGH, json_value
 from core.engine.sandbox import FileUnreadable, RuleFailed, RuleRefused, Sandbox
 from core.repositories.configuration import MappingRepository, RuleRepository
-from core.repositories.errors import FeedNotRegistered, LoadNotReceived
+from core.repositories.errors import ArrivalNotChecked, FeedNotRegistered, LoadNotReceived
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.go_lives import GoLiveRepository
@@ -48,6 +49,7 @@ from core.steps.result import StepResult
 from ports.storage.base import BlobNotFound, BlobStore
 
 FIRST_UNCAST = 5  # the values listed when a file is held for values that do not cast
+PASSING_ARRIVALS = ("on_time_complete", "additive_parked")  # step 12's outcomes after which a load goes on
 
 
 class StageCompleted(StepResult):
@@ -132,6 +134,9 @@ def plan_load(session: Session, load_id: UUID) -> LoadPlan:
     load = LoadRepository(session).get(load_id)
     if load.status != "received":
         raise LoadNotReceived(f"Load {load_id} is {load.status}, not received")
+    if load.purpose == "scheduled" and load.arrival_outcome not in PASSING_ARRIVALS:  # step 12 comes first
+        raise ArrivalNotChecked(f"Scheduled load {load_id} has not passed step 12 (arrival outcome: "
+                                f"{load.arrival_outcome or 'none'}); it is not run")
     feed = FeedRepository(session).get(load.feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}; only a registered feed is loaded")

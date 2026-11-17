@@ -87,7 +87,7 @@ class LoadRepository:
         self._session.flush()
         return Load.model_validate(row)
 
-    def record_arrival(self, load_id: UUID, *, outcome: ArrivalOutcome, content_sha256: str,
+    def record_arrival(self, load_id: UUID, *, outcome: ArrivalOutcome, content_sha256: str | None,
                        detail: dict[str, Any], profile_id: UUID | None = None) -> Load:
         """Step 12's write on a received scheduled load: the four arrival fields, once (G12). A resent file
         ends the load as quarantined and a breaking one as held, in the same write with a finish time and no

@@ -127,15 +127,34 @@ def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent
     return record_summary(session, agent=agent, agent_input=after)
 
 
+def arrive(session: Session, *, blob_store: BlobStore, load_id: UUID, notifier: Notifier, recipients):
+    """Step 12 as the job runs it: read the plan, end the transaction, read and profile the file with no session,
+    then the locked write and the reports."""
+    from core.steps.s12_arrival import arrival_plan, check_arrival, record_arrival
+
+    plan = arrival_plan(session, load_id=load_id)
+    end_read(session)
+    return record_arrival(session, check_arrival(plan, blob_store=blob_store), notifier=notifier,
+                          recipients=recipients)
+
+
 def run_engine(session: Session, blob_store: BlobStore, feed_id: UUID, *, file_ref: str, purpose: str,
-               go_live_id: UUID | None = None, fetch_id: UUID | None = None, rule_timeout_seconds: float = 5):
+               go_live_id: UUID | None = None, fetch_id: UUID | None = None, rule_timeout_seconds: float = 5,
+               arrival: bool = True):
     """Step 13 as the API runs it: a received load, then plan (read), end the transaction, execute with no
-    session (BlobStore.get() and the DuckDB sandbox), then the locked write of the stages and records."""
+    session (BlobStore.get() and the DuckDB sandbox), then the locked write of the stages and records.
+    A scheduled load first gets the arrival step 12 would have written (on_time_complete, the SHA-256 of its
+    file): the engine's tests are about the engine; step 12 has its own (arrival=False leaves it unchecked)."""
+    import hashlib
+
     from core.engine.run import execute_load, plan_load, record_load
     from core.repositories.loads import LoadRepository
 
     load = LoadRepository(session).create(feed_id=feed_id, file_ref=file_ref, purpose=purpose,
                                           go_live_id=go_live_id, fetch_id=fetch_id)
+    if purpose == "scheduled" and arrival:
+        LoadRepository(session).record_arrival(load.id, outcome="on_time_complete", detail={},
+                                               content_sha256=hashlib.sha256(blob_store.get(file_ref)).hexdigest())
     end_read(session)
     plan = plan_load(session, load.id)
     end_read(session)

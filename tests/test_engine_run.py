@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.engine.run import FailedRolledBack, RunResult, StageCompleted
+from core.repositories.errors import ArrivalNotChecked
 from core.repositories.loads import LoadRepository
 from core.repositories.standard_records import StandardRecordRepository
 from ports.storage.local import LocalBlobStore
@@ -208,6 +209,15 @@ def test_a_configuration_changed_since_go_live_fails_at_raw(world):
     assert changed.load.failed_stage == "raw"
     approved_rule(world.session, world.feed, "late_rule", sql="SELECT _row FROM curated", description="A new rule.")
     assert run(world, purpose="scheduled", go_live_id=live.id).stages[-1].reason == "configuration_changed_since_go_live"
+
+
+def test_a_scheduled_load_with_no_passing_arrival_is_refused(world):
+    """Phase 7 assumption 16: step 12 comes first; plan_load refuses a scheduled load it has not checked, and the
+    database (G13) would refuse it too."""
+    live = go_live(world.session, world.feed)
+    assert run(world, purpose="scheduled", go_live_id=live.id).load.status == "loaded"  # with its arrival
+    with pytest.raises(ArrivalNotChecked, match="step 12"):
+        run(world, purpose="scheduled", go_live_id=live.id, arrival=False)
 
 
 def test_a_go_live_test_load_is_not_held_to_a_go_live(world):
