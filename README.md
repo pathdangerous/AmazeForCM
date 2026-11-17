@@ -85,8 +85,10 @@ recommendation, choose one candidate of a tie, or reject with a note; Propose ag
 a new version, and the old one stays listed. A column with no element is sent back to the glossary builder.
 Try it on Open ESG scores (Run the glossary builder, approve both new elements, then map its three columns)
 and on Bond terms (its file holds four undeclared columns: `rating`, `venue_mic_code`, `date`, `maturity`).
-Bond terms is only reached by a requirement for `coupon rate` while the demo product Bond reference data is
-not loaded: with `--demo`, that request is answered by the product (reuse).
+Bond terms is reached by a requirement for `coupon rate`. From phase 7 a fresh `--demo` seed leaves
+`coupon_rate` out of the demo product Bond reference data, so that request raises a requirement and goes on to
+source picking; a database seeded earlier (`amaze`) keeps the older product, which holds it, and answers the
+request by reuse (a product's elements never change).
 
 Phase 6, steps 09, 11 and 13 (rules, go-live, the run engine). On a registered feed with its columns mapped,
 as Sam Steward: Propose rules. The RuleRecommenderAgent proposes SQL rules over the table `curated`; each is
@@ -101,16 +103,39 @@ prepare, approve as Devon, Load now): `volume_in_whole_lots` is returned (it fla
 A load is four stages (raw, curated, validated, standard model), a value that does not cast to its element's
 type holds the whole file, and a rule's SQL runs only in a locked-down DuckDB (`RULE_TIMEOUT_SECONDS`).
 Mastering and transformations are a marked pass-through.
+
+Phase 7, steps 12, 15 and 20 (every load, the release and the requester's "Ready"). Every scheduled load (the
+daily job, or Load now as Opal Operations) is first checked by step 12 against the feed's latest profile: the
+same bytes as an earlier delivery are `resent_quarantined` (**an unchanged fixture file is therefore
+quarantined on every later daily run**, and only the first load of a file runs), a template column missing or
+no CSV table is `breaking_held`, a new column is `additive_parked` (profiled, sent to the glossary builder, not
+loaded until mapped and a new go-live), else `on_time_complete`. A loaded file is then certified (step 15): the
+trust score is 100 x rows with no rule flag / rows; at or above `TRUST_RELEASE_THRESHOLD` (90) it is released,
+below it the load is held and its consumers, operations and the backend team are told. On a release, step 20
+creates the feed's product (owner and visibility from the registration) and each waiting requirement becomes
+Ready, or Access restricted for a restricted product, or is told what is missing. A load a dead process left
+received is abandoned after `LOAD_STALE_MINUTES` (30). The Notifications tab of both UIs shows what a person was
+told. On `amaze`, as Opal, Load now on Exchange daily volumes: the first load passes (no hash is stored for the
+phase 6 load), the second is quarantined; the six requirements waiting on it become Ready or are listed as not
+covered.
 `/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
 Azure stub.
 
 Check:
 
 ```powershell
-.\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0018 (head)
+.\.venv\Scripts\python -m pytest -q -n 6      # uses the amaze_test database, a schema per worker; about 2.5 minutes
+.\.venv\Scripts\python -m alembic current     # expect: 0019 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
+```
+
+The Playwright story (phase 7) runs on its own copy of the world, schema `e2e_story` of `amaze_test`, never on
+`amaze`. Stop `dev.ps1` first (the story starts the API and both UIs on ports 8000, 5173 and 5174 itself and
+refuses to reuse a running one). One-time: `npm --prefix e2e install` and `cd e2e; npx playwright install chromium`.
+
+```powershell
+cd e2e; npx playwright test                   # expect: 1 passed (about 20 seconds)
 ```
 
 Evaluate the mapping prompt on the gold set (`fixtures/gold/mappings.json`, phase 5). Its model calls are
