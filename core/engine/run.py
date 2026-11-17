@@ -26,6 +26,7 @@ or times out does (assumption 17). Mastering and transformations are the pass-th
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -271,32 +272,51 @@ def _standard(state: dict, records: list[StandardRecordDraft]) -> RunResult:
 # ---------------------------------------------------------------- record
 
 
-def record_load(session: Session, plan: LoadPlan, outcome: LoadOutcome) -> LoadRun:
+class AfterLoadRefused(Exception):
+    """A step that runs after the engine's write, inside its savepoint (`then`), was refused: the savepoint is
+    rolled back and the load fails naming that step (phase 7 plan, assumption 19)."""
+
+    def __init__(self, step: str, text: str):
+        super().__init__(f"{step}: {text}")
+        self.step = step
+
+
+def record_load(session: Session, plan: LoadPlan, outcome: LoadOutcome,
+                then: Callable[[Session, Load], None] | None = None) -> LoadRun:
     """Lock the feed row, then the load row (phase 6 plan, assumption 36), check the load is still received, and
-    write. LoadNotReceived if another run finished it meanwhile: nothing is written."""
+    write. LoadNotReceived if another run finished it meanwhile: nothing is written.
+
+    `then(session, load)` is the caller's own step (phase 7: certification and the product), called inside the
+    savepoint once the load is loaded, so that it commits or fails with the records. The engine imports no step.
+    If it raises AfterLoadRefused, or the write fails, the savepoint is rolled back and the load fails."""
     FeedRepository(session).lock(plan.load.feed_id)
     loads = LoadRepository(session)
     if loads.lock(plan.load.id).status != "received":
         raise LoadNotReceived(f"Load {plan.load.id} was finished meanwhile; nothing is written")
     try:
         with session.begin_nested():
-            load = _write(session, plan, outcome)
+            load = _write(session, plan, outcome, then)
     except Exception as exc:
         if outcome.failed is not None:
             raise  # a failed outcome has little to write; a failure here is not an expected case
         outcome = _write_failed(outcome, exc)
-        load = _write(session, plan, outcome)
+        load = _write(session, plan, outcome, None)
     return LoadRun(load=load, stages=outcome.stages)
 
 
-def _write(session: Session, plan: LoadPlan, outcome: LoadOutcome) -> Load:
+def _write(session: Session, plan: LoadPlan, outcome: LoadOutcome,
+           then: Callable[[Session, Load], None] | None) -> Load:
     loads = LoadRepository(session)
     loads.record_stages(plan.load.id, [_stage_row(result, outcome.timings) for result in outcome.stages])
     failed = outcome.failed
     if failed is None:
         StandardRecordRepository(session).add_many(load_id=plan.load.id, feed_id=plan.load.feed_id,
                                                    records=outcome.records)
-        return loads.finish(plan.load.id, status="loaded")
+        loaded = loads.finish(plan.load.id, status="loaded")
+        if then is None:
+            return loaded
+        then(session, loaded)
+        return loads.get(plan.load.id)  # released or held by then
     return loads.finish(plan.load.id, status="failed_rolled_back", failed_stage=failed.stage,
                         failure=failed.detail.get("message") or failed.reason)
 
@@ -306,8 +326,11 @@ def _write_failed(outcome: LoadOutcome, exc: Exception) -> LoadOutcome:
     completed = [r for r in outcome.stages if r.stage != "standard"]
     now = datetime.now(UTC)
     standard = outcome.stages[-1]
-    failed = _failed("standard", f"records_not_written: {exc}", f"The records could not be written: {exc}",
-                     rows_in=standard.rows_in)
+    if isinstance(exc, AfterLoadRefused):
+        failed = _failed("standard", f"{exc.step}_refused", str(exc), rows_in=standard.rows_in)
+    else:
+        failed = _failed("standard", f"records_not_written: {exc}", f"The records could not be written: {exc}",
+                         rows_in=standard.rows_in)
     timings = {**outcome.timings, "standard": (outcome.timings.get("standard", (now, now))[0], now)}
     return LoadOutcome(stages=[*completed, failed], records=[], timings=timings)
 
@@ -320,5 +343,5 @@ def _stage_row(result: RunResult, timings: dict[str, tuple[datetime, datetime]])
         started_at=started, finished_at=finished)
 
 
-__all__ = ["FailedRolledBack", "LoadOutcome", "LoadPlan", "LoadRun", "RunResult", "StageCompleted", "execute_load",
+__all__ = ["AfterLoadRefused", "FailedRolledBack", "LoadOutcome", "LoadPlan", "LoadRun", "RunResult", "StageCompleted", "execute_load",
            "plan_load", "record_load", "STAGES"]

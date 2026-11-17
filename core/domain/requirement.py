@@ -46,6 +46,8 @@ REQUIREMENT_TRANSITIONS: frozenset[tuple[str, str]] = frozenset({
     ("scope_not_confirmed", "no_source_found"),  # the same, when asked again
     ("onboarding", "awaiting_source_choice"),  # 03 rejected: released (candidate_rejected); a listed source is left
     ("onboarding", "no_source_found"),  # 03 rejected: released; none is left (phase 4 plan, assumption 24)
+    ("onboarding", "ready"),  # step 20 -> created: the feed's first release holds the data, the requester is entitled
+    ("onboarding", "access_restricted"),  # step 20 -> created: the product is restricted and the requester has no grant
 })
 
 

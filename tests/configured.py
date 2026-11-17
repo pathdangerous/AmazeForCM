@@ -258,3 +258,47 @@ def approved_element(session, option: ElementOption, *, feed_id: UUID | None = N
     repo = GlossaryRepository(session)
     repo.lock()
     return repo.add_version(proposal_id=proposal.id, created_by=GLENN, option=option)
+
+
+# ---------------------------------------------------------------- a feed ready to load (phase 7, steps 15 and 20)
+
+VOLUME_HEADER = "instr_id,trade_date,traded_qty\n"
+VOLUME_RULE = "volume_over_100000"
+
+
+def volume_csv(rows: int = 10, flagged: int = 0) -> str:
+    """`rows` data rows, the first `flagged` over the rule's limit (so VOLUME_RULE flags them)."""
+    return VOLUME_HEADER + "".join(f"syn-{n:04d},2026-11-02,{200000 if n <= flagged else 1000}\n"
+                                   for n in range(1, rows + 1))
+
+
+def loadable_feed(session, code: str = "syn_loadable", *, visibility: str = "open",
+                  owner: str = "dev-data-owner") -> tuple[UUID, GoLive]:
+    """A registered feed (source `code`, local file) with three mappings (instrument_id, price_date, volume), one
+    rule (VOLUME_RULE) and a go-live pinning them: what a scheduled load of volume_csv() needs."""
+    from tests.onboarded import registered_feed as register
+
+    feed = FeedRepository(session).create_candidate(code=code, name=code.replace("_", " ").capitalize(),
+                                                    source_code=code, connector="local_file",
+                                                    source_ref=f"files/{code}.csv")
+    register(session, feed.id, owner_id=owner, visibility=visibility)
+    for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"), ("traded_qty", "volume")):
+        approved_mapping(session, feed.id, field, key)
+    approved_rule(session, feed.id, VOLUME_RULE, sql="SELECT _row FROM curated WHERE volume > 100000",
+                  description="Volume is at most 100000.")
+    return feed.id, go_live(session, feed.id, owner=owner)
+
+
+def onboarding_requirement(session, feed_id: UUID, *, title: str = "Synthetic request", elements: Sequence[str] = (),
+                           terms: Sequence[str] = (), requester: str = "dev-requester"):
+    """A requirement whose current choice selects the feed, onboarding."""
+    from core.repositories.requirements import RequirementRepository
+    from core.repositories.source_choices import SourceChoiceRepository
+
+    requirements = RequirementRepository(session)
+    requirement = requirements.create(requester_id=requester, title=title, element_keys=list(elements),
+                                      terms=list(terms))
+    SourceChoiceRepository(session).record_known(requirement_id=requirement.id, feed_id=feed_id,
+                                                 source_code=FeedRepository(session).get(feed_id).source_code)
+    requirements.advance(requirement.id, "source_selected")
+    return requirements.advance(requirement.id, "onboarding")

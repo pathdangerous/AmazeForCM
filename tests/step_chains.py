@@ -162,6 +162,28 @@ def run_engine(session: Session, blob_store: BlobStore, feed_id: UUID, *, file_r
     return record_load(session, plan, outcome)
 
 
+def run_scheduled(session: Session, blob_store: BlobStore, feed_id: UUID, go_live_id: UUID, *, file_ref: str,
+                  context, rule_timeout_seconds: float = 5):
+    """A scheduled load as the job runs it after step 12: plan, end the transaction, execute with no session, then
+    the one finishing transaction (feed, requirements, load; steps 13, 15 and 20). Step 12's arrival is written
+    as run_engine() does."""
+    import hashlib
+
+    from core.engine.run import execute_load, plan_load
+    from core.repositories.loads import LoadRepository
+    from core.steps.s20_create_product import finish_scheduled_load
+
+    load = LoadRepository(session).create(feed_id=feed_id, file_ref=file_ref, purpose="scheduled",
+                                          go_live_id=go_live_id)
+    LoadRepository(session).record_arrival(load.id, outcome="on_time_complete", detail={},
+                                           content_sha256=hashlib.sha256(blob_store.get(file_ref)).hexdigest())
+    end_read(session)
+    plan = plan_load(session, load.id)
+    end_read(session)
+    outcome = execute_load(plan, blob_store=blob_store, rule_timeout_seconds=rule_timeout_seconds)
+    return finish_scheduled_load(session, plan, outcome, context=context)
+
+
 def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
                  blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
                  today: date | None = None, release_after_days: int | None = None,

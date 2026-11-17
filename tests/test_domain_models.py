@@ -240,7 +240,8 @@ from core.domain.sourcing import SourceFetchDraft  # noqa: E402
 
 
 def test_requirement_statuses_and_transitions_are_the_plans():
-    """Phase 3 plan, section 5.1: the 13 moves that change a status (3a and 3b), and nothing else."""
+    """Phase 3 plan, section 5.1: the moves that change a status (3a and 3b), phase 4's two, and, from phase 7
+    (assumption 27), the two step 20 makes; nothing else."""
     assert REQUIREMENT_TRANSITIONS == frozenset({
         ("defined", "source_selected"), ("source_selected", "onboarding"),  # 3a
         ("defined", "awaiting_scope_confirmation"),  # S1
@@ -253,8 +254,9 @@ def test_requirement_statuses_and_transitions_are_the_plans():
         ("source_selected", "awaiting_source_choice"), ("source_selected", "no_source_found"),  # release
         ("defined", "no_source_found"), ("scope_not_confirmed", "no_source_found"),  # S1: no channel (review fix 5)
         ("onboarding", "awaiting_source_choice"), ("onboarding", "no_source_found"),  # phase 4: 03 rejected
+        ("onboarding", "ready"), ("onboarding", "access_restricted"),  # phase 7 assumption 27: step 20 -> created
     })
-    assert len(REQUIREMENT_TRANSITIONS) == 17
+    assert len(REQUIREMENT_TRANSITIONS) == 19  # was 17
     assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
 
 
