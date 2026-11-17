@@ -7,13 +7,14 @@ Append-only tables are protected by a database trigger (migration 0002), not by 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import (
     ARRAY,
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -111,6 +112,18 @@ class ProposalRow(Base):
                         "AND length(btrim(payload ->> 'source_field')) > 0)", name="names_a_column"),
         Index("uq_proposals_one_pending_per_feed_column", "kind", "feed_id", text("(payload ->> 'source_field')"),
               unique=True, postgresql_where=text("status = 'pending' AND kind IN ('glossary_element', 'mapping')")),
+        # 0018 (G1, G2): a rule proposal has a feed and names its rule_key and sql; one pending rule proposal per
+        # feed and rule key, one pending review_summary per feed
+        CheckConstraint("kind <> 'rule' "
+                        "OR (feed_id IS NOT NULL "
+                        "AND COALESCE(jsonb_typeof(payload -> 'rule_key') = 'string', false) "
+                        "AND length(btrim(payload ->> 'rule_key')) > 0 "
+                        "AND COALESCE(jsonb_typeof(payload -> 'sql') = 'string', false) "
+                        "AND length(btrim(payload ->> 'sql')) > 0)", name="names_a_rule"),
+        Index("uq_proposals_one_pending_rule_per_feed_key", "feed_id", text("(payload ->> 'rule_key')"),
+              unique=True, postgresql_where=text("status = 'pending' AND kind = 'rule'")),
+        Index("uq_proposals_one_pending_review_summary_per_feed", "feed_id", unique=True,
+              postgresql_where=text("status = 'pending' AND kind = 'review_summary'")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -527,6 +540,7 @@ class RuleRow(Base):
         CheckConstraint("rule_key ~ '^[a-z][a-z0-9_]*$'", name="rule_key_format"),
         CheckConstraint("length(btrim(sql)) > 0 AND length(btrim(description)) > 0", name="text_present"),
         CheckConstraint("version >= 1", name="version"),
+        Index("uq_rules_proposal_id", "proposal_id", unique=True),  # 0018 (G3): one row per proposal
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -540,11 +554,19 @@ class RuleRow(Base):
 
 
 class LoadRow(Base):
+    """One delivery of a registered feed (steps 12 to 15). Operational state: its status moves once, from
+    received to loaded or failed_rolled_back, with its proof (migration 0018, trg_loads_a_status); a loaded
+    load may go on to held or released. One received load per feed."""
+
     __tablename__ = "loads"
     __table_args__ = (
         CheckConstraint(_in("status", LOAD_STATUSES), name="status"),
         CheckConstraint("length(btrim(file_ref)) > 0", name="file_ref"),
+        # 0018 (G7): a scheduled load names the go-live that approved it, a test load has none
+        CheckConstraint("(purpose = 'scheduled' AND go_live_id IS NOT NULL) "
+                        "OR (purpose = 'go_live_test' AND go_live_id IS NULL)", name="purpose_fits"),
         Index("ix_loads_feed_id", "feed_id"),
+        Index("uq_loads_one_received_per_feed", "feed_id", unique=True, postgresql_where=text("status = 'received'")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -553,6 +575,78 @@ class LoadRow(Base):
     file_ref: Mapped[str] = mapped_column(Text)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.clock_timestamp())
     status: Mapped[str] = mapped_column(Text, default="received", server_default="received")
+    purpose: Mapped[str] = mapped_column(Text)
+    fetch_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("source_fetches.id"))
+    go_live_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feed_go_lives.id", use_alter=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_stage: Mapped[str | None] = mapped_column(Text)
+    failure: Mapped[str | None] = mapped_column(Text)
+
+
+class FeedGoLiveRow(Base):
+    """Step 11: the data owner's approval of a feed's configuration for loading, versioned per feed. Pins the
+    mapping ids, rule ids and the test load (phase 6 plan, assumption 15). Append-only (migration 0018;
+    trigger: an approved review_summary of the feed, decided by its registered owner, pinning exactly these)."""
+
+    __tablename__ = "feed_go_lives"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "version"),
+        UniqueConstraint("proposal_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+    approved_by: Mapped[str] = mapped_column(Text)
+    mapping_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    rule_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    test_load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
+    hypercare_until: Mapped[date] = mapped_column(Date)
+
+
+class LoadStageRow(Base):
+    """Step 13: one stage (raw, curated, validated, standard) of one load. Append-only (migration 0018;
+    trigger: written in order, while the load is received)."""
+
+    __tablename__ = "load_stages"
+    __table_args__ = (
+        UniqueConstraint("load_id", "stage"),
+        CheckConstraint("stage IN ('raw', 'curated', 'validated', 'standard')", name="stage"),
+        CheckConstraint("outcome IN ('stage_completed', 'failed_rolled_back')", name="outcome"),
+        CheckConstraint("rows_in >= 0 AND rows_out >= 0", name="counts"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
+    stage: Mapped[str] = mapped_column(Text)
+    outcome: Mapped[str] = mapped_column(Text)
+    rows_in: Mapped[int] = mapped_column(Integer)
+    rows_out: Mapped[int] = mapped_column(Integer)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class StandardRecordRow(Base):
+    """Step 13: one file row in the standard model (element key -> value), with the keys of the rules that
+    flagged it. Append-only (migration 0018; trigger: a received load of the same feed)."""
+
+    __tablename__ = "standard_records"
+    __table_args__ = (
+        CheckConstraint("row_number >= 1", name="row_number"),
+        Index("ix_standard_records_load_id", "load_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    row_number: Mapped[int] = mapped_column(Integer)
+    values: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    flags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
 
 
 class ProductRow(Base):

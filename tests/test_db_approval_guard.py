@@ -79,7 +79,8 @@ OTHER_KIND = {"mapping": ("rule", STEWARD_THEN_CHECKER), "rule": ("mapping", ("d
 REAL_PAYLOAD = {
     "mapping": {"source_field": "GuardField", "column_type": None, "candidates": ["close_price"],
                 "recommended": "close_price", "reason": "Synthetic."},
-    "rule": {"note": "synthetic"},
+    # 0018 (G5): the rule row of TABLES matches this payload and the proposal's feed
+    "rule": {"rule_key": "guard_rule", "sql": "SELECT 1", "description": "Synthetic."},
     "glossary_element": {"source_field": "guard", "outcome": "proposed", "recommended": 0, "reason": "Synthetic.",
                          "run_id": "00000000-0000-0000-0000-000000000000", "options": [
                              {"kind": "new_element", "key": "guard_element", "alias": None, "element": {
@@ -107,7 +108,7 @@ def _insert(db_session, table, feed, proposal_id):
 @pytest.mark.parametrize("table", sorted(TABLES))
 def test_accepts_a_properly_approved_proposal(db_session, feed, approved_proposal, table):
     kind, roles, _ = TABLES[table]
-    links = {"feed_id": feed.id} if kind == "mapping" else {}
+    links = {"feed_id": feed.id} if kind in ("mapping", "rule") else {}
     _insert(db_session, table, feed, approved_proposal(kind=kind, roles=roles, payload=REAL_PAYLOAD[kind], **links).id)
     assert db_session.execute(text(f"SELECT count(*) FROM {table} WHERE proposal_id IS NOT NULL")).scalar_one() == 1
 

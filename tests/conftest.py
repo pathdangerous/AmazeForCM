@@ -225,7 +225,9 @@ def make_proposal(db_session, logged_call):
             payload = {"note": "synthetic"}
             if configures:
                 payload["source_field"] = f"synthetic_{uuid.uuid4().hex[:8]}"
-        if configures and "feed_id" not in links:  # 0017: and it has a feed (a candidate one will do)
+        if kind == "rule":  # 0018 (G1): a rule proposal names its rule_key and sql, and has a feed
+            payload = {"rule_key": f"synthetic_{uuid.uuid4().hex[:8]}", "sql": "SELECT 1", **payload}
+        if (configures or kind == "rule") and "feed_id" not in links:  # 0017: and it has a feed (a candidate one will do)
             from core.repositories.feeds import FeedRepository
 
             code = f"syn_proposal_{uuid.uuid4().hex[:8]}"

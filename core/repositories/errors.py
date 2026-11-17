@@ -184,6 +184,10 @@ class LoadNotFound(RepositoryError, LookupError):
     """No load has this id."""
 
 
+class LoadInProgress(RepositoryError):
+    """The feed already has a received load (migration 0018, uq_loads_one_received_per_feed): one at a time."""
+
+
 class ProductNotFound(RepositoryError, LookupError):
     """No product has this id or code."""
 

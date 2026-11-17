@@ -12,7 +12,6 @@ from sqlalchemy import text
 from core.repositories.configuration import MappingRepository
 from core.repositories.coverage import DomainCoverage
 from core.repositories.feeds import FeedRepository
-from core.repositories.loads import LoadRepository
 
 ASKED = ["close_price", "open_price", "volume"]
 
@@ -50,9 +49,9 @@ def map_field(db_session):
 @pytest.fixture
 def load(db_session):
     def _load(feed, status="released"):
-        loads = LoadRepository(db_session)
-        created = loads.create(feed_id=feed.id, file_ref=f"local://raw/{feed.code}/2026-01-02.csv")
-        return created if status == "received" else loads.set_status(created.id, status)
+        from tests.configured import a_load
+
+        return a_load(db_session, feed.id, status)  # 0018: each status is reached the way the database allows
 
     return _load
 
@@ -79,8 +78,10 @@ def test_a_feed_that_is_not_registered_does_not_count(coverage, feed, db_session
     with pytest.raises(FeedNotRegistered):
         MappingRepository(db_session).add_version(feed_id=candidate.id, source_field="ClosePx",
                                                   element_key="close_price", proposal_id=proposal.id)
+    # 0018: a load of any status can only be written by hand with the status received; the stage check holds on
+    # its own, so this candidate feed has a received load and still does not count
     db_session.execute(
-        text("INSERT INTO loads (feed_id, file_ref, status) VALUES (:f, 'local://raw/x.csv', 'released')"),
+        text("INSERT INTO loads (feed_id, file_ref, purpose) VALUES (:f, 'local://raw/x.csv', 'go_live_test')"),
         {"f": candidate.id},
     )
     assert coverage.in_domains(ASKED) == set()

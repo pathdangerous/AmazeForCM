@@ -94,8 +94,17 @@ class RuleRepository:
         self._session = session
 
     def add_version(self, *, feed_id: UUID, rule_key: str, sql: str, description: str, proposal_id: UUID) -> Rule:
+        """The rule's next version, from an approved rule proposal of this feed that holds exactly this key, SQL
+        and description, on a registered feed (phase 6 plan, assumption 32; trigger trg_rules_b_matches_proposal
+        checks the same). The caller holds the feed row lock."""
         draft = RuleDraft(rule_key=rule_key, sql=sql, description=description)
         _check_feed_and_proposal(self._session, feed_id, proposal_id, "rule")
+        proposal = ProposalRepository(self._session).get(proposal_id)
+        for name, wanted in (("rule_key", draft.rule_key), ("sql", draft.sql), ("description", draft.description)):
+            if proposal.payload.get(name) != wanted:
+                raise ProposalForAnotherField(f"Proposal {proposal_id} holds another {name} than the rule")
+        if self._session.get(FeedRow, feed_id).stage != "registered":
+            raise FeedNotRegistered(f"Feed {feed_id} is not registered")
         latest = self._session.scalar(
             select(func.max(RuleRow.version)).where(RuleRow.feed_id == feed_id, RuleRow.rule_key == draft.rule_key)
         )
@@ -113,6 +122,11 @@ class RuleRepository:
             .order_by(RuleRow.rule_key, RuleRow.version.desc())
         )
         return [Rule.model_validate(r) for r in self._session.scalars(query)]
+
+    def rejected_keys(self, feed_id: UUID) -> set[str]:
+        """The rule keys of this feed's rejected rule proposals: not proposed again (phase 6 plan, assumption 11)."""
+        rejected = ProposalRepository(self._session).list_for_feed(feed_id, "rule", status="rejected")
+        return {p.payload["rule_key"] for p in rejected}
 
     def history(self, feed_id: UUID, rule_key: str) -> list[Rule]:
         query = (

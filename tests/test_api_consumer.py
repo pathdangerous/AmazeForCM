@@ -159,17 +159,15 @@ async def test_done_when_missing_data_raises_a_requirement_and_shows_its_status(
 
 async def test_my_requests_lists_every_outcome(client, db_session):
     from core.repositories.feeds import FeedRepository
-    from core.repositories.loads import LoadRepository
 
     feeds = FeedRepository(db_session)
     from tests.onboarded import registered_feed
 
     feed = registered_feed(db_session, feeds.create_candidate(code="synthetic_feed", name="Synthetic").id)
-    from tests.configured import approved_mapping
+    from tests.configured import a_load, approved_mapping
 
     approved_mapping(db_session, feed.id, "Vol", "volume")
-    loads = LoadRepository(db_session)
-    loads.set_status(loads.create(feed_id=feed.id, file_ref="local://raw/x.csv").id, "released")
+    a_load(db_session, feed.id, "released")  # 0018: loaded first, then released
     db_session.commit()
 
     await ask(client, "close price", ["close_price"])

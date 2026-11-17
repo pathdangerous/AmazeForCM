@@ -134,7 +134,7 @@ RULE = ("INSERT INTO rules (feed_id, rule_key, version, sql, description, propos
 def params(proposal, feed, **over):
     payload = proposal.payload
     return {"feed": feed, "key": payload["rule_key"], "version": 1, "rule_sql": payload["sql"],
-            "description": payload["description"], "proposal": proposal.id, **over}
+            "description": payload.get("description") or "Price is present.", "proposal": proposal.id, **over}
 
 
 def test_two_rules_never_come_from_one_proposal(s, feed):

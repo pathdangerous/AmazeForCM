@@ -167,19 +167,17 @@ def test_restricted_product_still_counts():
 def in_the_domains(db_session):
     """Put elements in the domains: a registered feed with a released load and current mappings."""
     from core.repositories.feeds import FeedRepository
-    from core.repositories.loads import LoadRepository
 
     def _put(*keys):
         feeds = FeedRepository(db_session)
         from tests.onboarded import registered_feed
 
         feed = registered_feed(db_session, feeds.create_candidate(code="synthetic_feed", name="Synthetic feed").id)
-        from tests.configured import approved_mapping
+        from tests.configured import a_load, approved_mapping
 
         for key in keys:
             approved_mapping(db_session, feed.id, key.upper(), key)
-        loads = LoadRepository(db_session)
-        loads.set_status(loads.create(feed_id=feed.id, file_ref="local://raw/synthetic.csv").id, "released")
+        a_load(db_session, feed.id, "released")  # 0018: loaded first, then released
 
     return _put
 
