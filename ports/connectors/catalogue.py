@@ -64,6 +64,9 @@ class SourceEntry(BaseModel):
     # Phase 4 (plan, assumption 8): file column name -> the declared element key or other field it holds.
     # The source's own statement, used for coverage in step 02; not the mapping of step 06.
     columns: dict[Text, Text]
+    # Phase 6 (plan, assumption 8): synthetic past deliveries, as source refs the entry's own connector reads, in
+    # date order. Step 09 back-tests a proposed rule on them. Optional: a source with none is "not back-tested".
+    history: list[Text] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _rules(self) -> SourceEntry:

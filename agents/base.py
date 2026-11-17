@@ -109,7 +109,8 @@ class Agent:
         return []
 
     def run(self, session: Session, agent_input: BaseModel, *,
-            before_write: Callable[[Session], None] | None = None) -> AgentRun:
+            before_write: Callable[[Session], None] | None = None,
+            after_answer: Callable[[Any], Any] | None = None) -> AgentRun:
         """Every answered model call has exactly one proposal_log row, committed at once in its own short
         transaction, before the caller writes anything. If the answer is then discarded (the output check,
         the input file, before_write or the proposals fail), a discard row pointing at it is committed the
@@ -117,6 +118,12 @@ class Agent:
 
         before_write(session) runs after the call row is committed and before the proposals: the caller
         locks what it will change and checks it again there.
+
+        after_answer(output) -> output (phase 6 plan, assumption 9) runs after the call row is committed and
+        before before_write, with the session in no transaction (checked): code fills what the model must not
+        (the back-test of step 09). It returns a copy of the same output type; the proposals are made from that
+        copy, and the call row keeps what the model said. If it fails, the answer is discarded like a failure of
+        before_write.
 
         The model call never touches the session. The caller ends its read transaction before calling
         run(), so no database connection is held while the model answers (review fix 2); a session still
@@ -148,9 +155,17 @@ class Agent:
             raise failure
 
         try:
+            output = result.output
+            if after_answer is not None:
+                if session.in_transaction():
+                    raise SessionInTransaction(f"{self.name}: after_answer runs outside any transaction")
+                output = after_answer(output)
+                if not isinstance(output, self.output_schema):
+                    raise TypeError(f"{self.name}: after_answer returned {type(output).__name__}, "
+                                    f"not {self.output_schema.__name__}")
             if before_write is not None:
                 before_write(session)
-            drafts = self.to_proposals(agent_input, result.output)
+            drafts = self.to_proposals(agent_input, output)
             if drafts and not self.approver_roles:
                 raise ReadOnlyAgentProposed(f"{self.name} is read-only and cannot create proposals")
             repository = ProposalRepository(session)
@@ -162,7 +177,7 @@ class Agent:
         except Exception as exc:
             self._own_transaction(session, lambda log: log.discard(proposal_log_id=log_id, reason=_reason(exc)))
             raise
-        return AgentRun(log_id=log_id, input_ref=input_ref, output=result.output, proposals=proposals)
+        return AgentRun(log_id=log_id, input_ref=input_ref, output=output, proposals=proposals)
 
     def _log_call(self, session: Session, input_ref: str, result, *, discard: Exception | None) -> UUID:
         """The call row (and its discard row, if the answer is already discarded), committed at once."""

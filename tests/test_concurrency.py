@@ -22,12 +22,17 @@ from tests.test_commit_visibility import (  # noqa: F401 (flow and own_schema ar
     GLENN,
     RILEY,
     SAM,
+    CASEY,
+    OPAL,
     amaze_post,
     bond_feed,
+    call,
     committed,
     flow,
     glossary_worker,
+    go_live,
     own_schema,
+    p6,
     queued_run,
 )
 
@@ -279,8 +284,14 @@ async def test_no_connection_is_held_during_any_model_call(own_schema, flow):
         await f.amaze("syn_exchange_volumes", "register", {"owner_id": "dev-data-owner", "visibility": "open"})
         proposed = await f.client.post(f"/api/amaze/feeds/{f.feed_id}/mappings/propose", headers=SAM, json={})
         assert proposed.status_code == 200, proposed.text
-    # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant, ProfilerAgent, MappingAgent
-    assert provider.checked_out == [0, 0, 0, 0, 0, 0, 0]
+        # phase 6: the steward maps the columns, then the RuleRecommenderAgent's and the ReviewSummariserAgent's calls
+        for item in proposed.json()["result"]["recommended"]:
+            await amaze_post(f.client, f"proposals/{item['proposal_id']}/decision", {"decision": "approved"})
+        await amaze_post(f.client, f"feeds/{f.feed_id}/rules/propose", {})
+        await amaze_post(f.client, f"feeds/{f.feed_id}/go-live/summary", {}, headers=BLAKE)
+    # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant, ProfilerAgent, MappingAgent, RuleRecommenderAgent,
+    # ReviewSummariserAgent
+    assert provider.checked_out == [0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 
 async def test_a_new_profile_during_the_summary_gives_409_and_a_discard_row(own_schema, flow):
@@ -1092,18 +1103,22 @@ async def test_after_a_restart_a_queued_run_and_an_expired_one_are_run(own_schem
         (waiting, "done", 1), (expired, "done", 2)]
 
 
-async def test_after_a_restart_a_run_with_a_live_lease_is_run_when_its_lease_passes(own_schema, tmp_path):
+async def test_after_a_restart_a_run_with_a_live_lease_is_run_when_its_lease_passes(own_schema, tmp_path,
+                                                                                      monkeypatch):
     """Review finding 2: a run was running when its worker stopped, and its lease has not passed when the API
     starts again. The start-up kick claims nothing, sees the live lease and schedules one more kick just after
-    it; the run then completes on attempt 2 with no other kick (no request is sent)."""
+    it; the run then completes on attempt 2 with no other kick (no request is sent). A 1 s lease and a 0.2 s
+    grace instead of 2 s and 1 s: the same order of events in 1.2 s, not 3 (phase 6 plan, task 3)."""
+    from apps.api import jobs
     from core.repositories.glossary_runs import GlossaryRunRepository
     from ports.config import Settings
     from ports.db import get_sessionmaker
     from tests.conftest import running_app
 
+    monkeypatch.setattr(jobs, "LEASE_GRACE_SECONDS", 0.2)
     run_id = uuid.UUID(queued_run(own_schema, bond_feed(own_schema)))
     with get_sessionmaker(own_schema)() as session:
-        assert GlossaryRunRepository(session).claim(lease_seconds=2).id == run_id  # its worker stopped here
+        assert GlossaryRunRepository(session).claim(lease_seconds=1).id == run_id  # its worker stopped here
         session.commit()
     worker, finished, drains = glossary_worker(own_schema, tmp_path), threading.Event(), []
 
@@ -1217,3 +1232,125 @@ async def test_two_alias_approvals_of_one_element_at_once_take_the_next_versions
                                  "ORDER BY version")
     assert [(version, aliases[-2:]) for version, aliases in rows[1:]] == [
         (2, [rows[0][1][-1], "venue_mic_code"]), (3, ["venue_mic_code", "mic_of_venue"])]
+
+
+# ---------------------------------------------------------------- phase 6: the three race pairs (plan, assumption 33)
+
+
+async def test_two_rule_proposals_of_one_feed_at_once_give_200_and_409(own_schema, p6):
+    """R1: the second Propose rules is sent while the first waits for the model; it proposes and commits. The first
+    answer then finds pending rules of the same keys, which its input did not say: 409 (RulesAlreadyProposed), a
+    discard row, nothing else written."""
+    provider = HeldProvider()
+    async with p6() as p:
+        use_provider(provider)
+        url = f"/api/amaze/feeds/{p.feed}/rules/propose"
+        first = asyncio.create_task(p.client.post(url, headers=SAM, json={}))
+        assert await asyncio.to_thread(provider.entered.wait, 10), "the first request never called the model"
+        second = await p.client.post(url, headers=SAM, json={})
+        provider.release.set()
+        first = await first
+    assert (first.status_code, second.status_code) == (409, 200), (first.text, second.text)
+    assert "while the agent answered" in first.json()["detail"]
+    assert committed(own_schema, "SELECT count(*) FROM proposals WHERE kind = 'rule'") == [(4,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'RuleRecommenderAgent'") == [
+        (2,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(1,)]
+
+
+async def test_the_owners_approval_and_the_checkers_rule_approval_at_once_never_pin_a_stale_rule_set(
+        own_schema, p6, monkeypatch):
+    """R2: the checker's approval stores a rule (slowed while it holds the feed row); the owner's go-live approval,
+    sent meanwhile, waits for the feed row, then finds the rules changed since the summary: 409
+    (ConfigurationChangedSinceSummary) and no go-live that pins a rule set other than the current one."""
+    from datetime import date
+
+    from core.repositories.configuration import RuleRepository
+    from core.repositories.errors import ConfigurationChangedSinceSummary
+    from core.steps.s09_rules import RuleStored, decide_rule
+    from core.steps.s11_go_live import decide_go_live
+    from ports.notify.inapp import InAppNotifier
+    from tests.conftest import dev_user_for
+
+    async with p6() as p:
+        await call(p.client, f"feeds/{p.feed}/rules/propose", {}, headers=SAM)
+        [(rule_id,)] = committed(own_schema, "SELECT id FROM proposals WHERE payload->>'rule_key' = "
+                                             "'volume_not_negative'")
+        await call(p.client, f"proposals/{rule_id}/decision", {"decision": "approved"}, headers=SAM)  # step 1
+        summary_id = await go_live(p, approve=False)  # pins the rule set as it is now: no rule
+    entered = _slow(monkeypatch, RuleRepository, "add_version", seconds=0.8)  # inside the checker's decision
+    checker = _in_session(own_schema, lambda s: decide_rule(s, proposal_id=rule_id, user=dev_user_for("checker"),
+                                                            decision="approved", note=None))
+    owner = _in_session(own_schema, lambda s: decide_go_live(
+        s, proposal_id=uuid.UUID(summary_id), user=dev_user_for("data_owner"), decision="approved", note=None,
+        back_to_step=None, today=date.today(), hypercare_days=10, daily_run_utc="06:00", notifier=InAppNotifier(s),
+        backend_team=[], operations=[], role_holders=lambda role: []))
+    out = _first_then_second(checker, owner, entered)
+    assert isinstance(out["first"], RuleStored), out["first"]
+    assert isinstance(out["second"], ConfigurationChangedSinceSummary), out["second"]
+    assert out["overlap"]
+    assert committed(own_schema, "SELECT count(*) FROM feed_go_lives") == [(0,)]
+    assert committed(own_schema, "SELECT count(*) FROM rules") == [(1,)]
+
+
+async def test_the_jobs_load_and_load_now_of_one_feed_at_once_give_one_load_and_a_409(own_schema, p6, monkeypatch):
+    """R3: the job's load is held in the engine (its received load is committed); operations' Load now meets it:
+    409 (LoadInProgress). The job's load then finishes; there is one scheduled load."""
+    import apps.api.jobs as jobs
+
+    async with p6() as p:
+        await go_live(p)
+        entered, release, real = threading.Event(), threading.Event(), jobs.execute_load
+
+        def held(plan, **kwargs):
+            entered.set()
+            assert release.wait(timeout=20), "the test never released the job's load"
+            return real(plan, **kwargs)
+
+        monkeypatch.setattr(jobs, "execute_load", held)
+        thread, job = _in_thread(lambda: p.daily.load_feed(uuid.UUID(p.feed)))
+        assert await asyncio.to_thread(entered.wait, 10), "the job's load never started"
+        now = await p.client.post(f"/api/amaze/feeds/{p.feed}/loads", headers=OPAL, json={})
+        release.set()
+        thread.join(timeout=30)
+    assert now.status_code == 409 and "load in progress" in now.json()["detail"], now.text
+    assert job == {"result": "loaded"}
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("loaded",)]
+
+
+# ---------------------------------------------------------------- phase 6: no connection held in a file read or a rule
+
+
+async def test_no_connection_is_held_during_a_load_run(own_schema, p6, monkeypatch):
+    """Assumption 34: pool.checkedout() == 0 in BlobStore.get() and in the sandbox, for the test load of go-live
+    and for the job's scheduled load."""
+    from core.engine.sandbox import Sandbox
+    from ports.storage.local import LocalBlobStore as Blobs
+
+    seen = {"get": [], "load_csv": [], "run_rule": []}
+
+    def watch(cls, name):
+        original = getattr(cls, name)
+
+        def watched(self, *args, **kwargs):
+            seen[name].append(own_schema.pool.checkedout())
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(cls, name, watched)
+
+    watch(Blobs, "get")
+    watch(Sandbox, "load_csv")
+    watch(Sandbox, "run_rule")
+    async with p6() as p:
+        await call(p.client, f"feeds/{p.feed}/rules/propose", {}, headers=SAM)
+        [(rule_id,)] = committed(own_schema, "SELECT id FROM proposals WHERE payload->>'rule_key' = "
+                                             "'volume_not_negative'")
+        for headers in (SAM, CASEY):
+            await call(p.client, f"proposals/{rule_id}/decision", {"decision": "approved"}, headers=headers)
+        seen_before = {k: len(v) for k, v in seen.items()}
+        await go_live(p)  # the test load: BlobStore.get, the sandbox, one rule
+        assert await asyncio.to_thread(p.daily.run) == {"syn_exchange_volumes": "fetched"}  # the scheduled load
+    for name, counts in seen.items():
+        assert counts, f"{name} was never called"
+        assert set(counts) == {0}, (name, counts)
+    assert len(seen["get"]) >= 2 and len(seen["run_rule"]) - seen_before["run_rule"] >= 2  # both loads ran the rule

@@ -10,6 +10,7 @@ with no connection held, then writes; the summary reads, ends the transaction, c
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -21,31 +22,73 @@ from sqlalchemy.orm import Session
 
 from agents.mapping import MappingAgent
 from agents.profiler import ProfilerAgent
+from agents.review_summariser import ReviewSummariserAgent
+from agents.rule_recommender import RuleRecommenderAgent
 from apps.api.deps import (
     backend_team_user,
     backend_user,
     data_steward_user,
+    get_app_settings,
     get_blob_store_port,
+    get_connector_factory,
+    get_daily_fetch,
     get_db_session,
     get_glossary_kick,
     get_identity_port,
     get_mapping_agent,
     get_profiler_agent,
     get_request_notifier,
+    get_review_summariser,
+    get_rule_agent,
     get_source_catalogue,
     glossary_run_user,
+    operations_user,
 )
+from apps.api.jobs import DAILY_FETCH_HOUR, DailyFetch
 from apps.api.transactions import in_transaction, read
 from core.domain.feed import Feed, FeedStage
 from core.domain.glossary import GlossaryElement
 from core.domain.mapping import GlossaryRun
 from core.domain.proposal import ProposalStatus
-from core.repositories.errors import ProposalNotFound, UnknownGlossaryElement
+from core.domain.load import StandardRecord
+from core.engine.run import execute_load, plan_load, record_load
+from core.repositories.errors import OwnerNotADataOwner, ProposalNotFound, UnknownGlossaryElement
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
+from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
+from core.repositories.standard_records import StandardRecordRepository
 from core.steps.errors import ChoiceNotOffered
-from core.steps.feed_page import FeedPage, ProposalOnPage, configuration_proposals, feed_page, proposal_on_page
+from core.steps.feed_page import (
+    FeedPage,
+    LoadOnPage,
+    ProposalOnPage,
+    configuration_proposals,
+    feed_page,
+    load_on_page,
+    proposal_on_page,
+)
+from core.steps.s09_rules import (
+    RuleAwaitsChecker,
+    RuleRejected,
+    RulesResult,
+    RuleStored,
+    backtest_for,
+    decide_rule,
+    record_rules,
+    rules_input,
+)
+from core.steps.s11_go_live import (
+    ApprovedScheduled,
+    GoLiveSummary,
+    RejectedBackToStep,
+    TestFailedHeld,
+    after_test_load,
+    begin_test_load,
+    decide_go_live,
+    go_live_plan,
+)
+from core.steps.s11_go_live import record_summary as record_go_live_summary  # s02 has a record_summary too
 from core.steps.s02_profile import ProfileResult, ProfileSummary, profile_plan, record_profile, record_summary, \
     run_profile, summary_input
 from core.steps.s03_signoff import SignoffResult, sign_off
@@ -53,6 +96,8 @@ from core.steps.s04_register import NoOwner, Registered, register_feed
 from core.steps.s05_glossary import ElementDecided, RunsBanner, decide_element, queue_run, runs_banner
 from core.steps.s06_map import Mapped, MappingRejected, MappingsProposed, decide_mapping, mapping_input, \
     record_mappings
+from ports.config import Settings
+from ports.connectors import SourceConnector
 from ports.connectors.catalogue import SourceCatalogue, UnknownSource
 from ports.identity import Identity, User
 from ports.notify import Notifier
@@ -71,6 +116,12 @@ Mapper = Annotated[MappingAgent, Depends(get_mapping_agent)]
 Kick = Annotated[Callable[[], None], Depends(get_glossary_kick)]
 GlossaryRunner = Annotated[User, Depends(glossary_run_user)]
 Steward = Annotated[User, Depends(data_steward_user)]
+Operations = Annotated[User, Depends(operations_user)]
+RuleAgent = Annotated[RuleRecommenderAgent, Depends(get_rule_agent)]
+Summariser = Annotated[ReviewSummariserAgent, Depends(get_review_summariser)]
+Connectors = Annotated[Callable[[str], SourceConnector], Depends(get_connector_factory)]
+AppSettings = Annotated[Settings, Depends(get_app_settings)]
+Daily = Annotated[DailyFetch, Depends(get_daily_fetch)]
 Text = Annotated[str, StringConstraints(max_length=500)]
 
 
@@ -235,10 +286,12 @@ class DecisionBody(BaseModel):
     # a glossary proposal's option index, or a mapping proposal's element key; None: the recommended one
     choice: StrictInt | Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
     note: Text | None = None
+    back_to_step: Literal["05", "06", "09"] | None = None  # a go-live rejection names the step it goes back to
 
 
 class DecisionResponse(BaseModel):
-    result: Mapped | MappingRejected | ElementDecided
+    result: (Mapped | MappingRejected | ElementDecided | RuleAwaitsChecker | RuleStored | RuleRejected
+             | ApprovedScheduled | RejectedBackToStep)
     proposal: ProposalOnPage
 
 
@@ -267,7 +320,7 @@ def glossary_run(feed_id: UUID, session: DbSession, user: GlossaryRunner, kick: 
 
 
 @router.get("/proposals", response_model=list[ProposalOnPage])
-def proposals(session: DbSession, kind: Literal["glossary_element", "mapping"] | None = None,
+def proposals(session: DbSession, kind: Literal["glossary_element", "mapping", "rule", "review_summary"] | None = None,
               status: ProposalStatus | None = None, feed_id: UUID | None = None) -> list[ProposalOnPage]:
     return read(session, lambda: configuration_proposals(session, kind=kind, status=status, feed_id=feed_id))
 
@@ -289,7 +342,7 @@ def propose_mappings(feed_id: UUID, body: ProposeBody, session: DbSession, user:
 
 @router.post("/proposals/{proposal_id}/decision", response_model=DecisionResponse)
 def decide(proposal_id: UUID, body: DecisionBody, session: DbSession, user: Annotated[User, Depends(backend_user)],
-           identity: IdentityPort, notifier: RequestNotifier) -> DecisionResponse:
+           identity: IdentityPort, notifier: RequestNotifier, settings: AppSettings) -> DecisionResponse:
     def work():
         kind = ProposalRepository(session).get(proposal_id).kind
         if kind == "glossary_element":
@@ -303,7 +356,111 @@ def decide(proposal_id: UUID, body: DecisionBody, session: DbSession, user: Anno
                 raise ChoiceNotOffered("A mapping proposal's choice is one of its candidate element keys")
             return decide_mapping(session, proposal_id=proposal_id, user=user, decision=body.decision,
                                   choice=body.choice, note=body.note)
-        raise ProposalNotFound(f"No glossary or mapping proposal with id {proposal_id}")
+        if kind == "rule":  # phase 6: the steward, then the checker
+            return decide_rule(session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note,
+                               notifier=notifier, checkers=_users_with(identity, "checker"))
+        if kind == "review_summary":  # phase 6: the feed's owner
+            return decide_go_live(
+                session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note,
+                back_to_step=body.back_to_step, today=date.today(), hypercare_days=settings.hypercare_days,
+                daily_run_utc=f"{DAILY_FETCH_HOUR:02d}:00", notifier=notifier, backend_team=_backend_team(identity),
+                operations=_users_with(identity, "operations"), role_holders=lambda role: _users_with(identity, role))
+        raise ProposalNotFound(f"No glossary, mapping, rule or go-live proposal with id {proposal_id}")
 
     result = in_transaction(session, work)
     return DecisionResponse(result=result, proposal=read(session, lambda: proposal_on_page(session, proposal_id)))
+
+
+# ---- phase 6: steps 09, 11 and 13 (plan, section 9)
+
+
+class ProposeRulesBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProposeRulesResponse(BaseModel):
+    result: RulesResult
+    feed: FeedPage
+
+
+class GoLiveResponse(BaseModel):
+    result: GoLiveSummary | TestFailedHeld
+    proposal: ProposalOnPage | None  # the summary waiting for the owner; None when the test load failed
+    feed: FeedPage
+
+
+class LoadNowResponse(BaseModel):
+    result: dict[str, str | None]  # {"fetch": the fetch's outcome, "load": the load's status, or None}
+    feed: FeedPage
+
+
+class LoadDetail(BaseModel):
+    load: LoadOnPage
+    records: list[StandardRecord]  # the first LOAD_RECORDS by row number
+
+
+LOAD_RECORDS = 50
+
+
+@router.post("/feeds/{feed_id}/rules/propose", response_model=ProposeRulesResponse)
+def propose_rules(feed_id: UUID, body: ProposeRulesBody, session: DbSession, user: Steward, catalogue: Catalogue,
+                  agent: RuleAgent, connectors: Connectors, settings: AppSettings) -> ProposeRulesResponse:
+    agent_input = read(session, lambda: rules_input(session, feed_id=feed_id, catalogue=catalogue))
+    backtest = backtest_for(agent_input, connector_factory=connectors,
+                            rule_timeout_seconds=settings.rule_timeout_seconds)  # runs after the call, no connection
+    result = in_transaction(session, lambda: record_rules(session, agent=agent, agent_input=agent_input,
+                                                           backtest=backtest))
+    return ProposeRulesResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+@router.post("/feeds/{feed_id}/go-live/summary", response_model=GoLiveResponse)
+def go_live_summary(feed_id: UUID, session: DbSession, user: BackendTeam, catalogue: Catalogue, blobs: Blobs,
+                    agent: Summariser, notifier: RequestNotifier, identity: IdentityPort,
+                    settings: AppSettings) -> GoLiveResponse:
+    """Step 11 prepare. Each part its own transaction, and no connection is held while the file is read, a rule
+    runs or the model answers: the checks; a received test load (committed, so no second one starts); the
+    engine's plan, execution and locked write; the held notice or the summary's input; the summary."""
+    team = _backend_team(identity)
+
+    def owner_is_data_owner(owner_id: str) -> bool:
+        owner = identity.get_user(owner_id)
+        return owner is not None and "data_owner" in owner.roles
+
+    def checks():
+        try:
+            return go_live_plan(session, feed_id=feed_id, owner_is_data_owner=owner_is_data_owner,
+                                notifier=notifier, backend_team=team)
+        except OwnerNotADataOwner:
+            session.commit()  # the note to the backend team is kept; the answer is still 409
+            raise
+
+    plan = in_transaction(session, checks)
+    load = in_transaction(session, lambda: begin_test_load(session, plan))
+    engine_plan = read(session, lambda: plan_load(session, load.id))
+    outcome = execute_load(engine_plan, blob_store=blobs, rule_timeout_seconds=settings.rule_timeout_seconds)
+    load_run = in_transaction(session, lambda: record_load(session, engine_plan, outcome))
+    after = in_transaction(session, lambda: after_test_load(session, plan=plan, load_run=load_run,
+                                                            notifier=notifier, backend_team=team))
+    if isinstance(after, TestFailedHeld):
+        return GoLiveResponse(result=after, proposal=None, feed=_page(session, feed_id, catalogue))
+    summary = in_transaction(session, lambda: record_go_live_summary(session, agent=agent, agent_input=after))
+    return GoLiveResponse(result=summary, feed=_page(session, feed_id, catalogue),
+                          proposal=read(session, lambda: proposal_on_page(session, summary.proposal_id)))
+
+
+@router.post("/feeds/{feed_id}/loads", response_model=LoadNowResponse)
+def load_now(feed_id: UUID, session: DbSession, user: Operations, catalogue: Catalogue,
+             daily: Daily) -> LoadNowResponse:
+    """Operations' Load now: the job's own fetch and load for this one feed (409 NotLive without a go-live)."""
+    result = in_transaction(session, lambda: daily.fetch_and_load(feed_id), keep=False)
+    return LoadNowResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+@router.get("/loads/{load_id}", response_model=LoadDetail)
+def load_detail(load_id: UUID, session: DbSession) -> LoadDetail:
+    def work():
+        load = LoadRepository(session).get(load_id)
+        return LoadDetail(load=load_on_page(session, load),
+                          records=StandardRecordRepository(session).list_for_load(load_id, limit=LOAD_RECORDS))
+
+    return read(session, work)

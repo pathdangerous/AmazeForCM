@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC
@@ -86,7 +87,21 @@ class LocalScheduler:
         waiting = self._soon_timers.pop(job_id, None)
         if waiting is not None:
             waiting.cancel()
-        timer = threading.Timer(delay_seconds, guarded)
+        due = time.monotonic() + delay_seconds
+
+        def timed() -> None:
+            # threading.Timer on Windows can fire up to ~15 ms early (phase 6 plan, assumption 29): wait out
+            # the remainder, so a delayed run never starts before its delay. The wait ends at once if the timer
+            # is cancelled meanwhile (a later call replaced it, or shutdown()), and cancelled means it does not
+            # run: Timer.cancel() sets `finished`, and that is checked again just before guarded().
+            while (remaining := due - time.monotonic()) > 0:
+                if timer.finished.wait(remaining):
+                    return
+            if timer.finished.is_set():
+                return
+            guarded()
+
+        timer = threading.Timer(delay_seconds, timed)
         timer.name, timer.daemon = name, True
         self._soon_timers[job_id] = timer
         timer.start()

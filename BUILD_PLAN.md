@@ -67,6 +67,11 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - Run engine: raw → curated → validated → standard model, each stage tracked; failed file rolled back. No AI.
 - Mastering and transformations: minimal pass-through in the PoC, clearly marked.
 - **Done when:** an approved feed loads end to end from configuration alone.
+- **As built (phase 6, `docs/plans/phase-6.md`):** migration `0018` (go-lives, load stages, standard records, rule
+  and load guards G1 to G11); `core/engine/` (sandbox, curate, pass-through, run); steps 09 and 11
+  (`s09_rules.py`, `s11_go_live.py`); the daily job loads a feed after its fetch once it has a go-live, and
+  operations' Load now; backend-ui Rules, Go-live and Loads sections. The done-when test is
+  `test_api_amaze_go_live.py::test_done_when_an_approved_feed_loads_end_to_end_from_configuration_alone`.
 
 ## Phase 7 — Every load and release (12, 15) and the consumer loop closing
 

@@ -20,13 +20,20 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import date
+from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.repositories.errors import RunSuperseded
+from core.engine.run import execute_load, plan_load, record_load
+from core.repositories.errors import LoadInProgress, NotLive, RunSuperseded
+from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
+from core.repositories.go_lives import GoLiveRepository
+from core.repositories.loads import LoadRepository
 from core.repositories.requirements import RequirementRepository
+from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
 from core.steps.s05_glossary import builder_input, claim_run, fail_run, record_run
@@ -58,6 +65,9 @@ class DailyFetch:
     # each run, so an edited catalogue applies from the next run. None means no release rule.
     catalogue_loader: Callable[[], SourceCatalogue] | None = None
     release_after_days: int = 3
+    # Phase 6: the job also loads a feed that has a go-live, right after its fetch (assumption 28).
+    operations: Callable[[], Sequence[str]] = lambda: []
+    rule_timeout_seconds: float = 5
 
     @classmethod
     def from_settings(cls, settings: Settings, identity: Identity) -> DailyFetch:
@@ -74,6 +84,8 @@ class DailyFetch:
             settings=settings,
             catalogue_loader=lambda: SourceCatalogue.load(settings.source_catalogue, settings.allowed_source_hosts()),
             release_after_days=settings.source_down_release_days,
+            operations=lambda: [u.id for u in identity.list_users() if "operations" in u.roles],
+            rule_timeout_seconds=settings.rule_timeout_seconds,
         )
 
     def run(self, today: date | None = None) -> dict[str, str]:
@@ -97,26 +109,122 @@ class DailyFetch:
             self._tell_catalogue_broken(broken)
         results: dict[str, str] = {}
         for feed_id, code in feeds:
-            with self.session_factory() as session:
-                notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
-                try:
-                    # Read, end the transaction, fetch with no connection held, lock the feed, write.
-                    plan = fetch_plan(session, feed_id=feed_id, today=today)
-                    session.rollback()
-                    attempt = fetch_file(plan, connector_factory=self.connector_factory, blob_store=self.blob_store)
-                    result = record_fetch(
-                        session, attempt, notifier=notifier, backend_team=self.backend_team(), catalogue=catalogue,
-                        release_after_days=self.release_after_days if catalogue else None,
-                    )
-                    session.commit()
-                    results[code] = result.outcome
-                except Exception as exc:  # one feed must not stop the others
-                    session.rollback()
-                    log.exception("daily fetch of feed %s failed", code)
-                    results[code] = f"error: {exc}"
+            try:
+                results[code] = self._fetch_one(feed_id, today=today, catalogue=catalogue)
+            except Exception as exc:  # one feed must not stop the others
+                log.exception("daily fetch of feed %s failed", code)
+                results[code] = f"error: {exc}"
+                continue
+            if results[code] == "fetched":
+                try:  # a feed with a go-live is loaded right after its fetch (phase 6 plan, assumption 28)
+                    self.load_feed(feed_id, today=today)
+                except Exception:
+                    log.exception("daily load of feed %s failed", code)
         if catalogue is not None:
             self._close_lists_with_nothing_to_pick(catalogue)
         return results
+
+    def _fetch_one(self, feed_id: UUID, *, today: date | None, catalogue: SourceCatalogue | None) -> str:
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                # Read, end the transaction, fetch with no connection held, lock the feed, write.
+                plan = fetch_plan(session, feed_id=feed_id, today=today)
+                session.rollback()
+                attempt = fetch_file(plan, connector_factory=self.connector_factory, blob_store=self.blob_store)
+                result = record_fetch(
+                    session, attempt, notifier=notifier, backend_team=self.backend_team(), catalogue=catalogue,
+                    release_after_days=self.release_after_days if catalogue else None,
+                )
+                session.commit()
+                return result.outcome
+            except Exception:
+                session.rollback()
+                raise
+
+    def fetch_and_load(self, feed_id: UUID, *, today: date | None = None) -> dict[str, str | None]:
+        """Operations' "Load now" for one feed: NotLive (409) without a go-live; else the fetch and, if it
+        fetched, the load. {"fetch": outcome, "load": the load's status, or why none was made}."""
+        with self.session_factory() as session:
+            live = GoLiveRepository(session).latest(feed_id)
+            session.rollback()
+        if live is None:
+            raise NotLive("This feed has no go-live: its owner has not approved it for loading")
+        outcome = self._fetch_one(feed_id, today=today, catalogue=None)
+        if outcome != "fetched":
+            return {"fetch": outcome, "load": None}
+        status = self.load_feed(feed_id, today=today)
+        if status == "load_in_progress":  # the job's load (or another Load now) runs: 409, as the job logs it
+            raise LoadInProgress("This feed has a load in progress; try again when it has finished")
+        return {"fetch": outcome, "load": status}
+
+    def load_feed(self, feed_id: UUID, *, today: date | None = None) -> str:
+        """A scheduled load of the feed's latest fetched file under its latest go-live (step 13). Returns the load's
+        status, or `not_live`, `no_file`, `load_in_progress` (another load runs: the job logs it, phase 6 plan,
+        assumption 33, R3). Read and create, end the transaction, execute with no session, then the locked write
+        and the reports. A process that dies in between leaves the load received (plan risk 4)."""
+        today = today or date.today()
+        with self.session_factory() as session:
+            live = GoLiveRepository(session).latest(feed_id)
+            fetch = SourceFetchRepository(session).latest_fetched(feed_id)
+            if live is None or fetch is None:
+                session.rollback()
+                return "not_live" if live is None else "no_file"
+            try:
+                load = LoadRepository(session).create(feed_id=feed_id, file_ref=fetch.blob_ref, purpose="scheduled",
+                                                      go_live_id=live.id, fetch_id=fetch.id)
+            except LoadInProgress:
+                session.rollback()
+                log.info("feed %s already has a load in progress; this one is not started", feed_id)
+                return "load_in_progress"
+            except IntegrityError:  # the other writer's received load, seen only at the unique index (G9)
+                session.rollback()
+                log.info("feed %s got a load in progress while this one started", feed_id)
+                return "load_in_progress"
+            session.commit()  # the received load is visible to everyone, so a second one is refused
+            load_id = load.id
+        with self.session_factory() as session:
+            plan = plan_load(session, load_id)
+            session.rollback()
+        outcome = execute_load(plan, blob_store=self.blob_store, rule_timeout_seconds=self.rule_timeout_seconds)
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                run = record_load(session, plan, outcome)
+                self._report_load(session, notifier, run, live, today)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+        return run.load.status
+
+    def _report_load(self, session: Session, notifier, run, live, today: date) -> None:
+        """Assumption 27: while today is at or before hypercare_until each load is reported to the owner and
+        operations; after it only a failure is, to operations and the backend team. A load that failed because the
+        configuration changed since go-live also tells the owner, whose new go-live is the only way on."""
+        feed = FeedRepository(session).get(run.load.feed_id)
+        registration = FeedRegistrationRepository(session).current(feed.id)
+        owner = registration.owner_id if registration else None
+        loaded = run.load.status == "loaded"
+        hypercare = today <= live.hypercare_until
+        failure = next((s for s in run.stages if s.outcome == "failed_rolled_back"), None)
+        if loaded and hypercare:
+            people = [owner, *self.operations()]
+        elif not loaded:
+            people = [*self.operations(), *self.backend_team()]
+            if hypercare or (failure is not None and failure.reason == "configuration_changed_since_go_live"):
+                people.append(owner)
+        else:
+            return
+        word = "loaded" if loaded else "failed"
+        body = (f"The scheduled load of {feed.code} {word}. Stages: "
+                + ", ".join(f"{s.stage} {s.outcome}" for s in run.stages) + ".")
+        if failure is not None:
+            body += f" {failure.detail.get('message', failure.reason)}"
+            if failure.reason == "configuration_changed_since_go_live":
+                body += " The owner approves a new go-live to load this feed again."
+        for person in dict.fromkeys(p for p in people if p):
+            notifier.notify(recipient=person, subject=f"Load {word}: {feed.code}", body=body)
 
     def _tell_catalogue_broken(self, error: Exception) -> None:
         with self.session_factory() as session:

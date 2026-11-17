@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     source_down_release_days: int = Field(default=3, ge=1)
     # Phase 5: a glossary run left running this long by a worker that died is claimed again.
     glossary_run_lease_seconds: int = Field(default=300, ge=1)
+    # Phase 6: the longest one validation rule may run (the DuckDB sandbox interrupts it), and the number of days
+    # after go-live in which every scheduled load is reported to the owner and operations (hypercare).
+    rule_timeout_seconds: int = Field(default=5, ge=1)
+    hypercare_days: int = Field(default=10, ge=1)
 
     @field_validator("source_catalogue")
     @classmethod

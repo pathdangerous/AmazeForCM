@@ -12,7 +12,7 @@ mapping proposals for the Glossary and Feed views.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -21,17 +21,21 @@ from sqlalchemy.orm import Session
 
 from core.domain.configuration import Mapping
 from core.domain.feed import Feed, FeedRegistration
+from core.domain.go_live import GoLive
+from core.domain.load import Load, LoadStage
 from core.domain.mapping import GlossaryRun
 from core.domain.profiling import FeedProfile, FeedSignoff
 from core.domain.proposal import Approval
 from core.domain.sourcing import SourceFetch, SourceSummary
-from core.repositories.configuration import MappingRepository
+from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feed_signoffs import FeedSignoffRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
+from core.repositories.go_lives import GoLiveRepository
+from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
@@ -128,6 +132,80 @@ class FeedPage(BaseModel):
     next_action: FeedAction | None
     glossary_run: GlossaryRun | None  # phase 5: the latest
     columns: list[ColumnMapping]  # phase 5: a registered feed's mapping table; empty before registration
+    rules: RulesOnPage  # phase 6
+    go_live: GoLiveOnPage
+    loads: list[LoadOnPage]  # the latest LOADS_ON_PAGE, newest first
+
+
+class RuleOnPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    rule_key: str
+    version: int
+    description: str
+    sql: str
+    proposal_id: UUID
+    created_at: datetime
+    backtest: dict[str, Any] | None  # of the proposal the rule came from
+
+
+class RulesOnPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    current: list[RuleOnPage]
+    pending: list[ProposalOnPage]  # rule proposals waiting for the steward or the checker, newest first
+    rejected_keys: list[str]  # not proposed again
+
+
+class GoLiveOnPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    latest: GoLive | None
+    hypercare_active: bool
+    pending_summary: ProposalOnPage | None  # the review_summary waiting for the feed's owner
+
+
+class LoadOnPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    purpose: str
+    status: str
+    received_at: datetime
+    finished_at: datetime | None
+    failed_stage: str | None
+    failure: str | None
+    go_live_id: UUID | None
+    stages: list[LoadStage]
+
+
+LOADS_ON_PAGE = 10
+
+
+def load_on_page(session: Session, load: Load) -> LoadOnPage:
+    return LoadOnPage(id=load.id, purpose=load.purpose, status=load.status, received_at=load.received_at,
+                      finished_at=load.finished_at, failed_stage=load.failed_stage, failure=load.failure,
+                      go_live_id=load.go_live_id, stages=LoadRepository(session).stages(load.id))
+
+
+def _rules_on_page(session: Session, feed: Feed) -> RulesOnPage:
+    proposals, rules = ProposalRepository(session), RuleRepository(session)
+    current = [RuleOnPage(id=r.id, rule_key=r.rule_key, version=r.version, description=r.description, sql=r.sql,
+                          proposal_id=r.proposal_id, created_at=r.created_at,
+                          backtest=proposals.get(r.proposal_id).payload.get("backtest"))
+               for r in rules.current_for_feed(feed.id)]
+    pending = sorted(proposals.list_for_feed(feed.id, "rule", status="pending"), key=lambda p: (p.created_at, str(p.id)),
+                     reverse=True)
+    return RulesOnPage(current=current, pending=[proposal_on_page(session, p.id) for p in pending],
+                       rejected_keys=sorted(rules.rejected_keys(feed.id)))
+
+
+def _go_live_on_page(session: Session, feed: Feed, today: date) -> GoLiveOnPage:
+    latest = GoLiveRepository(session).latest(feed.id)
+    waiting = ProposalRepository(session).list_for_feed(feed.id, "review_summary", status="pending")
+    return GoLiveOnPage(latest=latest, hypercare_active=latest is not None and today <= latest.hypercare_until,
+                        pending_summary=proposal_on_page(session, waiting[-1].id) if waiting else None)
 
 
 def _why_none(column, *, last_glossary, with_builder: set[str], glossary) -> WhyNone | None:
@@ -186,7 +264,8 @@ def proposal_on_page(session: Session, proposal_id: UUID) -> ProposalOnPage:
     feed = FeedRepository(session).get(p.feed_id)
     return ProposalOnPage(
         id=p.id, kind=p.kind, status=p.status, created_at=p.created_at, decided_at=p.decided_at, feed_id=feed.id,
-        feed_code=feed.code, feed_name=feed.name, column=p.payload["source_field"], payload=p.payload,
+        feed_code=feed.code, feed_name=feed.name,
+        column=p.payload.get("source_field") or p.payload.get("rule_key") or "", payload=p.payload,
         reason=p.payload.get("reason", ""), required_approver_roles=p.required_approver_roles,
         decisions=proposals.approvals(p.id))
 
@@ -234,4 +313,9 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         profiles=[ProfileOnPage(version=p.version, outcome=p.outcome, at=p.created_at) for p in profiles],
         summary=summary, summary_status=proposal.status if proposal else None, signoffs=signoffs,
         registration=FeedRegistrationRepository(session).current(feed.id), next_action=next_action,
-        glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest))
+        glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest),
+        rules=_rules_on_page(session, feed), go_live=_go_live_on_page(session, feed, date.today()),
+        loads=[load_on_page(session, load) for load in LoadRepository(session).list_for_feed(feed.id)[:LOADS_ON_PAGE]])
+
+
+FeedPage.model_rebuild()  # its phase 6 sections are declared below it

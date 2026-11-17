@@ -53,6 +53,26 @@ def test_step_06_outcomes_are_claude_mds():
         "mapped", "tie_to_steward", "no_element_back_to_05"]
 
 
+def test_step_09_outcomes_are_claude_mds():
+    from core.steps.s09_rules import RulesResult
+
+    assert union_outcomes(RulesResult) == claude_md_outcomes("09 Validation") == [
+        "rules_proposed", "flags_most_history_returned"]
+
+
+def test_step_11_outcomes_are_claude_mds():
+    from core.steps.s11_go_live import GoLiveResult
+
+    assert union_outcomes(GoLiveResult) == claude_md_outcomes("11 Approve") == [
+        "approved_scheduled", "rejected_back_to_step", "test_failed_held"]
+
+
+def test_step_13_outcomes_are_claude_mds():
+    from core.engine.run import RunResult
+
+    assert union_outcomes(RunResult) == claude_md_outcomes("13 Run") == ["stage_completed", "failed_rolled_back"]
+
+
 def test_claude_md_lists_the_phase_2_outcomes():
     assert claude_md_outcomes("17 Discover") == ["found", "not_entitled_visible"]
     assert claude_md_outcomes("Routing checks") == ["reuse", "compose", "create_product", "raise_requirement"]

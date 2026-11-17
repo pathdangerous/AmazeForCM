@@ -125,6 +125,24 @@ def test_a_column_may_hold_an_other_field(tmp_path):
     assert SourceCatalogue.load(write(tmp_path, entry)).get("syn_x").columns == {"qty": "volume", "esg": "esg score"}
 
 
+def test_only_the_exchange_volumes_source_has_history_and_every_delivery_is_a_file_of_its_columns(catalogue):
+    """Phase 6 plan, assumption 8 and section 8: five synthetic past deliveries of ten rows, the columns of the
+    source's own file, in date order; no other source has history; each file is free of real data."""
+    with_history = {s.code: s.history for s in catalogue.entries if s.history}
+    assert list(with_history) == ["syn_exchange_volumes"]
+    refs = with_history["syn_exchange_volumes"]
+    assert refs == [f"files/history/exchange_volumes/2026-10-{day}.csv" for day in (26, 27, 28, 29, 30)]
+    entry = catalogue.get("syn_exchange_volumes")
+    for ref in refs:
+        lines = (SOURCES / ref).read_text(encoding="utf-8").splitlines()
+        assert lines[0].split(",") == list(entry.columns) and len(lines) == 11, ref
+        assert find_real_data("\n".join(lines)) == [], ref
+
+
+def test_a_source_without_history_has_an_empty_list(tmp_path):
+    assert SourceCatalogue.load(write(tmp_path, ENTRY)).get("syn_x").history == []
+
+
 def test_channels_each_once_with_their_visibility(catalogue):
     assert catalogue.channels() == [("exchanges", "public"), ("market_data_vendors", "public"),
                                     ("public_websites", "public"), ("internal_systems", "private")]

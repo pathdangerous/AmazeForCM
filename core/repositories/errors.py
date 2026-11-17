@@ -184,6 +184,48 @@ class LoadNotFound(RepositoryError, LookupError):
     """No load has this id."""
 
 
+class RulesAlreadyProposed(RepositoryError):
+    """While the agent answered, a rule of the same key was proposed, approved or rejected for the feed
+    (step 09, phase 6 plan, assumption 11): the answer is discarded."""
+
+
+class NothingToGoLive(RepositoryError):
+    """The feed has no current mapping, so there is nothing to approve for loading (step 11)."""
+
+
+class GoLiveAlreadyProposed(RepositoryError):
+    """The feed already has a go-live summary waiting for its owner (step 11): one at a time."""
+
+
+class OwnerNotADataOwner(RepositoryError):
+    """The owner named at registration no longer holds the data_owner role; nobody can approve this feed's
+    go-live until a registration changes that (phase 6 plan, assumption 24)."""
+
+
+class NotTheFeedsOwner(RepositoryError, PermissionError):
+    """Another data owner than the one named in the feed's registration tried to decide its go-live."""
+
+
+class ConfigurationChangedSinceSummary(RepositoryError):
+    """The mappings or rules changed after the summary was written: it cannot be approved, only rejected."""
+
+
+class NotLive(RepositoryError):
+    """The feed has no go-live: it is not loaded until its owner approves one (step 11)."""
+
+
+class ConfigurationChangedMeanwhile(RepositoryError):
+    """While the agent answered, the feed's current mappings changed (steps 09 and 11): the answer is discarded."""
+
+
+class LoadNotReceived(RepositoryError):
+    """The load is no longer received (another run finished it): the engine writes nothing."""
+
+
+class LoadInProgress(RepositoryError):
+    """The feed already has a received load (migration 0018, uq_loads_one_received_per_feed): one at a time."""
+
+
 class ProductNotFound(RepositoryError, LookupError):
     """No product has this id or code."""
 

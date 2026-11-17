@@ -2,7 +2,9 @@
 
 From migration 0016 a mapping row must match its approved mapping proposal (same feed, same column, one of
 its candidates, the next version, a registered feed), and a non-seed glossary row must be one of its
-approved glossary_element proposal's options, written by the glossary owner who approved it. These
+approved glossary_element proposal's options, written by the glossary owner who approved it. From 0018 a rule
+matches its approved proposal the same way, and a load moves only the ways trg_loads_a_status allows (a_load,
+go_live below). These
 helpers make a proposal of the real shape on a logged call, have the right dev user decide it, and write
 the row through the repository. No trigger is bypassed. Each helper flushes; the test's session rolls back.
 """
@@ -11,18 +13,23 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from pydantic import BaseModel
 
-from core.domain.configuration import Mapping
+from core.domain.configuration import Mapping, Rule
 from core.domain.glossary import GlossaryElement, GlossaryElementDraft
+from core.domain.go_live import GoLive
+from core.domain.load import STAGES, Load, LoadStageDraft
 from core.domain.mapping import ElementOption, GlossaryProposalPayload, MappingProposalPayload
 from core.domain.proposal import Proposal
 from core.proposal_log import ProposalLog
-from core.repositories.configuration import MappingRepository
+from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
+from core.repositories.go_lives import GoLiveRepository
+from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from tests.conftest import dev_user_for
 from tests.onboarded import registered_feed
@@ -81,6 +88,84 @@ def approved_mapping(session, feed_id: UUID, source_field: str, element_key: str
     proposal = mapping_proposal(session, feed_id, source_field, offered, decision="approved")
     return MappingRepository(session).add_version(feed_id=feed_id, source_field=source_field,
                                                   element_key=element_key, proposal_id=proposal.id)
+
+
+# ---------------------------------------------------------------- rules (phase 6, migration 0018)
+
+RULE_SQL = "SELECT _row FROM curated WHERE close_price IS NULL"
+
+
+def rule_proposal(session, feed_id: UUID, rule_key: str = "close_price_present", *, sql: str = RULE_SQL,
+                  description: str = "Price is present.", decision: str | None = None,
+                  note: str | None = None) -> Proposal:
+    """A rule proposal of the real shape on a logged call; pending unless decision is given. 'approved' is
+    decided by the steward, then the checker; 'rejected' by the steward."""
+    registered(session, feed_id)
+    repo = ProposalRepository(session)
+    proposal = repo.create(proposal_log_id=logged_call(session, "RuleRecommenderAgent", "rule_recommender").id,
+                           kind="rule", payload={"rule_key": rule_key, "sql": sql, "description": description},
+                           autonomy="A2", required_approver_roles=["data_steward", "checker"], feed_id=feed_id)
+    if decision == "approved":
+        for role in ("data_steward", "checker"):
+            repo.record_decision(proposal.id, user=dev_user_for(role), decision="approved")
+    elif decision == "rejected":
+        repo.record_decision(proposal.id, user=dev_user_for("data_steward"), decision="rejected",
+                             note=note or "Synthetic reason.")
+    return repo.get(proposal.id)
+
+
+def approved_rule(session, feed_id: UUID, rule_key: str = "close_price_present", *, sql: str = RULE_SQL,
+                  description: str = "Price is present.") -> Rule:
+    """The rule's next version: a proposal of exactly this rule, approved by both steps, written."""
+    proposal = rule_proposal(session, feed_id, rule_key, sql=sql, description=description, decision="approved")
+    return RuleRepository(session).add_version(feed_id=feed_id, rule_key=rule_key, sql=sql,
+                                               description=description, proposal_id=proposal.id)
+
+
+# ---------------------------------------------------------------- loads and go-lives (phase 6, migration 0018)
+
+
+def a_load(session, feed_id: UUID, status: str = "received", *, purpose: str = "go_live_test",
+           go_live_id: UUID | None = None) -> Load:
+    """A load in this status, reached the way the database allows: loaded or failed_rolled_back from received
+    (with its stage rows), held or released from loaded. Registers the feed if it is a candidate."""
+    registered(session, feed_id)
+    repo = LoadRepository(session)
+    load = repo.create(feed_id=feed_id, file_ref=f"local://raw/{feed_id}/f.csv", purpose=purpose,
+                       go_live_id=go_live_id)
+    if status == "received":
+        return load
+    now = datetime.now(UTC)
+
+    def stage(name: str, outcome: str = "stage_completed") -> LoadStageDraft:
+        return LoadStageDraft(stage=name, outcome=outcome, rows_in=1, rows_out=1, detail={}, started_at=now,
+                              finished_at=now)
+
+    if status == "failed_rolled_back":
+        repo.record_stages(load.id, [stage("raw", "failed_rolled_back")])
+        return repo.finish(load.id, status="failed_rolled_back", failed_stage="raw", failure="Synthetic.")
+    repo.record_stages(load.id, [stage(name) for name in STAGES])
+    loaded = repo.finish(load.id, status="loaded")
+    return loaded if status == "loaded" else repo.set_status(load.id, status)
+
+
+def go_live(session, feed_id: UUID, *, owner: str = "dev-data-owner", hypercare_days: int = 10) -> GoLive:
+    """The feed's next go-live as the steps write it: a loaded test load, a review_summary of the current
+    mappings and rules decided by the owner, then the row. The feed's registered owner must be `owner`."""
+    registered(session, feed_id)
+    mappings = [m.id for m in MappingRepository(session).current_for_feed(feed_id)]
+    rules = [r.id for r in RuleRepository(session).current_for_feed(feed_id)]
+    test_load = a_load(session, feed_id, "loaded")
+    repo = ProposalRepository(session)
+    proposal = repo.create(
+        proposal_log_id=logged_call(session, "ReviewSummariserAgent", "review_summariser").id,
+        kind="review_summary", autonomy="A1", required_approver_roles=["data_owner"], feed_id=feed_id,
+        payload={"mapping_ids": [str(i) for i in mappings], "rule_ids": [str(i) for i in rules],
+                 "test_load_id": str(test_load.id), "summary": "Synthetic.", "highlights": [], "risks": []})
+    repo.record_decision(proposal.id, user=dev_user_for("data_owner"), decision="approved")
+    return GoLiveRepository(session).add_version(
+        feed_id=feed_id, proposal_id=proposal.id, approved_by=owner, mapping_ids=mappings, rule_ids=rules,
+        test_load_id=test_load.id, hypercare_until=date.today() + timedelta(days=hypercare_days))
 
 
 # ---------------------------------------------------------------- glossary elements

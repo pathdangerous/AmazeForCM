@@ -87,6 +87,20 @@ Try it on Open ESG scores (Run the glossary builder, approve both new elements, 
 and on Bond terms (its file holds four undeclared columns: `rating`, `venue_mic_code`, `date`, `maturity`).
 Bond terms is only reached by a requirement for `coupon rate` while the demo product Bond reference data is
 not loaded: with `--demo`, that request is answered by the product (reuse).
+
+Phase 6, steps 09, 11 and 13 (rules, go-live, the run engine). On a registered feed with its columns mapped,
+as Sam Steward: Propose rules. The RuleRecommenderAgent proposes SQL rules over the table `curated`; each is
+back-tested on five synthetic past deliveries (Exchange daily volumes has them; a source without is "not
+back-tested"). A rule that flags more than half of the history is returned, not proposed. Sam approves, then
+Casey Checker; only then is there a rule. As Blake Backend: Prepare go-live runs a test load of the latest
+file and drafts the summary (with the unmapped columns and the rejected glossary proposals); Devon Owner, the
+owner named at registration, approves it (the daily job then loads the feed every day at 06:00 UTC, and every
+load is reported for 10 days, `HYPERCARE_DAYS`) or rejects it back to step 05, 06 or 09. As Opal Operations:
+Load now fetches and loads one feed. Try it on Exchange daily volumes (map its three columns, propose rules,
+prepare, approve as Devon, Load now): `volume_in_whole_lots` is returned (it flags 40 of 50 history rows).
+A load is four stages (raw, curated, validated, standard model), a value that does not cast to its element's
+type holds the whole file, and a rule's SQL runs only in a locked-down DuckDB (`RULE_TIMEOUT_SECONDS`).
+Mastering and transformations are a marked pass-through.
 `/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
 Azure stub.
 
@@ -94,7 +108,7 @@ Check:
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v          # uses the amaze_test database; rebuilds its schema each run
-.\.venv\Scripts\python -m alembic current     # expect: 0017 (head)
+.\.venv\Scripts\python -m alembic current     # expect: 0018 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
 ```

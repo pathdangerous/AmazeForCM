@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0017"
+HEAD = "0018"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -24,7 +24,8 @@ PHASE_3_TABLES = {"source_choices", "source_fetches", "requirement_scopes",  # m
                   "proposal_log_discards"}  # 0012
 PHASE_4_TABLES = {"feed_profiles", "feed_signoffs", "feed_registrations"}  # 0014
 PHASE_5_TABLES = {"glossary_runs"}  # 0016
-TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES
+PHASE_6_TABLES = {"feed_go_lives", "load_stages", "standard_records"}  # 0018
+TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES | PHASE_6_TABLES
 
 
 def _tables(url: str) -> set[str]:
@@ -218,6 +219,12 @@ REVIEWED_NULLABLE_CHECKS = {
     "proposals.ck_proposals_names_a_column":
         "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
         "source_field; kind and payload are NOT NULL: never NULL",
+    # 0018 (phase 6 plan, section 6). Their NULL cases are in test_db_rule_guards.py and test_db_load_guards.py.
+    "proposals.ck_proposals_names_a_rule":
+        "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
+        "rule_key or sql; kind and payload are NOT NULL: never NULL",
+    "loads.ck_loads_purpose_fits":
+        "go_live_id IS NOT NULL / IS NULL spelt out on both sides; purpose is NOT NULL: never NULL",
 }
 
 
@@ -463,6 +470,84 @@ def test_0017_downgrade_restores_the_0016_guards(scratch_schema):
     assert guards() == (False, False, False)
     command.upgrade(config, "0017")
     assert guards() == (True, True, True)
+
+
+def _a_log_and_a_feed(connection):
+    log = connection.execute(text(
+        "INSERT INTO proposal_log (agent_name, provider, model, model_version, prompt_id, prompt_version, "
+        "input_ref, output, latency_ms) VALUES ('A', 'test', 'test', '0', 'p', 'v1', 'test://x', '{}', 0) "
+        "RETURNING id")).scalar_one()
+    feed = connection.execute(text("INSERT INTO feeds (code, name) VALUES ('syn_a', 'A') RETURNING id")).scalar_one()
+    return log, feed
+
+
+@pytest.mark.parametrize("case", ["a load", "a rule proposal", "a review_summary proposal"])
+def test_0018_downgrade_refuses_when_phase_6_rows_exist(scratch_schema, case):
+    """0017 has no purpose column, no loaded status and no rule or summary guard: the downgrade stops instead
+    of failing half-way. Every row of the new tables hangs on a load or a rule/review_summary proposal."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0018")
+    with engine.begin() as connection:
+        log, feed = _a_log_and_a_feed(connection)
+        if case == "a load":
+            connection.execute(text("INSERT INTO loads (feed_id, file_ref, purpose) "
+                                    "VALUES (:f, 'raw/a.csv', 'go_live_test')"), {"f": feed})
+        else:
+            kind, roles, payload = (("rule", "'data_steward', 'checker'", '{"rule_key": "k", "sql": "SELECT 1"}')
+                                    if case == "a rule proposal" else ("review_summary", "'data_owner'", "{}"))
+            connection.execute(text(
+                f"INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles, feed_id) "
+                f"VALUES (:l, '{kind}', CAST(:p AS jsonb), 'A2', ARRAY[{roles}], :f)"),
+                {"l": log, "p": payload, "f": feed})
+    with pytest.raises(DBAPIError, match="migration 0018 cannot be downgraded"):
+        command.downgrade(config, "0017")
+
+
+def test_0018_downgrade_restores_the_0017_schema(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+
+    def state():
+        with engine.connect() as connection:
+            names = lambda sql: set(connection.execute(text(sql)).scalars())  # noqa: E731
+            return {
+                "tables": set(inspect(engine).get_table_names()),
+                "load_columns": {c["name"] for c in inspect(engine).get_columns("loads")},
+                "status_check": connection.execute(text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_loads_status' "
+                    "AND connamespace = current_schema()::regnamespace")).scalar_one(),
+                "triggers": names("SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                                  "WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal"),
+                "indexes": names("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"),
+                "constraints": names("SELECT conname FROM pg_constraint "
+                                     "WHERE connamespace = current_schema()::regnamespace"),
+                "functions": names("SELECT proname FROM pg_proc "
+                                   "WHERE pronamespace = current_schema()::regnamespace"),
+            }
+
+    new_columns = {"purpose", "fetch_id", "go_live_id", "finished_at", "failed_stage", "failure"}
+    new_triggers = {"trg_rules_b_matches_proposal", "trg_loads_a_status", "trg_feed_go_lives_b_guard",
+                    "trg_load_stages_b_order", "trg_standard_records_b_load"}
+    new_indexes = {"uq_proposals_one_pending_rule_per_feed_key", "uq_proposals_one_pending_review_summary_per_feed",
+                   "uq_rules_proposal_id", "uq_loads_one_received_per_feed"}
+    new_constraints = {"ck_proposals_names_a_rule", "ck_loads_purpose_fits"}
+    new_functions = {"amaze_require_rule_matches_proposal", "amaze_guard_feed_go_live", "amaze_guard_load_status",
+                     "amaze_guard_load_stage", "amaze_guard_standard_record"}
+
+    command.upgrade(config, "0018")
+    up = state()
+    assert PHASE_6_TABLES <= up["tables"] and new_columns <= up["load_columns"] and "'loaded'" in up["status_check"]
+    assert new_triggers <= up["triggers"] and new_indexes <= up["indexes"] and new_constraints <= up["constraints"]
+    assert new_functions <= up["functions"]
+    command.downgrade(config, "0017")
+    down = state()
+    assert not PHASE_6_TABLES & down["tables"] and not new_columns & down["load_columns"]
+    assert "'loaded'" not in down["status_check"]
+    assert not new_triggers & down["triggers"] and not new_indexes & down["indexes"]
+    assert not new_constraints & down["constraints"] and not new_functions & down["functions"]
+    command.upgrade(config, "0018")
+    assert state() == up
 
 
 def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_schema):

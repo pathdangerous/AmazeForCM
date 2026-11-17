@@ -112,6 +112,59 @@ def test_run_soon_with_a_delay_runs_after_it_not_before(scheduler):
     assert ran.wait(5) and at[0] - asked >= 0.4
 
 
+def test_a_timer_that_fires_early_waits_out_the_rest(scheduler, monkeypatch):
+    """Phase 6 plan, assumption 29: threading.Timer on Windows can fire up to ~15 ms early. The delayed job
+    checks time.monotonic() on firing and waits out the remainder, so 'never before the delay' holds. Here a
+    Timer is patched to fire 50 ms early, every time (the real early fire is intermittent)."""
+    import threading
+    import time
+
+    real_timer = threading.Timer
+
+    class EarlyTimer(real_timer):
+        def __init__(self, interval, function, *args, **kwargs):
+            super().__init__(max(interval - 0.05, 0.0), function, *args, **kwargs)
+
+    monkeypatch.setattr(threading, "Timer", EarlyTimer)
+    ran, at = threading.Event(), []
+    scheduler.start()
+    asked = time.monotonic()
+    scheduler.run_soon("glossary-runs", lambda: (at.append(time.monotonic()), ran.set()), delay_seconds=0.3)
+    assert ran.wait(5)
+    assert at[0] - asked >= 0.3
+
+
+@pytest.mark.parametrize("how", ["shutdown", "replaced"])
+def test_a_timer_cancelled_while_it_waits_out_the_rest_does_not_run(scheduler, monkeypatch, how):
+    """Phase 6 plan, task 6 (checkpoint 1 decision): the timed job re-checks that its timer was not cancelled
+    (or shutdown called) after the remainder sleep and before it runs. The Timer is patched to fire 0.45 s
+    early, so the job sits in the remainder wait; the test cancels it there."""
+    import threading
+
+    real_timer = threading.Timer
+    in_the_remainder = threading.Event()
+
+    class EarlyTimer(real_timer):
+        def __init__(self, interval, function, *args, **kwargs):
+            def entered(*a, **k):
+                in_the_remainder.set()
+                return function(*a, **k)
+
+            super().__init__(max(interval - 0.45, 0.0), entered, *args, **kwargs)
+
+    monkeypatch.setattr(threading, "Timer", EarlyTimer)
+    calls = []
+    scheduler.start()
+    scheduler.run_soon("glossary-runs", lambda: calls.append("old"), delay_seconds=0.5)
+    assert in_the_remainder.wait(5)  # fired early; waiting out the rest
+    if how == "shutdown":
+        scheduler.shutdown()
+    else:  # a later delayed call replaces (cancels) the one that waits; its own timer is not in the remainder yet
+        scheduler.run_soon("glossary-runs", lambda: calls.append("new"), delay_seconds=0.5)
+    assert not threading.Event().wait(0.6)  # past the old one's due time (0.5 s after run_soon)
+    assert "old" not in calls
+
+
 def test_a_later_delayed_run_replaces_the_one_that_waits(scheduler):
     """One waiting delayed run per job id: many kicks that see a live lease leave one timer, the newest."""
     import threading

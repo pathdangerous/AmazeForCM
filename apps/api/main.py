@@ -29,7 +29,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # A stub scheduler is not started; /api/health reports it as unavailable instead.
     runs_scheduler = not getattr(scheduler, "is_stub", False)
     # Phase 5: the glossary runs worker, whatever the scheduler, so a kick after a commit always has one to
-    # name (with a stub scheduler the kick answers 503, as any stub adapter; independent review, finding 7).
+    # name (with a stub scheduler the kick fails, is logged and swallowed, and the answer stays 200: the row is
+    # taken at the next kick or start-up; phase 6 plan, assumption 30).
     # Tests set app.state.glossary_runs (running_app puts a do-nothing one there).
     if getattr(app.state, "glossary_runs", None) is None:
         app.state.glossary_runs = GlossaryRuns.from_settings(settings, app.state.identity)

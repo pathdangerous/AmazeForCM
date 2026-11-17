@@ -89,7 +89,7 @@ def test_status_lists_are_the_names_in_claude_md():
         "no_source_found",  # phase 3b, migration 0009
     )
     assert FEED_STAGES == ("candidate", "registered", "rejected")
-    assert LOAD_STATUSES == ("received", "held", "failed_rolled_back", "released")
+    assert LOAD_STATUSES == ("received", "loaded", "held", "failed_rolled_back", "released")  # loaded: 0018
 
 
 @pytest.mark.parametrize(
@@ -101,7 +101,9 @@ def test_status_lists_are_the_names_in_claude_md():
         (MappingDraft, {"source_field": "ClosePx", "element_key": "close_price"}, {"element_key": "Close"}),
         (MappingDraft, {"source_field": "ClosePx", "element_key": "close_price"}, {"source_field": ""}),
         (RuleDraft, {"rule_key": "r", "sql": "SELECT 1", "description": "D"}, {"sql": " "}),
-        (LoadDraft, {"file_ref": "local://raw/x.csv"}, {"file_ref": ""}),
+        (LoadDraft, {"file_ref": "local://raw/x.csv", "purpose": "go_live_test"}, {"file_ref": ""}),
+        (LoadDraft, {"file_ref": "local://raw/x.csv", "purpose": "go_live_test"}, {"purpose": "other"}),
+        (LoadDraft, {"file_ref": "local://raw/x.csv", "purpose": "go_live_test"}, {"purpose": "scheduled"}),  # no go-live
     ],
 )
 def test_drafts_validate(model, valid, bad):

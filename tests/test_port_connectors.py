@@ -101,7 +101,7 @@ def test_http_client_is_closed_after_a_fetch(local_http_server):
 def test_http_client_is_closed_after_a_failed_fetch(local_http_server, path):
     url = f"{local_http_server.url}{path}" if path else "http://127.0.0.1:9/x.csv"
     with pytest.raises(SourceUnavailable):
-        with HttpConnector(timeout_s=2) as connector:
+        with HttpConnector(timeout_s=0.5) as connector:  # Windows retries a refused connect up to the timeout
             connector.fetch(url)
     assert connector.is_closed
 

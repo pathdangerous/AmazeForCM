@@ -129,16 +129,22 @@ async def test_register_queues_a_glossary_run_and_kicks_the_worker_after_its_com
     assert (run["id"], run["status"], run["reason"]) == (run_id, "queued", "registered")
 
 
-async def test_register_with_a_stub_scheduler_is_503_or_200_never_500(db_session, migrated_engine, tmp_path,
-                                                                       monkeypatch):
-    """Review finding 7: with SCHEDULER_PROVIDER=azure_functions (a stub until phase 8) the API still builds
-    its glossary worker, so the kick after register's commit reaches the stub: 503, as any stub adapter, not
-    a 500. The registration and its queued run are committed either way."""
+async def test_register_with_a_stub_scheduler_is_200_and_the_run_is_taken_later(db_session, migrated_engine,
+                                                                                tmp_path, monkeypatch):
+    """Phase 6 plan, assumption 30 (review finding 7 before it said 503 or 200): with
+    SCHEDULER_PROVIDER=azure_functions (a stub until phase 8) the kick after register's commit reaches the
+    stub and fails. The committed write stands: the answer is 200 (the failure is logged, not raised), and the
+    queued run is taken by the next worker pass."""
+    from contextlib import nullcontext
+
+    from agents.glossary_builder import GlossaryBuilderAgent
     from apps.api import main
     from apps.api.deps import get_blob_store_port
+    from apps.api.jobs import GlossaryRuns
     from core.repositories.glossary_runs import GlossaryRunRepository
     from core.seed import seed_demo, seed_glossary
     from ports.config import Settings
+    from ports.llm.mock import MockProvider
     from ports.scheduler.azure_functions import AzureFunctionsScheduler
     from ports.storage.local import LocalBlobStore
     from tests.conftest import running_app
@@ -157,11 +163,17 @@ async def test_register_with_a_stub_scheduler_is_503_or_200_never_500(db_session
             await amaze(stub_client, feed_id, action, body)
         response = await stub_client.post(f"/api/amaze/feeds/{feed_id}/register", headers=BLAKE,
                                           json={"owner_id": "dev-data-owner", "visibility": "open"})
-        assert response.status_code in (200, 503), response.text
+        assert response.status_code == 200, response.text
         page_now = await amaze(stub_client, feed_id)
     assert page_now["feed"]["stage"] == "registered"
     run = GlossaryRunRepository(db_session).active(uuid.UUID(feed_id))
-    assert (run.status, run.reason) == ("queued", "registered")
+    assert (run.status, run.reason) == ("queued", "registered")  # committed, and nothing took it yet
+    drained = GlossaryRuns(session_factory=lambda: nullcontext(db_session),
+                           agent_factory=lambda: GlossaryBuilderAgent(provider=MockProvider(),
+                                                                      blob_store=LocalBlobStore(tmp_path / "blob")),
+                           owners=lambda: ["dev-glossary-owner"]).drain()  # the "later": a pass of the worker
+    assert drained == {run.id: "done"}
+    assert GlossaryRunRepository(db_session).latest(uuid.UUID(feed_id)).status == "done"
 
 
 async def test_the_feed_page_shows_the_conditions_each_requester_accepted(client):

@@ -390,6 +390,58 @@ def test_every_answered_model_call_has_exactly_one_call_row(db_session, prompts,
     assert len(_discards(db_session)) == 1
 
 
+def test_after_answer_runs_after_the_log_and_before_before_write_with_no_transaction(db_session, prompts, blobs,
+                                                                                    monkeypatch):
+    """Phase 6 plan, assumption 9: the back-test of step 09 runs here, with no database connection held."""
+    import agents.base as base
+
+    events, in_transaction = [], []
+    original_record = base.ProposalLog.record
+
+    def record(self, **kwargs):
+        events.append("log")
+        return original_record(self, **kwargs)
+
+    def after_answer(output):
+        events.append("after_answer")
+        in_transaction.append(db_session.in_transaction())
+        return output
+
+    monkeypatch.setattr(base.ProposalLog, "record", record)
+    _end_read(db_session)
+    EchoAgent(provider=FakeProvider(events=events), blob_store=blobs, prompts=prompts).run(
+        db_session, EchoInput(text="x"), after_answer=after_answer,
+        before_write=lambda session: events.append("before_write"))
+    assert events == ["complete", "log", "after_answer", "before_write"] and in_transaction == [False]
+
+
+def test_after_answer_returns_the_output_the_proposals_are_made_from_and_the_log_keeps_the_models(
+        db_session, prompts, blobs):
+    _end_read(db_session)
+    run = EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(
+        db_session, EchoInput(text="x"), after_answer=lambda output: EchoOutput(items=[*output.items, "c"]))
+    assert run.output.items == ["a", "b", "c"]
+    assert [p.payload["item"] for p in run.proposals] == ["a", "b", "c"]
+    entry = db_session.scalars(select(ProposalLogEntry).order_by(ProposalLogEntry.created_at.desc())).first()
+    assert entry.output == {"items": ["a", "b"]}  # rule 4: what the model said, not what code made of it
+
+
+@pytest.mark.parametrize("answer", ["fails", "wrong type"])
+def test_a_failed_after_answer_leaves_one_call_row_and_a_discard(db_session, prompts, blobs, answer):
+    before = (_count(db_session, ProposalLogEntry), _count(db_session, ProposalRow))
+    _end_read(db_session)
+
+    def after_answer(output):
+        if answer == "fails":
+            raise ValueError("the back-test broke")
+        return EchoInput(text="not an output")
+
+    with pytest.raises((ValueError, TypeError)):
+        EchoAgent(provider=FakeProvider(), blob_store=blobs, prompts=prompts).run(
+            db_session, EchoInput(text="x"), after_answer=after_answer)
+    _one_call_and_its_discard(db_session, before, "ValueError: the back-test broke" if answer == "fails" else "TypeError")
+
+
 def test_run_flushes_but_never_commits(db_session, prompts, blobs, monkeypatch):
     """The caller's session is never committed: the call row goes through Agent.run()'s own session."""
     def no_commit():

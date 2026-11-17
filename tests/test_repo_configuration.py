@@ -164,15 +164,15 @@ def test_database_refuses_a_mapping_without_a_proposal(db_session, feed):
 # ---- rules
 
 
-def test_rule_versions_and_current(rules, feed, approved_proposal):
-    first = rules.add_version(feed_id=feed.id, rule_key="close_price_positive",
-                              sql="SELECT * FROM {table} WHERE close_price <= 0",
-                              description="Close price must be positive.",
-                              proposal_id=approved_proposal(kind="rule", roles=STEWARD_THEN_CHECKER).id)
-    second = rules.add_version(feed_id=feed.id, rule_key="close_price_positive",
-                               sql="SELECT * FROM {table} WHERE close_price IS NULL OR close_price <= 0",
-                               description="Close price must be present and positive.",
-                               proposal_id=approved_proposal(kind="rule", roles=STEWARD_THEN_CHECKER).id)
+def test_rule_versions_and_current(rules, feed, db_session):
+    from tests.configured import approved_rule
+
+    first = approved_rule(db_session, feed.id, "close_price_positive",
+                          sql="SELECT _row FROM curated WHERE close_price <= 0",
+                          description="Close price must be positive.")
+    second = approved_rule(db_session, feed.id, "close_price_positive",
+                           sql="SELECT _row FROM curated WHERE close_price IS NULL OR close_price <= 0",
+                           description="Close price must be present and positive.")
     assert (first.version, second.version) == (1, 2)
     (current,) = rules.current_for_feed(feed.id)
     assert (current.rule_key, current.version) == ("close_price_positive", 2)
@@ -189,3 +189,39 @@ def test_rule_needs_an_approved_rule_proposal(rules, feed, make_proposal, approv
         rules.add_version(**{**fields, "feed_id": uuid.uuid4()},
                           proposal_id=approved_proposal(kind="rule", roles=STEWARD_THEN_CHECKER).id)
     assert rules.current_for_feed(feed.id) == []
+
+
+def test_a_rule_row_matches_its_approved_proposal(rules, feed, db_session):
+    """Phase 5 note 5, from 0018: the same feed, key, SQL and description as the proposal, on a registered feed
+    (trg_rules_b_matches_proposal checks the same; test_db_rule_guards.py)."""
+    from core.repositories.errors import FeedNotRegistered, ProposalForAnotherField
+    from tests.configured import a_registered_feed, rule_proposal
+
+    other = a_registered_feed(db_session, "syn_other_rule_feed")
+    proposal = rule_proposal(db_session, other, "px_present", sql="SELECT _row FROM curated", decision="approved")
+    asked = {"rule_key": "px_present", "sql": "SELECT _row FROM curated", "description": "Price is present."}
+    with pytest.raises(ProposalForAnotherFeed):
+        rules.add_version(feed_id=feed.id, proposal_id=proposal.id, **asked)
+    for name, other_value in (("rule_key", "px_other"), ("sql", "SELECT 1"), ("description", "Another.")):
+        with pytest.raises(ProposalForAnotherField, match=name):
+            rules.add_version(feed_id=other, proposal_id=proposal.id, **{**asked, name: other_value})
+    assert rules.add_version(feed_id=other, proposal_id=proposal.id, **asked).version == 1
+
+
+def test_a_rule_of_a_feed_that_is_not_registered_is_refused(rules, feed, approved_proposal):
+    from core.repositories.errors import FeedNotRegistered
+
+    asked = {"rule_key": "px_present", "sql": "SELECT 1", "description": "Synthetic."}
+    proposal = approved_proposal(kind="rule", roles=STEWARD_THEN_CHECKER, feed_id=feed.id, payload=asked)
+    with pytest.raises(FeedNotRegistered):  # the feed is still a candidate
+        rules.add_version(feed_id=feed.id, proposal_id=proposal.id, **asked)
+
+
+def test_rejected_rule_keys_of_a_feed(rules, feed, db_session):
+    from tests.configured import rule_proposal
+
+    rule_proposal(db_session, feed.id, "px_present", decision="rejected")
+    rule_proposal(db_session, feed.id, "px_positive")  # pending: not rejected
+    rule_proposal(db_session, feed.id, "px_approved", decision="approved")
+    assert rules.rejected_keys(feed.id) == {"px_present"}
+    assert rules.rejected_keys(uuid.uuid4()) == set()
