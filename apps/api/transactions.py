@@ -23,10 +23,21 @@ from core.repositories.errors import (
     FeedNotRegistered,
     FeedNotSignedOff,
     GlossaryRunNotFound,
+    GoLiveAlreadyProposed,
+    LoadInProgress,
+    LoadNotFound,
+    LoadNotReceived,
     MappingAlreadyProposed,
     MappingChangedMeanwhile,
     NotAnApprover,
+    NotLive,
+    NotTheFeedsOwner,
+    NothingToGoLive,
     NothingToMap,
+    OwnerNotADataOwner,
+    RulesAlreadyProposed,
+    ConfigurationChangedMeanwhile,
+    ConfigurationChangedSinceSummary,
     NothingToRelease,
     PhraseTaken,
     ProfileAlreadySummarised,
@@ -53,9 +64,13 @@ CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyH
              # phase 5 (plan, section 9)
              NothingToMap, MappingAlreadyProposed, ElementAlreadyMapped, PhraseTaken,
              # fixes after the independent review of phase 5 (plan, section 17)
-             AliasAlreadyOnElement, MappingChangedMeanwhile)
-NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound)
-FORBIDDEN = (NotAnApprover,)  # phase 5: the proposal's approver role is checked by the step (403)
+             AliasAlreadyOnElement, MappingChangedMeanwhile,
+             # phase 6 (plan, sections 7 and 9)
+             RulesAlreadyProposed, ConfigurationChangedMeanwhile, ConfigurationChangedSinceSummary, NothingToGoLive,
+             GoLiveAlreadyProposed, OwnerNotADataOwner, LoadInProgress, LoadNotReceived, NotLive)
+NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound,
+             LoadNotFound)
+FORBIDDEN = (NotAnApprover, NotTheFeedsOwner)  # the step checks who may decide (403)
 
 
 def read(session: Session, work: Callable[[], T]) -> T:

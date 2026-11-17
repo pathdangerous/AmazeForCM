@@ -14,7 +14,10 @@ from agents.discovery_assistant import DiscoveryAssistant
 from agents.intent import IntentAgent
 from agents.mapping import MappingAgent
 from agents.profiler import ProfilerAgent
+from agents.review_summariser import ReviewSummariserAgent
+from agents.rule_recommender import RuleRecommenderAgent
 from agents.source_discovery import SourceDiscoveryAgent
+from apps.api.jobs import DailyFetch
 from ports.config import Settings, get_settings
 from ports.llm import LLMProvider, get_llm_provider
 from ports.connectors import SourceConnector, get_connector
@@ -153,6 +156,33 @@ def get_glossary_kick(request: Request) -> Callable[[], None]:
             log.exception("the kick after a committed write failed; the run waits for the next kick")
 
     return kick
+
+
+# ---- phase 6: steps 09, 11 and 13 (plan, section 9)
+
+
+def get_rule_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                   blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> RuleRecommenderAgent:
+    return RuleRecommenderAgent(provider=provider, blob_store=blob_store)
+
+
+def get_review_summariser(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                          blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> ReviewSummariserAgent:
+    return ReviewSummariserAgent(provider=provider, blob_store=blob_store)
+
+
+def get_daily_fetch(request: Request) -> DailyFetch:
+    """The job's code, for operations' "Load now": app.state.daily_fetch when a test (or start-up) set one, else
+    one built from the settings."""
+    daily = getattr(request.app.state, "daily_fetch", None)
+    return daily or DailyFetch.from_settings(get_settings(), request.app.state.identity)
+
+
+def operations_user(user: Annotated[User, Depends(backend_user)]) -> User:
+    """Load now: operations only."""
+    if "operations" not in user.roles:
+        raise HTTPException(status_code=403, detail="Operations role required")
+    return user
 
 
 def glossary_run_user(user: Annotated[User, Depends(backend_user)]) -> User:
