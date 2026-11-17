@@ -189,6 +189,31 @@ class RulesAlreadyProposed(RepositoryError):
     (step 09, phase 6 plan, assumption 11): the answer is discarded."""
 
 
+class NothingToGoLive(RepositoryError):
+    """The feed has no current mapping, so there is nothing to approve for loading (step 11)."""
+
+
+class GoLiveAlreadyProposed(RepositoryError):
+    """The feed already has a go-live summary waiting for its owner (step 11): one at a time."""
+
+
+class OwnerNotADataOwner(RepositoryError):
+    """The owner named at registration no longer holds the data_owner role; nobody can approve this feed's
+    go-live until a registration changes that (phase 6 plan, assumption 24)."""
+
+
+class NotTheFeedsOwner(RepositoryError, PermissionError):
+    """Another data owner than the one named in the feed's registration tried to decide its go-live."""
+
+
+class ConfigurationChangedSinceSummary(RepositoryError):
+    """The mappings or rules changed after the summary was written: it cannot be approved, only rejected."""
+
+
+class NotLive(RepositoryError):
+    """The feed has no go-live: it is not loaded until its owner approves one (step 11)."""
+
+
 class ConfigurationChangedMeanwhile(RepositoryError):
     """While the agent answered, the feed's current mappings changed (steps 09 and 11): the answer is discarded."""
 

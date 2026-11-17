@@ -27,7 +27,7 @@ def _intent(text="open price", purpose=None, note=None):
 
 def test_rules_are_named_by_prompt_id():
     assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler", "glossary_builder",
-                          "mapping", "rule_recommender"}
+                          "mapping", "rule_recommender", "review_summariser"}
 
 
 def test_the_rule_recommender_rule_makes_one_rule_per_offer_and_leaves_the_checks_to_code():

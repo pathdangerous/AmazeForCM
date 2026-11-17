@@ -60,6 +60,13 @@ def test_step_09_outcomes_are_claude_mds():
         "rules_proposed", "flags_most_history_returned"]
 
 
+def test_step_11_outcomes_are_claude_mds():
+    from core.steps.s11_go_live import GoLiveResult
+
+    assert union_outcomes(GoLiveResult) == claude_md_outcomes("11 Approve") == [
+        "approved_scheduled", "rejected_back_to_step", "test_failed_held"]
+
+
 def test_step_13_outcomes_are_claude_mds():
     from core.engine.run import RunResult
 

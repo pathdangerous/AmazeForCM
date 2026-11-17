@@ -203,6 +203,32 @@ def rule_recommender(data: dict[str, Any]) -> dict[str, Any]:
                        "element_keys": o["element_keys"], "template": o["template"]} for o in offers]}
 
 
+def review_summariser(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 6 plan, assumption 23: a summary built from the facts in the input, naming every unmapped column,
+    every rejected glossary proposal and every rule. Pure: the same facts give the same words."""
+    mapped = [f"{m['source_field']} as {m['element_key']}" for m in data.get("mapped", [])]
+    unmapped = data.get("unmapped_columns", [])
+    rejected = [r["source_field"] for r in data.get("rejected_glossary", [])]
+    rules = data.get("rules", [])
+    load = data.get("test_load", {})
+    parts = [f"Feed {data.get('feed_code')} ({data.get('source_name')}) loaded {load.get('rows', 0)} test rows through "
+             f"{len(load.get('stages', []))} stages.",
+             f"It maps {len(mapped)} column(s): {', '.join(mapped) or 'none'}."]
+    parts.append(f"{len(unmapped)} column(s) are not mapped and will not be loaded: {', '.join(unmapped)}."
+                 if unmapped else "Every column of the file is mapped.")
+    if rejected:
+        parts.append(f"The glossary owner rejected proposals for: {', '.join(rejected)}.")
+    parts.append(f"{len(rules)} rule(s) apply: {', '.join(r['rule_key'] for r in rules) or 'none'}.")
+    risks = [f"Column {c} is not loaded." for c in unmapped] + [f"Glossary proposal for {c} was rejected." for c in rejected]
+    flags = load.get("flags", {})
+    risks += [f"Rule {key} flagged {count} row(s) in the test load." for key, count in sorted(flags.items()) if count]
+    pending = data.get("pending", {})
+    if any(pending.values()):
+        risks.append("Proposals still wait: " + ", ".join(f"{n} {k}" for k, n in pending.items() if n) + ".")
+    return {"summary": " ".join(parts), "highlights": [f"{len(mapped)} column(s) mapped, {len(rules)} rule(s)."],
+            "risks": risks}
+
+
 RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "intent": intent,
     "source_discovery": source_discovery,
@@ -211,4 +237,5 @@ RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "glossary_builder": glossary_builder,
     "mapping": mapping,
     "rule_recommender": rule_recommender,
+    "review_summariser": review_summariser,
 }

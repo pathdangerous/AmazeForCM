@@ -25,6 +25,10 @@ class NothingToDecide(StepInputError):
     """There is no pending proposal of this kind for the requirement."""
 
 
+class BackToStepNeeded(StepInputError):
+    """A go-live rejection names the step the feed goes back to: 05 (glossary), 06 (mapping) or 09 (rules)."""
+
+
 class ChoiceNeeded(StepInputError):
     """The proposal recommends nothing (a conflict or a tie): the person must choose one option (phase 5)."""
 

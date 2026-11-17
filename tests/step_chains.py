@@ -103,6 +103,30 @@ def propose_rules(session: Session, *, feed_id: UUID, agent: RunsAgent, catalogu
                                               rule_timeout_seconds=rule_timeout_seconds))
 
 
+def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent, feed_id: UUID, notifier: Notifier,
+                    backend_team: Sequence[str], owner_is_data_owner: Callable[[str], bool],
+                    rule_timeout_seconds: float = 5):
+    """Step 11 prepare as the API runs it: the checks, a test load through the engine (plan, end the read, execute
+    with no session, locked write), then a TestFailedHeld, or the summary (the agent's call with no connection held)."""
+    from core.engine.run import execute_load, plan_load, record_load
+    from core.steps.s11_go_live import after_test_load, begin_test_load, go_live_plan, record_summary
+
+    plan = go_live_plan(session, feed_id=feed_id, owner_is_data_owner=owner_is_data_owner, notifier=notifier,
+                        backend_team=backend_team)
+    load = begin_test_load(session, plan)
+    end_read(session)
+    engine_plan = plan_load(session, load.id)
+    end_read(session)
+    outcome = execute_load(engine_plan, blob_store=blob_store, rule_timeout_seconds=rule_timeout_seconds)
+    load_run = record_load(session, engine_plan, outcome)
+    end_read(session)
+    after = after_test_load(session, plan=plan, load_run=load_run, notifier=notifier, backend_team=backend_team)
+    end_read(session)
+    if not hasattr(after, "feed_id"):  # a TestFailedHeld
+        return after
+    return record_summary(session, agent=agent, agent_input=after)
+
+
 def run_engine(session: Session, blob_store: BlobStore, feed_id: UUID, *, file_ref: str, purpose: str,
                go_live_id: UUID | None = None, fetch_id: UUID | None = None, rule_timeout_seconds: float = 5):
     """Step 13 as the API runs it: a received load, then plan (read), end the transaction, execute with no

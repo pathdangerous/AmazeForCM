@@ -62,7 +62,9 @@ def test_every_current_version_has_its_file_and_loads():
 def test_every_agent_in_the_registry_names_a_current_prompt():
     assert set(registry.AGENT_PROMPTS) == {"IntentAgent", "SourceDiscoveryAgent", "DiscoveryAssistant", "ProfilerAgent",
                                            "GlossaryBuilderAgent", "MappingAgent", "MappingEvaluator",
-                                           "RuleRecommenderAgent"}  # phase 6: step 09
+                                           "RuleRecommenderAgent", "ReviewSummariserAgent"}  # phase 6: steps 09, 11
+    assert registry.AGENT_PROMPTS["ReviewSummariserAgent"] == "review_summariser" and (
+        registry.PROMPT_VERSIONS["review_summariser"] == "v1")
     assert (registry.AGENT_PROMPTS["RuleRecommenderAgent"], registry.PROMPT_VERSIONS["rule_recommender"]) == (
         "rule_recommender", "v1")
     assert (registry.AGENT_PROMPTS["ProfilerAgent"], registry.PROMPT_VERSIONS["profiler"]) == ("profiler", "v1")
