@@ -91,7 +91,8 @@ def summarise(session: Session, *, feed_id: UUID, agent: RunsAgent):
 
 
 def propose_rules(session: Session, *, feed_id: UUID, agent: RunsAgent, catalogue: SourceCatalogue,
-                  connector_factory: Callable[[str], SourceConnector], rule_timeout_seconds: float = 5):
+                  connector_factory: Callable[[str], SourceConnector], rule_timeout_seconds: float = 5,
+                  blob_store: BlobStore | None = None):
     """Step 09 as the API runs it: read the input, end the transaction, then the call (the back-test runs right
     after it, outside any transaction) and the locked write."""
     from core.steps.s09_rules import backtest_for, record_rules, rules_input
@@ -100,7 +101,7 @@ def propose_rules(session: Session, *, feed_id: UUID, agent: RunsAgent, catalogu
     end_read(session)
     return record_rules(session, agent=agent, agent_input=agent_input,
                         backtest=backtest_for(agent_input, connector_factory=connector_factory,
-                                              rule_timeout_seconds=rule_timeout_seconds))
+                                              rule_timeout_seconds=rule_timeout_seconds, blob_store=blob_store))
 
 
 def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent, feed_id: UUID, notifier: Notifier,

@@ -46,6 +46,15 @@ class RuleCandidateElement(BaseModel):
     templates: list[RuleTemplateOffer] = Field(max_length=MAX_TEMPLATES)
 
 
+class LoadHistoryItem(BaseModel):
+    """One of the feed's own past scheduled loads: where its file is in the store, never its content."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str  # "load <received date>"
+    file_ref: str
+
+
 class RuleRecommenderInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -59,6 +68,8 @@ class RuleRecommenderInput(BaseModel):
     mapping_ids: list[UUID]  # the mappings the input was built from
     connector: str | None  # how the feed's source and its history are read
     history: list[str]  # source refs of the synthetic past deliveries (empty: not back-tested)
+    # Phase 7: the feed's newest scheduled loads that completed all four stages, read from the blob store.
+    load_history: list[LoadHistoryItem] = Field(default_factory=list)
 
 
 class Delivery(BaseModel):

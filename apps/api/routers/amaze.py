@@ -404,9 +404,10 @@ LOAD_RECORDS = 50
 
 @router.post("/feeds/{feed_id}/rules/propose", response_model=ProposeRulesResponse)
 def propose_rules(feed_id: UUID, body: ProposeRulesBody, session: DbSession, user: Steward, catalogue: Catalogue,
-                  agent: RuleAgent, connectors: Connectors, settings: AppSettings) -> ProposeRulesResponse:
+                  agent: RuleAgent, connectors: Connectors, settings: AppSettings,
+                  blobs: Blobs) -> ProposeRulesResponse:
     agent_input = read(session, lambda: rules_input(session, feed_id=feed_id, catalogue=catalogue))
-    backtest = backtest_for(agent_input, connector_factory=connectors,
+    backtest = backtest_for(agent_input, connector_factory=connectors, blob_store=blobs,
                             rule_timeout_seconds=settings.rule_timeout_seconds)  # runs after the call, no connection
     result = in_transaction(session, lambda: record_rules(session, agent=agent, agent_input=agent_input,
                                                            backtest=backtest))
