@@ -117,7 +117,14 @@ export type RequirementPage = {
   can_release: boolean;
   // Phase 4: the gaps of an accepting sign-off, shown under the onboarding message.
   signoff_note: string | null;
+  // Phase 7: where the data is while onboarding; the product once ready or restricted; a later held delivery.
+  progress: { state: "checking_file" | "setting_up" | "approved" | "delivery_held" | "part_missing"; text: string } | null;
+  product: { code: string; name: string; entitled: boolean; route: string | null } | null;
+  held_note: string | null;
 };
+
+export type Notification = { id: string; created_at: string; subject: string; body: string; link: string | null;
+                             read_at: string | null };
 
 type FetchOutcome = { outcome: "fetched" | "source_down" } | null;
 

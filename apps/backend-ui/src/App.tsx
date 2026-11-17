@@ -3,6 +3,7 @@ import { apiGet, describeError, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
+import NotificationsView from "./views/NotificationsView";
 import RunBanner from "./views/RunBanner";
 import StatusView from "./views/StatusView";
 
@@ -14,6 +15,7 @@ const VIEWS = {
   status: "Status",
   glossary: "Glossary",
   feeds: "Feed registry",
+  notifications: "Notifications",
 } as const;
 type View = keyof typeof VIEWS;
 
@@ -121,6 +123,7 @@ export default function App() {
           <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")}
                         changed={changed} onChange={onChange} />
         )}
+        {view === "notifications" && <NotificationsView devUser={me ? selected : ""} />}
         {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} />}
         {view === "feeds" && feedId && (
           <FeedView feedId={feedId} devUser={me ? selected : ""} canAct={!!me && me.roles.includes("backend_team")}

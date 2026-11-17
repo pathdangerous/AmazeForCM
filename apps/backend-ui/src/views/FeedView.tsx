@@ -462,6 +462,18 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
             </p>
           ) : <p className="muted">Only the data steward proposes and decides mappings.</p>}
 
+          {page.product && (
+            <p data-testid="product">
+              Product: <code>{page.product.code}</code> {page.product.name}, {page.product.visibility}, owned by{" "}
+              {page.product.owner_id}, created {new Date(page.product.created_at).toLocaleString()}.
+            </p>
+          )}
+          {page.parked_columns.length > 0 && (
+            <p className="bad" data-testid="parked-columns">
+              Parked, not loaded until mapped and a new go-live is approved:{" "}
+              {page.parked_columns.map((c) => <code key={c}>{c} </code>)}
+            </p>
+          )}
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} onMessage={setDone}
                         onError={setError} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []}
