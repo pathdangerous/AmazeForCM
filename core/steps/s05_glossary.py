@@ -55,7 +55,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.proposals import ProposalRepository
-from core.steps.candidates import candidate_list, covered_by, new_columns, phrases
+from core.steps.candidates import candidate_list, covered_by, glossary_payloads, new_columns, phrases
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered
 from core.steps.matching import words
 from core.steps.result import StepResult
@@ -65,6 +65,7 @@ from ports.notify.base import Notifier
 
 SKIPPED = {"name": "covered_by_name", "mapping": "mapped", "asked": "already_asked"}
 LEFT = "left_to_step_06"
+NOT_VALID = "skipped"  # "skipped: <why>": the column's option was not valid (its name gives no alias)
 
 
 class Proposed(StepResult):
@@ -215,6 +216,8 @@ def record_run(session: Session, *, plan: BuilderPlan, agent: RunsAgent | None, 
     called = agent.run(session, plan.agent_input, before_write=lambda s: _still_running(s, run))
     results = [_result(p) for p in called.proposals]
     outcomes = {r.column: r.outcome for r in results}
+    _, not_valid = glossary_payloads(plan.agent_input, called.output)  # as the agent read the answer
+    outcomes.update({column: f"{NOT_VALID}: {why}" for column, why in not_valid.items()})
     by_column = {c.name: outcomes.get(c.name, LEFT) for c in plan.agent_input.columns}
     finished = runs.finish(run.id, results={**by_column, **plan.skipped}, proposal_log_id=called.log_id)
     if results:

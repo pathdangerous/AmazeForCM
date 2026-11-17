@@ -22,8 +22,19 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from pydantic import ValidationError
+
 from core.domain.glossary import GlossaryElementDraft
-from core.domain.mapping import Candidate, ColumnToMap, ElementOption, GlossaryOutcome, NewColumn
+from core.domain.mapping import (
+    Candidate,
+    ColumnToMap,
+    ElementOption,
+    GlossaryBuilderInput,
+    GlossaryBuilderOutput,
+    GlossaryOutcome,
+    GlossaryProposalPayload,
+    NewColumn,
+)
 from core.domain.profiling import FileColumn, SourceSpec
 from core.steps.matching import Words, words
 
@@ -197,7 +208,11 @@ def kept_elements(column: ColumnToMap, keys: Iterable[str]) -> list[str]:
 
 
 def alias_of(column_name: str) -> str:
-    return "_".join(words(column_name))
+    """The column's name as an alias: its words in lower snake_case. An alias starts with a letter, so a
+    name that starts with a digit gets col_ before it (as the mock's new element key). A name with no letter
+    or digit at all gives "", which is no alias: that column is skipped (glossary_payloads)."""
+    alias = "_".join(words(column_name))
+    return alias if not alias or alias[:1].isalpha() else f"col_{alias}"
 
 
 def classify_element(column: NewColumn, candidates: Sequence[Candidate], *, same_as: str | None,
@@ -228,3 +243,33 @@ def classify_element(column: NewColumn, candidates: Sequence[Candidate], *, same
         if words(new_element.key) not in taken and words(new_element.name) not in taken:
             options.append(ElementOption(kind="new_element", key=new_element.key, element=new_element))
     return Classified("conflict_to_owner", options, None, clashes)
+
+
+def glossary_payloads(agent_input: GlossaryBuilderInput,
+                      output: GlossaryBuilderOutput) -> tuple[list[GlossaryProposalPayload], dict[str, str]]:
+    """The glossary builder's answer as proposal payloads, one per answered column (the first answer of a
+    column counts; a column that is not in the input is ignored), and, per column whose option or payload is
+    not valid (a name that gives no alias), why it is skipped. One such column does not fail the others
+    (independent review, finding 3). The agent makes the proposals from the first; step 05 records the second
+    in the run's results."""
+    columns = {c.name: c for c in agent_input.columns}
+    seen: set[str] = set()
+    payloads, skipped = [], {}
+    for answer in output.answers:
+        column = columns.get(answer.column)
+        if column is None or answer.column in seen:
+            continue
+        seen.add(answer.column)
+        try:
+            classified = classify_element(column, column.candidates, same_as=answer.same_as,
+                                          new_element=answer.new_element)
+            if classified is None:
+                continue
+            payloads.append(GlossaryProposalPayload(
+                source_field=column.name, outcome=classified.outcome, options=classified.options,
+                recommended=classified.recommended, clashes=classified.clashes, reason=answer.reason,
+                run_id=agent_input.run_id))
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            skipped[column.name] = f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}"
+    return payloads, skipped

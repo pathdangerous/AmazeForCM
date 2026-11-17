@@ -4,14 +4,15 @@ Sees one feed's new columns, each with at most 10 candidate elements (never the 
 answers per column: a candidate it is the same as, a new element, or nothing. Code names the outcome
 (candidates.classify_element): proposed, duplicate_alias or conflict_to_owner, one pending
 glossary_element proposal per answered column, linked to the feed. A column with no answer, or whose
-same_as was not a candidate, gets no proposal and is left to step 06.
+same_as was not a candidate, gets no proposal and is left to step 06. A column whose option is not valid
+(its name gives no alias) gets none either; step 05 records why (candidates.glossary_payloads).
 """
 
 from __future__ import annotations
 
 from agents.base import Agent, AgentProposal
-from core.domain.mapping import GlossaryBuilderInput, GlossaryBuilderOutput, GlossaryProposalPayload
-from core.steps.candidates import classify_element
+from core.domain.mapping import GlossaryBuilderInput, GlossaryBuilderOutput
+from core.steps.candidates import glossary_payloads
 
 
 class GlossaryBuilderAgent(Agent):
@@ -23,22 +24,6 @@ class GlossaryBuilderAgent(Agent):
     output_schema = GlossaryBuilderOutput
 
     def to_proposals(self, agent_input: GlossaryBuilderInput, output: GlossaryBuilderOutput) -> list[AgentProposal]:
-        columns = {c.name: c for c in agent_input.columns}
-        seen: set[str] = set()
-        drafts = []
-        for answer in output.answers:
-            column = columns.get(answer.column)
-            if column is None or answer.column in seen:
-                continue
-            seen.add(answer.column)
-            classified = classify_element(column, column.candidates, same_as=answer.same_as,
-                                          new_element=answer.new_element)
-            if classified is None:
-                continue
-            payload = GlossaryProposalPayload(source_field=column.name, outcome=classified.outcome,
-                                              options=classified.options, recommended=classified.recommended,
-                                              clashes=classified.clashes, reason=answer.reason,
-                                              run_id=agent_input.run_id)
-            drafts.append(AgentProposal(kind="glossary_element", feed_id=agent_input.feed_id,
-                                        payload=payload.model_dump(mode="json")))
-        return drafts
+        payloads, _ = glossary_payloads(agent_input, output)
+        return [AgentProposal(kind="glossary_element", feed_id=agent_input.feed_id,
+                              payload=payload.model_dump(mode="json")) for payload in payloads]

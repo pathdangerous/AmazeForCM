@@ -212,6 +212,33 @@ def test_one_hit_that_fits_and_already_has_the_name_is_a_conflict_with_no_option
                                                                         ["exchange_mic"])
 
 
+@pytest.mark.parametrize(("name", "alias"), [("venue_mic_code", "venue_mic_code"), ("Venue MIC", "venue_mic"),
+                                             ("1d_volume", "col_1d_volume"), ("52 Week High", "col_52_week_high"),
+                                             ("%", "")])
+def test_an_alias_starts_with_a_letter(name, alias):
+    """Review finding 3: col_ before a digit, as the mock's new element key; no word at all gives no alias."""
+    assert c.alias_of(name) == alias
+
+
+def test_a_column_whose_option_is_not_valid_is_skipped_and_the_others_get_their_payload(glossary):
+    """Review finding 3: one unusable column does not fail the answer of the whole feed."""
+    from core.domain.mapping import GlossaryBuilderInput, GlossaryBuilderOutput
+
+    def column(name, type_, also=()):
+        return c.NewColumn(name=name, type=type_, candidates=c.candidate_list(name, type_, glossary, also=also))
+
+    agent_input = GlossaryBuilderInput(
+        run_id="00000000-0000-0000-0000-000000000001", feed_id="00000000-0000-0000-0000-000000000002",
+        source_code="syn_odd", source_name="Odd", source_domain="pricing", domains=["pricing"],
+        columns=[column("%", "BIGINT", also=("volume traded today",)), column("1d_volume", "BIGINT")])
+    output = GlossaryBuilderOutput(answers=[{"column": "%", "same_as": "volume", "reason": "r"},
+                                            {"column": "1d_volume", "same_as": "volume", "reason": "r"}])
+    payloads, skipped = c.glossary_payloads(agent_input, output)
+    assert [(p.source_field, p.outcome, p.options[0].alias) for p in payloads] == [
+        ("1d_volume", "duplicate_alias", "col_1d_volume")]
+    assert list(skipped) == ["%"] and skipped["%"].startswith("alias: ")
+
+
 @pytest.fixture
 def two_ccy(glossary):
     return [*glossary, new_el("trade_currency", "Trade currency").model_copy(update={"aliases": ["ccy"]})]

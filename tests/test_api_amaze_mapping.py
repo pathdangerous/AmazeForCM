@@ -342,6 +342,42 @@ async def test_a_sent_back_column_that_is_already_an_alias_is_a_conflict_with_no
     await decide(client, proposal["id"], "rejected", note="currency already has the alias ccy", headers=GLENN)
 
 
+@pytest.fixture
+def odd_names_feed(client, db_session):
+    """A registered feed with a column that starts with a digit, one with no letter or digit at all (the
+    source declares it as the other field "volume traded today") and an ordinary new column."""
+    from core.domain.profiling import FileColumn, SourceSpec
+
+    def col(name, type_):
+        return FileColumn(name=name, type=type_, null_count=0, null_rate=0.0, distinct_count=5)
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_odd_names", name="Odd names")
+    spec = SourceSpec(source_code="syn_odd_names", elements=[], other_fields=["volume traded today"],
+                      columns={"%": "volume traded today"})
+    feed = registered_feed(db_session, feed.id, spec=spec,
+                           columns=[col("1d_volume", "BIGINT"), col("%", "BIGINT"), col("rating", "VARCHAR")])
+    db_session.commit()
+    return str(feed.id)
+
+
+async def test_a_column_name_that_is_no_alias_does_not_fail_the_run(client, odd_names_feed, kicks, drain):
+    """Review finding 3: 1d_volume reads like volume, so its alias is proposed as col_1d_volume (an alias
+    starts with a letter). The column % has no usable name: it is skipped with the reason in the run's
+    results. The run is done and rating still gets its proposal."""
+    await call(client, "POST", f"feeds/{odd_names_feed}/glossary/run", headers=GLENN)
+    drain()
+    run = (await call(client, "GET", f"feeds/{odd_names_feed}"))["glossary_run"]
+    assert (run["status"], run["error"]) == ("done", None)
+    assert (run["results"]["1d_volume"], run["results"]["rating"]) == ("duplicate_alias", "proposed")
+    assert run["results"]["%"].startswith("skipped: alias: ")
+    waiting = await call(client, "GET", "proposals", kind="glossary_element", status="pending", feed_id=odd_names_feed)
+    options = {p["column"]: p["payload"]["options"][0] for p in waiting}
+    assert set(options) == {"1d_volume", "rating"}
+    assert (options["1d_volume"]["key"], options["1d_volume"]["alias"]) == ("volume", "col_1d_volume")
+    approved = await decide(client, next(p["id"] for p in waiting if p["column"] == "1d_volume"), headers=GLENN)
+    assert "col_1d_volume" in approved["result"]["element"]["aliases"]
+
+
 async def test_an_unknown_feed_or_proposal_is_404(client, kicks):
     await propose(client, uuid.uuid4(), expect=404)
     await call(client, "POST", f"feeds/{uuid.uuid4()}/glossary/run", headers=GLENN, expect=404)
