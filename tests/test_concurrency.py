@@ -1318,6 +1318,91 @@ async def test_the_jobs_load_and_load_now_of_one_feed_at_once_give_one_load_and_
     assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("released",)]
 
 
+# ---------------------------------------------------------------- phase 7: the stale clear (plan, assumption 41)
+
+
+async def test_the_stale_clear_and_a_slow_writer_of_one_load_never_leave_records_under_an_abandoned_load(
+        own_schema, p6, monkeypatch):
+    """R4, clear first: the job's load A is held in the engine; the next load finds A stale (limit 0) and abandons
+    it, then loads. A's late write finds it abandoned (LoadNotReceived) and writes nothing: A has no stage and no
+    record; the second load is released."""
+    import apps.api.jobs as jobs
+    from core.repositories.errors import LoadNotReceived
+
+    async with p6() as p:
+        await go_live(p)
+        p.daily.load_stale_minutes = 0
+        entered, release, real, calls = threading.Event(), threading.Event(), jobs.execute_load, []
+
+        def held(plan, **kwargs):
+            calls.append(plan.load.id)
+            if len(calls) == 1:  # only the first load is held
+                entered.set()
+                assert release.wait(timeout=20), "the test never released the first load"
+            return real(plan, **kwargs)
+
+        monkeypatch.setattr(jobs, "execute_load", held)
+        thread, first = _in_thread(lambda: p.daily.load_feed(uuid.UUID(p.feed)))
+        assert await asyncio.to_thread(entered.wait, 10), "the first load never reached the engine"
+        second = await asyncio.to_thread(p.daily.load_feed, uuid.UUID(p.feed))
+        release.set()
+        thread.join(timeout=30)
+    assert second == "released" and isinstance(first.get("error"), LoadNotReceived), (second, first)
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled' ORDER BY status") == [
+        ("abandoned",), ("released",)]
+    assert committed(own_schema, "SELECT count(*) FROM load_stages s JOIN loads l ON l.id = s.load_id "
+                                 "WHERE l.status = 'abandoned'") == [(0,)]
+    assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
+                                 "WHERE l.status = 'abandoned'") == [(0,)]
+
+
+async def test_a_writer_inside_its_finish_is_not_abandoned_by_a_stale_clear(own_schema, p6, monkeypatch):
+    """R4, writer first: the load's finishing transaction holds the feed row (slowed in step 15); the next load's
+    clear waits for it, finds the load released, and clears nothing. Exactly one of loaded or abandoned: released."""
+    from core.repositories.certifications import LoadCertificationRepository
+
+    async with p6() as p:
+        await go_live(p)
+        p.daily.load_stale_minutes = 0
+        entered = _slow(monkeypatch, LoadCertificationRepository, "add", seconds=0.8)
+        feed = uuid.UUID(p.feed)
+        out = await asyncio.to_thread(_first_then_second, lambda: p.daily.load_feed(feed),
+                                      lambda: p.daily.load_feed(feed), entered)
+    assert out["first"] == "released" and out["second"] == "quarantined" and out["overlap"], out
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled' ORDER BY status") == [
+        ("quarantined",), ("released",)]
+    assert committed(own_schema, "SELECT count(*) FROM loads WHERE status = 'abandoned'") == [(0,)]
+
+
+async def test_two_stale_clears_of_one_load_give_one_new_load_and_a_409(own_schema, p6, monkeypatch):
+    """R5: a load left received 45 minutes ago. The job clears it and creates its load (slowed while it holds the
+    feed row); operations' Load now waits for the feed row, then finds a younger received load: 409
+    (LoadInProgress). One abandoned load and one new load."""
+    from datetime import UTC, datetime, timedelta
+
+    from core.repositories.loads import LoadRepository
+    from ports.db import get_sessionmaker
+
+    async with p6() as p:
+        await go_live(p)
+        [(go_live_id,)] = committed(own_schema, "SELECT id FROM feed_go_lives")
+        with get_sessionmaker(own_schema)() as session:
+            LoadRepository(session).create(feed_id=uuid.UUID(p.feed), file_ref="raw/old.csv", purpose="scheduled",
+                                           go_live_id=go_live_id,
+                                           received_at=datetime.now(UTC) - timedelta(minutes=45))
+            session.commit()
+        entered = _slow(monkeypatch, LoadRepository, "create", seconds=0.8)  # after the clear, holding the feed row
+        thread, job = _in_thread(lambda: p.daily.load_feed(uuid.UUID(p.feed)))
+        assert await asyncio.to_thread(entered.wait, 10), "the job never reached its create"
+        now = await p.client.post(f"/api/amaze/feeds/{p.feed}/loads", headers=OPAL, json={})
+        thread.join(timeout=30)
+    assert now.status_code == 409 and "load in progress" in now.json()["detail"], now.text
+    assert job == {"result": "released"}
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled' ORDER BY status") == [
+        ("abandoned",), ("released",)]
+    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'Load abandoned%'") == [(1,)]
+
+
 # ---------------------------------------------------------------- phase 6: no connection held in a file read or a rule
 
 
@@ -1341,6 +1426,16 @@ async def test_no_connection_is_held_during_a_load_run(own_schema, p6, monkeypat
     watch(Blobs, "get")
     watch(Sandbox, "load_csv")
     watch(Sandbox, "run_rule")
+    seen["profile_csv"] = []  # step 12 profiles the delivery with DuckDB, with no connection held (phase 7)
+    import core.steps.s12_arrival as step_12
+
+    real_profile = step_12.profile_csv
+
+    def watched_profile(path):
+        seen["profile_csv"].append(own_schema.pool.checkedout())
+        return real_profile(path)
+
+    monkeypatch.setattr(step_12, "profile_csv", watched_profile)
     async with p6() as p:
         await call(p.client, f"feeds/{p.feed}/rules/propose", {}, headers=SAM)
         [(rule_id,)] = committed(own_schema, "SELECT id FROM proposals WHERE payload->>'rule_key' = "
@@ -1349,8 +1444,16 @@ async def test_no_connection_is_held_during_a_load_run(own_schema, p6, monkeypat
             await call(p.client, f"proposals/{rule_id}/decision", {"decision": "approved"}, headers=headers)
         seen_before = {k: len(v) for k, v in seen.items()}
         await go_live(p)  # the test load: BlobStore.get, the sandbox, one rule
+        gets_before = len(seen["get"])
         assert await asyncio.to_thread(p.daily.run) == {"syn_exchange_volumes": "fetched"}  # the scheduled load
+        gets_after_load = len(seen["get"])
+        # the rules propose call now also back-tests on the feed's own loads: BlobStore.get() after the model call
+        again = await p.client.post(f"/api/amaze/feeds/{p.feed}/rules/propose", headers=SAM, json={})
+        assert again.status_code == 200, again.text
     for name, counts in seen.items():
         assert counts, f"{name} was never called"
         assert set(counts) == {0}, (name, counts)
     assert len(seen["get"]) >= 2 and len(seen["run_rule"]) - seen_before["run_rule"] >= 2  # both loads ran the rule
+    assert gets_after_load - gets_before == 2  # the scheduled load: step 12's read of the file, then the engine's
+    assert len(seen["get"]) - gets_after_load >= 1  # the propose call's load_history read
+    assert len(seen["profile_csv"]) == 1  # step 12 profiled the one scheduled delivery

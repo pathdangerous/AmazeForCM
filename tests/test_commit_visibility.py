@@ -561,6 +561,31 @@ def volumes_feed(engine, blobs, *, mapped=True) -> str:
     return str(feed.id)
 
 
+def waiting_requirement(engine, feed_id: str, *, title="Waiting for volume") -> str:
+    """An onboarding requirement for the volume element whose current choice selects the feed, committed."""
+    from tests.configured import onboarding_requirement
+
+    with get_sessionmaker(engine)() as session:
+        requirement = onboarding_requirement(session, uuid.UUID(feed_id), title=title, elements=["volume"])
+        session.commit()
+    return str(requirement.id)
+
+
+def assert_released_and_committed(engine, requirement_id: str) -> None:
+    """Phase 7: after a good scheduled load, what steps 12, 15 and 20 wrote is visible to another connection."""
+    from decimal import Decimal
+
+    assert committed(engine, "SELECT arrival_outcome, content_sha256 IS NOT NULL FROM loads "
+                             "WHERE purpose = 'scheduled'") == [("on_time_complete", True)]
+    assert committed(engine, 'SELECT outcome, "rows", flagged_rows, trust_score FROM load_certifications') == [
+        ("released", VOLUME_ROWS, 0, Decimal("100.0"))]
+    assert committed(engine, "SELECT code, owner_id, visibility FROM products WHERE feed_id IS NOT NULL") == [
+        ("syn_exchange_volumes", "dev-data-owner", "open")]
+    assert committed(engine, "SELECT status FROM requirements WHERE id = :r", r=requirement_id) == [("ready",)]
+    assert committed(engine, "SELECT count(*) FROM notifications WHERE subject = 'Ready: Waiting for volume' "
+                             "AND recipient = 'dev-requester'") == [(1,)]
+
+
 def daily_on(engine, blobs):
     """The daily job on the test's schema: real sessions, the sample files of the catalogue."""
     settings = Settings(_env_file=None)
@@ -662,6 +687,7 @@ async def test_the_owners_decision_commits_the_go_live(own_schema, p6):
 @pytest.mark.anyio
 async def test_load_now_commits_the_scheduled_load(own_schema, p6):
     async with p6() as p:
+        requirement = waiting_requirement(own_schema, p.feed)
         await go_live(p)
         loaded = await call(p.client, f"feeds/{p.feed}/loads", {}, headers=OPAL)
         assert loaded["result"] == {"fetch": "fetched", "load": "released"}  # was "loaded" before phase 7
@@ -671,6 +697,7 @@ async def test_load_now_commits_the_scheduled_load(own_schema, p6):
                                  "WHERE l.purpose = 'scheduled'") == [(4,)]
     assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
                                  "WHERE l.purpose = 'scheduled'") == [(VOLUME_ROWS,)]
+    assert_released_and_committed(own_schema, requirement)
 
 
 @pytest.mark.anyio
@@ -678,8 +705,10 @@ async def test_the_daily_job_commits_the_scheduled_load(own_schema, p6):
     import asyncio
 
     async with p6() as p:
+        requirement = waiting_requirement(own_schema, p.feed)
         await go_live(p)
         assert await asyncio.to_thread(p.daily.run) == {"syn_exchange_volumes": "fetched"}
+    assert_released_and_committed(own_schema, requirement)
     assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("released",)]  # was loaded
     assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
                                  "WHERE l.purpose = 'scheduled'") == [(VOLUME_ROWS,)]
