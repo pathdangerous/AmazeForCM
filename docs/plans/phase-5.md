@@ -639,6 +639,8 @@ Note 12 (added at checkpoint 3's approval; numbered last so notes 6 to 11 keep t
 6. A structure change (step 12, `additive_parked`) is a new column: it is the builder's and the mapping agent's input, on the load's profile, not the signed-off one.
 7. The Playwright story covers one glossary approval and one mapping approval.
 
+Note 13 (moved from `docs/ui-polish.md` after the independent review; numbered last so the other notes keep their numbers): **the Playwright story needs a bond request that reaches source picking.** With the demo products loaded (`core.seed --demo`), a request for `coupon rate` is answered by Bond reference data (`reuse`), which holds every element Bond terms declares, so the Bond terms source cannot be reached from the marketplace (row R, checkpoint 4, deviation 1). It is not a UI fix: the demo data overlap. Phase 7 gives the bond story a request that routes to `raise_requirement`: a source that declares an element no demo product holds, or a demo product that does not hold `coupon_rate`.
+
 **Phase 8**
 
 8. `python -m agents.evaluate_mappings` with `LLM_PROVIDER=azure_openai`; compare with the mock's pinned score, mean tie size and candidate recall, and with its two wrong maps.
