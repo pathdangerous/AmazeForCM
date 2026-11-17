@@ -305,6 +305,39 @@ single run above 233 s (a breach stops the builder; report with `--durations=20`
 paste the test name and its failure line; task 6 also makes the timed `run_soon` job re-check its timer; task 14 also
 fixes the `apps/api/main.py` comment about 503.
 
+### Checkpoint 2 (tasks 6 to 15; head `2078b12` plus this note)
+
+- **Ceiling breached, builder stopped (task 15).** Three back-to-back full runs: `2001 passed in 197.83s`,
+  `2001 passed in 235.75s`, `2001 passed in 247.12s` (0 skipped, 0 warnings). Median 235.75 s (limit 195 s); the
+  third run is over the 233 s single-run limit. `--durations=20`: the same tests lead every run (the concurrency
+  tests at 1.2 to 2.1 s, `test_the_offline_ddl_schema_equals_the_alembic_schema` 1.9 to 2.2 s, the 2 s libpq
+  wait), and their top-20 call time is 18 to 24 s in all three, so the extra 50 s of run 3 is not one test. Before
+  any phase 6 code, unchanged code ran 168 s to 233 s on this laptop (task 3 notes), and the suite grew from 1859
+  to 2001 tests. No change was made to bring the time down; it is the user's decision (assumption 35, section 14:
+  parallel runs).
+- `0018` was applied to `amaze` and `amaze_eval` after the counts (loads 0, rules 0, rule and review_summary
+  proposals 0 in each): both read `0018 (head)`. `evaluate_mappings`: `25 of 31 (80.6%)`, unchanged (run twice: 8
+  calls logged to `amaze_eval`). Both npm builds and `dev.ps1` (three OK lines, health ok) pass.
+- **Deviations of tasks 6 to 15** (the commit is the task's): 8. `check_rule_sql` also compares the statement's text
+  (task 6, `1a37446`). 9. Task 8's history files, catalogue field and candidates module were written before their
+  tests, so those tests had no separate RED run (`e28c0d5`). 10. Task 9 had no separate RED run: its tests were
+  written first but first run after the code (`5d1c175`). 11. `record_load` writes in a savepoint
+  (`begin_nested`) instead of "a new transaction", which keeps the feed and load locks (`ebd4b97`). 12. The engine
+  fails an empty file at raw (`no_data_rows`) and an unreadable one (`not_a_table`); the plan is silent
+  (`ebd4b97`). 13. `OwnerNotADataOwner` commits the backend team's note before the 409, so the note survives
+  (`08672f6`). 14. The feed page lists current, pending and rejected rule keys; "returned" rules are not stored, so
+  only the answer to Propose rules shows them (`08672f6`). 15. Task 12 changed `apps/api/jobs.py`
+  (`fetch_and_load` raises `LoadInProgress`, as assumption 33 says) beyond "tests only" (`3d6b1b5`). 16. Files
+  outside section 11: `core/steps/errors.py` (`BackToStepNeeded`, `5d1c175`) and `tests/step_chains.py` (the
+  chains, `ebd4b97`, `e28c0d5`, `5d1c175`). 17. `FeedView` reads the roles from `/api/me` instead of `App.tsx`
+  passing them (`1810134`). 18. The browser run used a scratch schema of `amaze_test`, seeded with the test
+  helpers, because `0018` could not touch `amaze` before task 15; its screenshots are in
+  `docs/phase6-screenshots/`, untracked. 19. The mock rule templates: `present` for string, date and datetime,
+  `not_in_future` for datetime only, `in_whole_lots` for `volume` only, to give the plan's four proposed rules and
+  one returned (`e28c0d5`). 20. A rule whose every delivery was left out is kept as "not back-tested"
+  (`e28c0d5`). 21. The "no fetched file" refusal of step 11 cannot happen to a registered feed (a profile needs a
+  fetched file), so its test removes the fetch by monkeypatch (`5d1c175`).
+
 ### Task 6 (sandbox, scheduler re-check, settings)
 
 - Deviation 8: `check_rule_sql` also compares the statement's own text with the text given. DuckDB types
