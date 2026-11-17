@@ -7,7 +7,7 @@ inside a transaction that is rolled back. If the database is unreachable, tests 
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import uuid
@@ -62,6 +62,53 @@ def migrated_engine(test_database_url) -> Engine:
     command.upgrade(alembic_config(test_database_url), "head")
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def offline_ddl(test_database_url) -> str:
+    """The DDL of `alembic upgrade head` as one script (`--sql`), generated once per session.
+
+    Replaying it builds a schema in about 0.15 s; `alembic upgrade head` takes about 0.40 s (phase 6 plan,
+    task 3), and the schema-per-test cases build 66 of them. Alembic writes each % twice for a pyformat
+    driver (PL/pgSQL's RAISE '%' too), so the script is undoubled here.
+    test_commit_visibility.py::test_the_offline_ddl_schema_equals_the_alembic_schema proves the result is
+    the same schema, so a migration that cannot be written offline stops the suite there.
+    """
+    import io
+
+    config = alembic_config(test_database_url)
+    config.output_buffer = io.StringIO()
+    command.upgrade(config, "head", sql=True)
+    return config.output_buffer.getvalue().replace("%%", "%")
+
+
+@contextmanager
+def fresh_schema(test_database_url: str, prefix: str):
+    """(engine, url, schema): an engine whose search_path is a new, empty schema of amaze_test. Rows really
+    commit here, and the append-only tables refuse DELETE, so the schema is dropped whole afterwards."""
+    schema = f"{prefix}_{uuid.uuid4().hex[:8]}"
+    base = create_engine(test_database_url)
+    with base.begin() as connection:
+        connection.execute(text(f"CREATE SCHEMA {schema}"))
+    url = make_url(test_database_url).update_query_dict({"options": f"-csearch_path={schema}"})
+    url_text = url.render_as_string(hide_password=False)
+    engine = create_engine(url_text)
+    try:
+        yield engine, url_text, schema
+    finally:
+        engine.dispose()
+        with base.begin() as connection:
+            connection.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+        base.dispose()
+
+
+def replay_ddl(engine: Engine, ddl: str) -> None:
+    """Run the offline script on the engine's schema. psycopg's connection.execute() without parameters
+    sends it as one simple query, which allows several statements."""
+    with engine.connect() as connection:
+        raw = connection.connection.driver_connection
+        raw.execute(ddl)
+        raw.commit()
 
 
 @pytest.fixture

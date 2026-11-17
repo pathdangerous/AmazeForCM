@@ -19,8 +19,7 @@ import uuid
 
 import pytest
 from alembic import command
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy import text
 
 from apps.api.jobs import DailyFetch
 from core.repositories.requirements import RequirementRepository
@@ -31,32 +30,66 @@ from ports.connectors import get_connector
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.db import get_sessionmaker
 from ports.storage.local import LocalBlobStore
-from tests.conftest import alembic_config, running_app
+from tests.conftest import alembic_config, fresh_schema, replay_ddl, running_app
 
 ONBOARDING = "Your data is getting onboarded; we will notify you once it is ready."
 
 
 @pytest.fixture
-def own_schema(test_database_url):
-    """An engine on a new schema of amaze_test, migrated to head; the schema is dropped afterwards."""
-    schema = f"commit_check_{uuid.uuid4().hex[:8]}"
-    base = create_engine(test_database_url)
-    with base.begin() as connection:
-        connection.execute(text(f"CREATE SCHEMA {schema}"))
-    url = make_url(test_database_url).update_query_dict({"options": f"-csearch_path={schema}"})
-    url_text = url.render_as_string(hide_password=False)
-    engine = create_engine(url_text)
-    try:
-        command.upgrade(alembic_config(url_text), "head")
+def own_schema(test_database_url, offline_ddl):
+    """An engine on a new schema of amaze_test, built at head by replaying the DDL of `alembic upgrade head`
+    (conftest.offline_ddl; phase 6 plan, task 3), the glossary seeded; the schema is dropped afterwards."""
+    with fresh_schema(test_database_url, "commit_check") as (engine, _url, _schema):
+        replay_ddl(engine, offline_ddl)
         with get_sessionmaker(engine)() as session:
             seed_glossary(session)
             session.commit()
         yield engine
-    finally:
-        engine.dispose()
-        with base.begin() as connection:
-            connection.execute(text(f"DROP SCHEMA {schema} CASCADE"))
-        base.dispose()
+
+
+def _shape(engine, schema):
+    """Everything a migration builds in the schema, as sorted lists: columns, constraints, indexes, triggers
+    (with their definitions), functions (with their bodies), views. The schema's own name is masked."""
+    queries = {
+        "columns": "SELECT table_name, ordinal_position, column_name, data_type, udt_name, is_nullable, "
+                   "column_default FROM information_schema.columns WHERE table_schema = :s",
+        "constraints": "SELECT conrelid::regclass::text, conname, pg_get_constraintdef(oid) FROM pg_constraint "
+                       "WHERE connamespace = CAST(:s AS regnamespace)",
+        "indexes": "SELECT tablename, indexname, indexdef FROM pg_indexes WHERE schemaname = :s",
+        "triggers": "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid) FROM pg_trigger t "
+                    "JOIN pg_class c ON c.oid = t.tgrelid WHERE c.relnamespace = CAST(:s AS regnamespace) "
+                    "AND NOT t.tgisinternal",
+        "functions": "SELECT proname, prosrc FROM pg_proc WHERE pronamespace = CAST(:s AS regnamespace)",
+        "views": "SELECT viewname, definition FROM pg_views WHERE schemaname = :s",
+    }
+    with engine.connect() as connection:
+        return {name: sorted(tuple(str(v).replace(schema, "<schema>") for v in row)
+                             for row in connection.execute(text(sql), {"s": schema}))
+                for name, sql in queries.items()}
+
+
+def _row_counts(engine, schema):
+    with engine.connect() as connection:
+        tables = connection.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = :s AND table_type = 'BASE TABLE' "
+            "ORDER BY table_name"), {"s": schema}).scalars().all()
+        return {t: connection.execute(text(f'SELECT count(*) FROM "{t}"')).scalar_one() for t in tables}
+
+
+def test_the_offline_ddl_schema_equals_the_alembic_schema(test_database_url, offline_ddl):
+    """Phase 6 plan, task 3: the schema-per-test cases are built from the offline DDL, not by `alembic upgrade
+    head`. Both are built here; every table, column, constraint, index, trigger, function and view must be the
+    same, and every table must hold the same number of rows (run with -s to see the counts side by side)."""
+    with (fresh_schema(test_database_url, "offline_check") as (offline, _o_url, o_schema),
+          fresh_schema(test_database_url, "alembic_check") as (upgraded, u_url, u_schema)):
+        replay_ddl(offline, offline_ddl)
+        command.upgrade(alembic_config(u_url), "head")
+        offline_counts, upgraded_counts = _row_counts(offline, o_schema), _row_counts(upgraded, u_schema)
+        print(f"\n{'table':<28}{'offline DDL':>12}{'alembic':>10}")
+        for table in sorted(set(offline_counts) | set(upgraded_counts)):
+            print(f"{table:<28}{offline_counts.get(table, '-'):>12}{upgraded_counts.get(table, '-'):>10}")
+        assert offline_counts == upgraded_counts
+        assert _shape(offline, o_schema) == _shape(upgraded, u_schema)
 
 
 def committed(engine, sql, **params):

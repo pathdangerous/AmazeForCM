@@ -1092,18 +1092,22 @@ async def test_after_a_restart_a_queued_run_and_an_expired_one_are_run(own_schem
         (waiting, "done", 1), (expired, "done", 2)]
 
 
-async def test_after_a_restart_a_run_with_a_live_lease_is_run_when_its_lease_passes(own_schema, tmp_path):
+async def test_after_a_restart_a_run_with_a_live_lease_is_run_when_its_lease_passes(own_schema, tmp_path,
+                                                                                      monkeypatch):
     """Review finding 2: a run was running when its worker stopped, and its lease has not passed when the API
     starts again. The start-up kick claims nothing, sees the live lease and schedules one more kick just after
-    it; the run then completes on attempt 2 with no other kick (no request is sent)."""
+    it; the run then completes on attempt 2 with no other kick (no request is sent). A 1 s lease and a 0.2 s
+    grace instead of 2 s and 1 s: the same order of events in 1.2 s, not 3 (phase 6 plan, task 3)."""
+    from apps.api import jobs
     from core.repositories.glossary_runs import GlossaryRunRepository
     from ports.config import Settings
     from ports.db import get_sessionmaker
     from tests.conftest import running_app
 
+    monkeypatch.setattr(jobs, "LEASE_GRACE_SECONDS", 0.2)
     run_id = uuid.UUID(queued_run(own_schema, bond_feed(own_schema)))
     with get_sessionmaker(own_schema)() as session:
-        assert GlossaryRunRepository(session).claim(lease_seconds=2).id == run_id  # its worker stopped here
+        assert GlossaryRunRepository(session).claim(lease_seconds=1).id == run_id  # its worker stopped here
         session.commit()
     worker, finished, drains = glossary_worker(own_schema, tmp_path), threading.Event(), []
 
