@@ -91,9 +91,14 @@ class LocalScheduler:
 
         def timed() -> None:
             # threading.Timer on Windows can fire up to ~15 ms early (phase 6 plan, assumption 29): wait out
-            # the remainder, so a delayed run never starts before its delay.
+            # the remainder, so a delayed run never starts before its delay. The wait ends at once if the timer
+            # is cancelled meanwhile (a later call replaced it, or shutdown()), and cancelled means it does not
+            # run: Timer.cancel() sets `finished`, and that is checked again just before guarded().
             while (remaining := due - time.monotonic()) > 0:
-                time.sleep(remaining)
+                if timer.finished.wait(remaining):
+                    return
+            if timer.finished.is_set():
+                return
             guarded()
 
         timer = threading.Timer(delay_seconds, timed)

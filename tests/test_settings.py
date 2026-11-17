@@ -95,3 +95,24 @@ def test_a_bad_source_down_release_days_is_refused_by_name(tmp_path, monkeypatch
     monkeypatch.setenv("SOURCE_DOWN_RELEASE_DAYS", bad)
     with pytest.raises(ConfigError, match="SOURCE_DOWN_RELEASE_DAYS"):
         load_settings(tmp_path / "missing.env")
+
+
+# ---- phase 6: the rule time limit (assumption 6) and the hypercare period (assumption 25)
+
+
+@pytest.mark.parametrize(("name", "field", "default"), [("RULE_TIMEOUT_SECONDS", "rule_timeout_seconds", 5),
+                                                         ("HYPERCARE_DAYS", "hypercare_days", 10)])
+def test_phase_6_settings_default_and_are_whole_numbers_of_at_least_one(tmp_path, monkeypatch, name, field, default):
+    monkeypatch.delenv(name, raising=False)
+    assert getattr(load_settings(tmp_path / "missing.env"), field) == default
+    monkeypatch.setenv(name, "1")
+    assert getattr(load_settings(tmp_path / "missing.env"), field) == 1
+    for bad in ("0", "-1", "1.5", "soon"):
+        monkeypatch.setenv(name, bad)
+        with pytest.raises(ConfigError, match=name):
+            load_settings(tmp_path / "missing.env")
+
+
+def test_env_example_names_the_phase_6_settings():
+    text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "RULE_TIMEOUT_SECONDS=5" in text and "HYPERCARE_DAYS=10" in text

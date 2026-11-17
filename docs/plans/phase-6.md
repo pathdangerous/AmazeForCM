@@ -292,3 +292,32 @@ Run from `F:\amaze-cm-poc` in Windows PowerShell, each as `.\.venv\Scripts\pytho
 **Phase 8:** 4. both new agents against Azure OpenAI, the sandbox holding free SQL; 5. engine runs move to the queue with the other background work.
 
 ## 17. Results and deviations (recorded during implementation)
+
+### Checkpoint 1 (tasks 1 to 5, head `5c43b43`; decisions of 2026-11-17)
+
+1. G8 widening (loaded to held or released) accepted. 2. Test files edited outside section 11 in `5c43b43` accepted
+(`test_domain_models.py`, `test_db_approval_guard.py`, `test_coverage.py`, `test_api_consumer.py`,
+`test_request_data.py`, `test_routing.py`). 3. The lease, grace and HTTP timeout changes of task 3 accepted. 4. Guard
+proofs by count accepted for checkpoint 1. 5. The extra constraints and uniques accepted. 6. `ck_loads_status`
+shadowed by G8 accepted. 7. The permanent offline-DDL equality test accepted.
+Changed for the rest of the phase: the ceiling is the median of three back-to-back full runs at or below 195 s, no
+single run above 233 s (a breach stops the builder; report with `--durations=20`); guard and sandbox removal proofs
+paste the test name and its failure line; task 6 also makes the timed `run_soon` job re-check its timer; task 14 also
+fixes the `apps/api/main.py` comment about 503.
+
+### Task 6 (sandbox, scheduler re-check, settings)
+
+- Deviation 8: `check_rule_sql` also compares the statement's own text with the text given. DuckDB types
+  `PRAGMA database_size` as SELECT (it rewrites it to `SELECT * FROM pragma_database_size();`), so the type check
+  alone cannot refuse a PRAGMA, which row 12 of S1 requires. A tightening, not a widening.
+- Removal proofs (S1). Without `SET enable_external_access = false`: `read another file` and `read the same file`
+  fail with `Regex pattern did not match. Expected 'Permission Error'; Actual 'Binder Error: Referenced column "_row" not
+  found in FROM clause!'` (the file was read), `http read` with `Actual 'File http://127.0.0.1:9/x.csv requires the
+  extension httpfs to be loaded'`, `glob` with `ValueError: invalid literal for int() with base 10: '.\\.env'` (it
+  listed the working directory). Without the statement check: `two statements` fails with `Failed: DID NOT RAISE
+  RuleRefused`, `PRAGMA` with `Expected regex: 'plain SELECT'; Actual message: 'a rule returns the _row of every row
+  that breaks it; this has no _row column'` (it ran), and `COPY TO`, `ATTACH`, `INSTALL`, `LOAD`, `SET`, `DELETE` fail
+  with `RuleFailed: Permission Error ...` or `Invalid Input Error: Cannot change configuration option
+  "enable_external_access" - the configuration has been locked` (DuckDB's lock refused them, with the wrong class).
+- Removal proof, scheduler re-check: with `time.sleep(remaining)` and no `finished` check, `AssertionError: assert 'old'
+  not in ['old']` (shutdown) and `assert 'old' not in ['old', 'new']` (replaced).
