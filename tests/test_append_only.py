@@ -46,12 +46,16 @@ def _mappings_row(db_session, request):
 
 
 def _rules_row(db_session, request):
+    """From 0018 a rule matches its approved proposal (same feed, key, SQL, description) on a registered feed."""
     from core.repositories.configuration import RuleRepository
+    from tests.configured import a_registered_feed
+    from tests.test_db_rule_guards import rule_proposal
 
-    feed = _feed_with_glossary(db_session, request)
-    proposal = request.getfixturevalue("approved_proposal")(kind="rule", roles=("data_steward", "checker"))
+    feed = a_registered_feed(db_session, "append_only_rules")
+    payload = {"rule_key": "probe", "sql": "SELECT 1", "description": "Synthetic."}
+    proposal = rule_proposal(db_session, feed, payload=payload, decision="approved")
     rule = RuleRepository(db_session).add_version(
-        feed_id=feed.id, rule_key="probe", sql="SELECT 1", description="Synthetic.", proposal_id=proposal.id
+        feed_id=feed, rule_key="probe", sql="SELECT 1", description="Synthetic.", proposal_id=proposal.id
     )
     return "rules", rule.id
 
@@ -210,7 +214,51 @@ def _feed_registrations_row(db_session, request):
     return "feed_registrations", registration(db_session, _phase_4_feed(db_session)).id
 
 
+# ---- phase 6 (migration 0018)
+
+
+def _phase_6_feed(db_session):
+    from tests.configured import a_registered_feed
+
+    return a_registered_feed(db_session, "append_only_phase_6")
+
+
+def _feed_go_lives_row(db_session, request):
+    import uuid
+    from types import SimpleNamespace
+
+    from tests.test_db_go_live_guards import GO_LIVE, go_live_params, summary_proposal
+    from tests.test_db_load_guards import loaded_load
+
+    feed = _phase_6_feed(db_session)
+    world = SimpleNamespace(feed=feed, mappings=[uuid.uuid4()], rules=[], load=loaded_load(db_session, feed))
+    proposal = summary_proposal(db_session, world)
+    return "feed_go_lives", db_session.execute(text(GO_LIVE), go_live_params(world, proposal)).scalar_one()
+
+
+def _load_stages_row(db_session, request):
+    from tests.test_db_load_guards import add_stage, new_load
+
+    load = new_load(db_session, _phase_6_feed(db_session))
+    add_stage(db_session, load, "raw")
+    return "load_stages", db_session.execute(text("SELECT id FROM load_stages WHERE load_id = :l"),
+                                             {"l": load}).scalar_one()
+
+
+def _standard_records_row(db_session, request):
+    from tests.test_db_load_guards import RECORD, new_load
+
+    feed = _phase_6_feed(db_session)
+    load = new_load(db_session, feed)
+    db_session.execute(text(RECORD), {"load": load, "feed": feed, "row": 1, "vals": "{}"})
+    return "standard_records", db_session.execute(text("SELECT id FROM standard_records WHERE load_id = :l"),
+                                                  {"l": load}).scalar_one()
+
+
 ROWS = {
+    "feed_go_lives": _feed_go_lives_row,
+    "load_stages": _load_stages_row,
+    "standard_records": _standard_records_row,
     "feed_profiles": _feed_profiles_row,
     "feed_signoffs": _feed_signoffs_row,
     "feed_registrations": _feed_registrations_row,
