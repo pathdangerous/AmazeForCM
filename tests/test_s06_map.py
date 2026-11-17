@@ -212,6 +212,19 @@ def test_an_element_another_column_holds_is_409(db_session, bond, tmp_path):
     assert ProposalRepository(db_session).get(pending(db_session, bond, "date").id).status == "pending"
 
 
+def test_propose_again_on_a_mapped_column_that_gets_no_element_queues_no_glossary_run(db_session, bond, tmp_path):
+    """Review finding 8: the column has its mapping, so the glossary builder would skip it as mapped; no run
+    is queued for it. The outcome is still no_element_back_to_05, with no run."""
+    propose(db_session, bond, tmp_path, column="cpn")
+    decide(db_session, pending(db_session, bond, "cpn"))
+    nothing = FixedProvider({"answers": [{"column": "cpn", "elements": [], "reason": "No candidate is this column."}]})
+    again = propose(db_session, bond, tmp_path, column="cpn", provider=nothing)
+    [cpn] = again.results
+    assert (cpn.outcome, cpn.source_field, cpn.glossary_run_id) == ("no_element_back_to_05", "cpn", None)
+    assert GlossaryRunRepository(db_session).active(bond.id) is None
+    assert MappingRepository(db_session).current_for_feed(bond.id)[0].element_key == "coupon_rate"
+
+
 def test_propose_again_and_approve_gives_version_2(db_session, bond, tmp_path):
     propose(db_session, bond, tmp_path, column="date")
     decide(db_session, pending(db_session, bond, "date"), choice="price_date")

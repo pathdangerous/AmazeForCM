@@ -181,13 +181,15 @@ class GlossaryRef(BaseModel):
 
 
 class AssistantInput(BaseModel):
-    """Step 17: what the DiscoveryAssistant sees."""
+    """Step 17: what the DiscoveryAssistant sees. glossary is not the whole glossary: it holds the candidate
+    elements of the unmatched terms, at most 10 per term, each element once (candidates.term_candidates;
+    phase 5 plan, assumption 7). The cap is per term, not on the whole input."""
 
     model_config = ConfigDict(frozen=True)
 
     query: str
     unmatched_terms: list[str]
-    glossary: list[GlossaryRef]
+    glossary: list[GlossaryRef]  # candidates only
 
 
 class SuggestedElement(BaseModel):

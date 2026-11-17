@@ -66,7 +66,8 @@ class NoElementBackTo05(StepResult):
     outcome: Literal["no_element_back_to_05"] = "no_element_back_to_05"
     source_field: str
     reason: Literal["no_candidate", "type_does_not_fit", "every_candidate_rejected"]
-    glossary_run_id: UUID | None  # the run queued (or joined) for it; None if the builder was already asked
+    # the run queued (or joined) for it; None if the builder was already asked, or the column is mapped
+    glossary_run_id: UUID | None
 
 
 MapResult = Annotated[Mapped | TieToSteward | NoElementBackTo05, Field(discriminator="outcome")]
@@ -195,7 +196,8 @@ def record_mappings(session: Session, *, agent: RunsAgent, agent_input: MappingI
             back.append(column)
     asked = {p.payload.get("source_field") for p in ProposalRepository(session).list_for_feed(feed_id,
                                                                                               "glossary_element")}
-    to_send = [c.name for c in back if c.name not in asked]
+    # not a column the builder was asked about, nor a mapped one (Propose again): the builder skips a mapped column
+    to_send = [c.name for c in back if c.name not in asked and not c.current]
     run_id = None
     if to_send:  # assumption 26: in the same transaction
         glossary_run, _ = queue_run(session, feed_id=feed_id, reason="sent_back", requested_by=user.id,
