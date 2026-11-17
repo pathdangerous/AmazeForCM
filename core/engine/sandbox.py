@@ -36,6 +36,10 @@ class RuleTimedOut(RuleFailed):
     """The rule ran longer than the time limit and was interrupted."""
 
 
+class FileUnreadable(Exception):
+    """DuckDB could not read the file as a CSV table (the engine's raw stage fails with it)."""
+
+
 def _plain(text: str) -> str:
     return text.strip().rstrip(";").strip()
 
@@ -72,9 +76,12 @@ class Sandbox:
         """Read the one file into memory: every column as text (the engine casts), plus `_row`, the file's data
         row number from 1 in file order. Before lock() only."""
         self._require_unlocked()
-        self._connection.execute(
-            f'CREATE TABLE "{table}" AS SELECT row_number() OVER () AS _row, * '
-            "FROM read_csv($path, header = true, all_varchar = true)", {"path": str(path)})
+        try:
+            self._connection.execute(
+                f'CREATE TABLE "{table}" AS SELECT row_number() OVER () AS _row, * '
+                "FROM read_csv($path, header = true, all_varchar = true)", {"path": str(path)})
+        except duckdb.Error as exc:
+            raise FileUnreadable(_first_line(exc)) from None
 
     def execute(self, sql: str, params: dict[str, Any] | None = None) -> list[tuple]:
         """A trusted statement of the engine (never rule text), before lock() only."""

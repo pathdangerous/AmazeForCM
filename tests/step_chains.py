@@ -90,6 +90,22 @@ def summarise(session: Session, *, feed_id: UUID, agent: RunsAgent):
     return record_summary(session, agent=agent, agent_input=agent_input)
 
 
+def run_engine(session: Session, blob_store: BlobStore, feed_id: UUID, *, file_ref: str, purpose: str,
+               go_live_id: UUID | None = None, fetch_id: UUID | None = None, rule_timeout_seconds: float = 5):
+    """Step 13 as the API runs it: a received load, then plan (read), end the transaction, execute with no
+    session (BlobStore.get() and the DuckDB sandbox), then the locked write of the stages and records."""
+    from core.engine.run import execute_load, plan_load, record_load
+    from core.repositories.loads import LoadRepository
+
+    load = LoadRepository(session).create(feed_id=feed_id, file_ref=file_ref, purpose=purpose,
+                                          go_live_id=go_live_id, fetch_id=fetch_id)
+    end_read(session)
+    plan = plan_load(session, load.id)
+    end_read(session)
+    outcome = execute_load(plan, blob_store=blob_store, rule_timeout_seconds=rule_timeout_seconds)
+    return record_load(session, plan, outcome)
+
+
 def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable[[str], SourceConnector],
                  blob_store: BlobStore, notifier: Notifier, backend_team: Sequence[str],
                  today: date | None = None, release_after_days: int | None = None,

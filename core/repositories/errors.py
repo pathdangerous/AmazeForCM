@@ -184,6 +184,10 @@ class LoadNotFound(RepositoryError, LookupError):
     """No load has this id."""
 
 
+class LoadNotReceived(RepositoryError):
+    """The load is no longer received (another run finished it): the engine writes nothing."""
+
+
 class LoadInProgress(RepositoryError):
     """The feed already has a received load (migration 0018, uq_loads_one_received_per_feed): one at a time."""
 
