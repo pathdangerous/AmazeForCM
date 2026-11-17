@@ -156,3 +156,35 @@ def test_database_refuses_the_same_element_twice(repo, db_session):
             text("INSERT INTO product_elements (product_id, element_key) VALUES (:p, 'close_price')"),
             {"p": product.id},
         )
+
+
+# ---------------------------------------------------------------- phase 7: a product created from a feed (0019, G15)
+
+
+def _registration(db_session, feed_id):
+    return db_session.execute(text("SELECT owner_id, visibility FROM feed_registrations WHERE feed_id = :f "
+                                   "ORDER BY version DESC LIMIT 1"), {"f": feed_id}).one()
+
+
+def test_a_product_of_a_released_feed_is_found_by_its_feed(repo, db_session):
+    from tests.configured import a_registered_feed, released_load
+
+    feed = a_registered_feed(db_session, "syn_product_feed")
+    released_load(db_session, feed)
+    owner, visibility = _registration(db_session, feed)
+    assert repo.for_feed(feed) is None
+    product = repo.create(**{**PRODUCT, "code": "syn_product_feed", "owner_id": owner, "visibility": visibility,
+                             "feed_id": feed})
+    assert product.feed_id == feed and repo.for_feed(feed) == product
+    assert repo.get(product.id).feed_id == feed
+    assert repo.create(**{**PRODUCT, "code": "no_feed"}).feed_id is None  # a hand-made product has none
+
+
+def test_a_product_of_a_feed_without_a_released_load_is_refused(repo, db_session):
+    from tests.configured import a_registered_feed
+
+    feed = a_registered_feed(db_session, "syn_product_unreleased")
+    owner, visibility = _registration(db_session, feed)
+    with pytest.raises(DBAPIError, match="has no released load"):
+        with db_session.begin_nested():
+            repo.create(**{**PRODUCT, "owner_id": owner, "visibility": visibility, "feed_id": feed})

@@ -19,11 +19,13 @@ from core.repositories.errors import (
     ProposalNotApproved,
     WrongProposalKind,
 )
+from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
+from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.standard_records import StandardRecordRepository
-from tests.configured import a_load, go_live, logged_call
+from tests.configured import a_load, go_live, live_feed, logged_call
 from tests.conftest import dev_user_for
 
 FILE = "local://raw/synthetic_prices/2026-01-02.csv"
@@ -115,14 +117,25 @@ def test_finishing_without_the_proof_is_refused_by_the_database(db_session, repo
 
 
 @pytest.mark.parametrize("status", ["held", "released"])
-def test_a_loaded_load_may_be_held_or_released(db_session, repo, registered, status):
+def test_a_certified_scheduled_load_is_held_or_released(db_session, repo, registered, status):
+    """From 0019 (G13) the only way to held or released: a scheduled load with a certification of that outcome."""
+    load = a_load(db_session, registered.id, status)
+    assert (load.status, load.purpose) == (status, "scheduled")
+    assert LoadCertificationRepository(db_session).for_load(load.id).outcome == (
+        "released" if status == "released" else "held_consumers_warned")
+
+
+@pytest.mark.parametrize("status", ["held", "released"])
+def test_a_test_load_is_never_held_or_released(db_session, repo, registered, status):
     load = a_load(db_session, registered.id, "loaded")
-    assert repo.set_status(load.id, status).status == status
+    with pytest.raises(DBAPIError, match="only a scheduled load is released or held"):
+        with db_session.begin_nested():
+            repo.set_status(load.id, status)
 
 
 def test_a_received_load_cannot_be_released(db_session, repo, registered):
     load = repo.create(feed_id=registered.id, file_ref=FILE, **TEST)
-    with pytest.raises(DBAPIError, match="moves only to loaded or failed_rolled_back"):
+    with pytest.raises(DBAPIError, match="moves only to loaded, failed_rolled_back, quarantined, held or abandoned"):
         with db_session.begin_nested():
             repo.set_status(load.id, "released")
 
@@ -130,9 +143,86 @@ def test_a_received_load_cannot_be_released(db_session, repo, registered):
 def test_invalid_status_and_unknown_load(repo, registered):
     load = repo.create(feed_id=registered.id, file_ref=FILE, **TEST)
     with pytest.raises(ValidationError):
-        repo.set_status(load.id, "quarantined")  # added by migration in phase 7, not yet
+        repo.set_status(load.id, "lost")
     with pytest.raises(LoadNotFound):
         repo.get(uuid.uuid4())
+
+
+# ---------------------------------------------------------------- phase 7: arrival, abandon, history, certification
+
+SHA_A, SHA_B = "a" * 64, "b" * 64
+
+
+@pytest.fixture
+def live(db_session, repo):
+    """(feed id, go-live id): a registered feed with a go-live, which a scheduled load names."""
+    feed = live_feed(db_session, "syn_repo_arrival")
+    return feed, GoLiveRepository(db_session).latest(feed).id
+
+
+def scheduled(repo, live):
+    return repo.create(feed_id=live[0], file_ref=FILE, purpose="scheduled", go_live_id=live[1])
+
+
+def test_an_arrival_is_recorded_once(db_session, repo, live):
+    load = scheduled(repo, live)
+    arrived = repo.record_arrival(load.id, outcome="on_time_complete", content_sha256=SHA_A, detail={"rows": 3})
+    assert (arrived.status, arrived.arrival_outcome, arrived.content_sha256, arrived.arrival_detail) == (
+        "received", "on_time_complete", SHA_A, {"rows": 3})
+    with pytest.raises(DBAPIError, match="does not change once set"):
+        with db_session.begin_nested():
+            repo.record_arrival(load.id, outcome="on_time_complete", content_sha256=SHA_B, detail={})
+
+
+@pytest.mark.parametrize(("outcome", "status"), [("resent_quarantined", "quarantined"), ("breaking_held", "held")])
+def test_a_resent_or_breaking_file_ends_the_load_on_arrival(repo, live, outcome, status):
+    load = repo.record_arrival(scheduled(repo, live).id, outcome=outcome, content_sha256=SHA_A, detail={})
+    assert (load.status, load.finished_at is not None, repo.stages(load.id)) == (status, True, [])
+
+
+def test_an_additive_arrival_names_the_profile_of_its_file(db_session, repo, live):
+    profile = FeedProfileRepository(db_session).latest(live[0])
+    load = repo.record_arrival(scheduled(repo, live).id, outcome="additive_parked", content_sha256=SHA_A,
+                               detail={"added": ["new_column"]}, profile_id=profile.id)
+    assert (load.status, load.arrival_profile_id) == ("received", profile.id)
+
+
+def test_a_stale_load_is_abandoned_with_its_failure(repo, live):
+    abandoned = repo.abandon(scheduled(repo, live).id, "Left received by a process that is gone.")
+    assert (abandoned.status, abandoned.failure, abandoned.finished_at is not None) == (
+        "abandoned", "Left received by a process that is gone.", True)
+    assert scheduled(repo, live).status == "received"  # the feed may load again
+
+
+def test_scheduled_hashes_name_the_oldest_load_of_each_file(repo, live):
+    first = repo.record_arrival(scheduled(repo, live).id, outcome="on_time_complete", content_sha256=SHA_A, detail={})
+    repo.abandon(first.id, "Synthetic.")
+    resent = repo.record_arrival(scheduled(repo, live).id, outcome="resent_quarantined", content_sha256=SHA_A, detail={})
+    other = repo.record_arrival(scheduled(repo, live).id, outcome="on_time_complete", content_sha256=SHA_B, detail={})
+    assert resent.status == "quarantined"
+    assert repo.scheduled_hashes(live[0]) == {SHA_A: first.id, SHA_B: other.id}
+    assert repo.scheduled_hashes(uuid.uuid4()) == {}
+
+
+def test_fully_loaded_scheduled_are_the_newest_that_completed_four_stages(db_session, repo, live):
+    released = a_load(db_session, live[0], "released")
+    held = a_load(db_session, live[0], "held")
+    repo.record_arrival(scheduled(repo, live).id, outcome="resent_quarantined", content_sha256=SHA_A, detail={})
+    assert [load.id for load in repo.fully_loaded_scheduled(live[0], 10)] == [held.id, released.id]
+    assert [load.id for load in repo.fully_loaded_scheduled(live[0], 1)] == [held.id]
+
+
+def test_a_certification_is_read_back_and_a_load_without_one_has_none(db_session, repo, registered):
+    load = a_load(db_session, registered.id, "held")
+    certifications = LoadCertificationRepository(db_session)
+    certification = certifications.for_load(load.id)
+    assert (certification.rows, certification.flagged_rows, str(certification.trust_score),
+            str(certification.threshold), certification.warned) == (10, 5, "50.0", "90.0", [])
+    assert certifications.for_load(uuid.uuid4()) is None
+    with pytest.raises(DBAPIError, match="is not a loaded scheduled load"):  # held now: certified once
+        with db_session.begin_nested():
+            certifications.add(load_id=load.id, feed_id=registered.id, rows=10, flagged_rows=5, trust_score=50,
+                               threshold=90, outcome="held_consumers_warned")
     with pytest.raises(LoadNotFound):
         repo.lock(uuid.uuid4())
     with pytest.raises(LoadNotFound):

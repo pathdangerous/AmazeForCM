@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    Numeric,
     Text,
     UniqueConstraint,
     Uuid,
@@ -32,7 +34,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from core.domain.consumer_request import ROUTING_OUTCOMES
 from core.domain.feed import CONNECTORS, FEED_STAGES
 from core.domain.glossary import DATA_TYPES
-from core.domain.load import LOAD_STATUSES
+from core.domain.load import ARRIVAL_OUTCOMES, CERTIFICATION_OUTCOMES, LOAD_STATUSES
 from core.domain.mapping import GLOSSARY_RUN_REASONS, GLOSSARY_RUN_STATUSES
 from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
@@ -556,7 +558,9 @@ class RuleRow(Base):
 class LoadRow(Base):
     """One delivery of a registered feed (steps 12 to 15). Operational state: its status moves once, from
     received to loaded or failed_rolled_back, with its proof (migration 0018, trg_loads_a_status); a loaded
-    load may go on to held or released. One received load per feed."""
+    scheduled load may go on to held or released with a certification (0019); a received one may end
+    quarantined, held (breaking_held) or abandoned. The arrival fields are set once, while received (0019,
+    trg_loads_b_arrival). One received load per feed."""
 
     __tablename__ = "loads"
     __table_args__ = (
@@ -565,6 +569,10 @@ class LoadRow(Base):
         # 0018 (G7): a scheduled load names the go-live that approved it, a test load has none
         CheckConstraint("(purpose = 'scheduled' AND go_live_id IS NOT NULL) "
                         "OR (purpose = 'go_live_test' AND go_live_id IS NULL)", name="purpose_fits"),
+        # 0019: a SHA-256 in lower-case hex; one of the four arrival outcomes (NULL: no arrival yet)
+        CheckConstraint("content_sha256 IS NULL OR content_sha256 ~ '^[0-9a-f]{64}$'", name="content_sha256"),
+        CheckConstraint(f"arrival_outcome IS NULL OR {_in('arrival_outcome', ARRIVAL_OUTCOMES)}",
+                        name="arrival_outcome"),
         Index("ix_loads_feed_id", "feed_id"),
         Index("uq_loads_one_received_per_feed", "feed_id", unique=True, postgresql_where=text("status = 'received'")),
     )
@@ -581,6 +589,36 @@ class LoadRow(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failed_stage: Mapped[str | None] = mapped_column(Text)
     failure: Mapped[str | None] = mapped_column(Text)
+    content_sha256: Mapped[str | None] = mapped_column(Text)  # 0019: step 12
+    arrival_outcome: Mapped[str | None] = mapped_column(Text)
+    arrival_detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    arrival_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feed_profiles.id"))
+
+
+class LoadCertificationRow(Base):
+    """Step 15: the trust score of one loaded scheduled load, its threshold and its outcome. Append-only
+    (migration 0019; trigger: the database recounts the load's records and flags, the score and the outcome)."""
+
+    __tablename__ = "load_certifications"
+    __table_args__ = (
+        UniqueConstraint("load_id"),
+        CheckConstraint(_in("outcome", CERTIFICATION_OUTCOMES), name="outcome"),
+        CheckConstraint("rows >= 0 AND flagged_rows >= 0 AND flagged_rows <= rows", name="counts"),
+        CheckConstraint("trust_score >= 0 AND trust_score <= 100 AND threshold >= 1 AND threshold <= 100",
+                        name="score"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    rows: Mapped[int] = mapped_column(Integer)
+    flagged_rows: Mapped[int] = mapped_column(Integer)
+    rule_counts: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+    trust_score: Mapped[Decimal] = mapped_column(Numeric(4, 1))
+    threshold: Mapped[Decimal] = mapped_column(Numeric(4, 1))
+    outcome: Mapped[str] = mapped_column(Text)
+    warned: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
 
 
 class FeedGoLiveRow(Base):
@@ -658,6 +696,8 @@ class ProductRow(Base):
         CheckConstraint("length(btrim(name)) > 0", name="name_present"),
         CheckConstraint("length(btrim(owner_id)) > 0", name="owner_present"),
         CheckConstraint(_in("visibility", VISIBILITIES), name="visibility"),
+        # 0019 (G15): one product per feed
+        Index("uq_products_feed_id", "feed_id", unique=True, postgresql_where=text("feed_id IS NOT NULL")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -667,6 +707,7 @@ class ProductRow(Base):
     domain: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
+    feed_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feeds.id"))  # migration 0019: step 20
     owner_id: Mapped[str] = mapped_column(Text)  # migration 0006
     visibility: Mapped[str] = mapped_column(Text)  # migration 0006: open or restricted
 

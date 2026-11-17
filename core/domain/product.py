@@ -2,7 +2,8 @@
 
 A product has an owner, a visibility (open: everyone may use it; restricted: the owner and those
 granted access) and at least one glossary element. Its element list is fixed when it is created.
-Creation from a released load arrives with phase 7.
+From migration 0019 (phase 7) a product may name the feed it was created from at its first release (step 20):
+one product per feed, with the owner and visibility of the feed's latest registration.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ class ProductDraft(BaseModel):
     domain: SnakeName
     description: str = ""
     requirement_id: UUID | None = None
+    feed_id: UUID | None = None
     owner_id: NonBlank
     visibility: Visibility
     element_keys: list[SnakeName] = Field(min_length=1)
@@ -48,6 +50,7 @@ class Product(BaseModel):
     domain: str
     description: str
     requirement_id: UUID | None
+    feed_id: UUID | None
     owner_id: str
     visibility: Visibility
 

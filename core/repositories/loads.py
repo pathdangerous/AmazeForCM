@@ -1,5 +1,6 @@
 """LoadRepository: deliveries of registered feeds, and the stages of the engine's run (step 13, phase 6). The
-database guards (migration 0018, G7 to G11) hold the rules; the checks here answer with a named error first."""
+database guards (migration 0018, G7 to G11; 0019, G12 and G13) hold the rules; the checks here answer with a
+named error first."""
 
 from __future__ import annotations
 
@@ -12,12 +13,14 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.domain.load import STAGES, Load, LoadDraft, LoadStage, LoadStageDraft, LoadStatus, Stage
+from core.domain.load import (
+    STAGES, ArrivalOutcome, Load, LoadDraft, LoadStage, LoadStageDraft, LoadStatus, Stage)
 from core.repositories.errors import FeedNotFound, FeedNotRegistered, LoadInProgress, LoadNotFound
 from core.repositories.tables import FeedRow, LoadStageRow
 from core.repositories.tables import LoadRow as Row
 
 _STATUS = TypeAdapter(LoadStatus)
+_ENDS_ON_ARRIVAL = {"resent_quarantined": "quarantined", "breaking_held": "held"}  # arrival outcome -> status
 
 
 class LoadRepository:
@@ -77,12 +80,47 @@ class LoadRepository:
         return Load.model_validate(row)
 
     def set_status(self, load_id: UUID, status: LoadStatus) -> Load:
-        """Any other move the database allows: a loaded load to held or released (certification, step 15)."""
+        """Any other move the database allows: a certified scheduled load to held or released (step 15)."""
         status = _STATUS.validate_python(status)
         row = self._row(load_id)
         row.status = status
         self._session.flush()
         return Load.model_validate(row)
+
+    def record_arrival(self, load_id: UUID, *, outcome: ArrivalOutcome, content_sha256: str,
+                       detail: dict[str, Any], profile_id: UUID | None = None) -> Load:
+        """Step 12's write on a received scheduled load: the four arrival fields, once (G12). A resent file
+        ends the load as quarantined and a breaking one as held, in the same write with a finish time and no
+        stage (G13); the other two outcomes leave it received for the engine."""
+        row = self._row(load_id)
+        row.content_sha256, row.arrival_outcome = content_sha256, outcome
+        row.arrival_detail, row.arrival_profile_id = detail, profile_id
+        if outcome in _ENDS_ON_ARRIVAL:
+            row.status, row.finished_at = _ENDS_ON_ARRIVAL[outcome], datetime.now(UTC)
+        self._session.flush()
+        return Load.model_validate(row)
+
+    def abandon(self, load_id: UUID, failure: str) -> Load:
+        """A load left received by a dead process: no stage, no record, the failure and the finish time (G13)."""
+        row = self._row(load_id)
+        row.status, row.finished_at, row.failure = "abandoned", datetime.now(UTC), failure
+        self._session.flush()
+        return Load.model_validate(row)
+
+    def scheduled_hashes(self, feed_id: UUID) -> dict[str, UUID]:
+        """The SHA-256 of every scheduled load of the feed that carries one, with the oldest load that had it."""
+        query = (select(Row.content_sha256, Row.id)
+                 .where(Row.feed_id == feed_id, Row.purpose == "scheduled", Row.content_sha256.is_not(None))
+                 .order_by(Row.received_at.desc(), Row.created_at.desc()))
+        return {sha: load_id for sha, load_id in self._session.execute(query)}  # the oldest is read last, so it wins
+
+    def fully_loaded_scheduled(self, feed_id: UUID, limit: int) -> list[Load]:
+        """The feed's newest scheduled loads that completed all four stages (loaded, then held or released)."""
+        query = (select(Row)
+                 .where(Row.feed_id == feed_id, Row.purpose == "scheduled",
+                        Row.status.in_(("loaded", "held", "released")))
+                 .order_by(Row.received_at.desc(), Row.created_at.desc()).limit(limit))
+        return [Load.model_validate(r) for r in self._session.scalars(query)]
 
     def _row(self, load_id: UUID, *, lock: bool = False) -> Row:
         query = select(Row).where(Row.id == load_id)

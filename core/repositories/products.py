@@ -43,6 +43,11 @@ class ProductRepository:
             raise ProductNotFound(f"No product with id {product_id}")
         return Product.model_validate(row)
 
+    def for_feed(self, feed_id: UUID) -> Product | None:
+        """The product created from this feed at its first release (migration 0019: at most one), if any."""
+        row = self._session.scalars(select(Row).where(Row.feed_id == feed_id)).one_or_none()
+        return None if row is None else Product.model_validate(row)
+
     def get_by_code(self, code: str) -> Product:
         row = self._session.scalars(select(Row).where(Row.code == code)).one_or_none()
         if row is None:
