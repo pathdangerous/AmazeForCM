@@ -102,11 +102,12 @@ def test_the_mock_scores_as_measured_and_misses_these(evaluated):
                                                                    (19, "high", "high_price")]
 
 
-def test_the_mock_reports_its_tie_size_and_candidate_recall(evaluated):
+def test_the_mocks_tie_size_and_candidate_recall_are_pinned(evaluated):
+    """The baseline phase 8 compares Azure OpenAI with (plan, section 16, note 11; review finding 6)."""
     s = evaluated.score
-    assert s.mean_tie_size is not None and s.mean_tie_size > 2
+    assert s.mean_tie_size == pytest.approx(5.0)
     assert s.recall_total == 22 + 2 * 3  # one element per mapped case, two must-offer elements per tie
-    assert s.recall_found <= s.recall_total
+    assert (s.recall_found, s.recall_missing) == (27, [(8, "price_currency")])  # never a candidate of ccy
 
 
 def test_an_evaluation_creates_no_proposal_and_logs_every_call(db_session, evaluated):

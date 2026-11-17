@@ -194,7 +194,7 @@ async def test_a_model_that_does_not_answer_gives_503_and_writes_nothing(client,
     assert (count(ProposalLogEntry), count(ProposalRow)) == before and kicks == []
 
 
-async def test_a_wrong_state_is_409(client, bond, kicks, db_session):
+async def test_a_wrong_state_is_409(client, bond, bond_b, kicks, drain, db_session):
     candidate = str(FeedRepository(db_session).create_candidate(code="syn_not_yet", name="Not yet").id)
     db_session.commit()
     await propose(client, candidate, expect=409)  # FeedNotRegistered
@@ -207,6 +207,22 @@ async def test_a_wrong_state_is_409(client, bond, kicks, db_session):
     await decide(client, cpn["proposal_id"], expect=409)  # ProposalAlreadyDecided
     await decide(client, cpn["proposal_id"], "rejected", note="late", expect=409)
     assert kicks == ["kick"]  # only the sent-back run of the one propose that committed
+
+    # ElementAlreadyMapped: matures_on holds maturity_date, so the tie on date cannot take it
+    matures_on = next(r for r in proposed["result"]["recommended"] if r["source_field"] == "matures_on")
+    await decide(client, matures_on["proposal_id"])
+    tie = next(r for r in proposed["result"]["results"] if r["outcome"] == "tie_to_steward")
+    taken = await decide(client, tie["proposal_id"], choice="maturity_date", expect=409)
+    assert "matures_on" in taken["detail"]
+
+    # PhraseTaken: both feeds have the new column rating, and each run proposes the new element rating
+    drain()  # the sent-back run of bond: rating and maturity
+    await call(client, "POST", f"feeds/{bond_b}/glossary/run", headers=GLENN)
+    drain()
+    first, second = await pending_glossary(client, "rating")
+    await decide(client, first["id"], headers=GLENN)
+    owned = await decide(client, second["id"], headers=GLENN, expect=409)
+    assert "rating" in owned["detail"]
 
 
 async def test_only_the_named_roles_act(client, bond, kicks):
