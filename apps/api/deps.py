@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from typing import Annotated
 
@@ -23,6 +24,8 @@ from ports.identity import Identity, User
 from ports.notify import Notifier, get_notifier
 from ports.secrets import SecretNotFound
 from ports.storage import BlobStore, get_blob_store
+
+log = logging.getLogger(__name__)
 
 
 def get_app_settings() -> Settings:
@@ -138,10 +141,18 @@ def get_mapping_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_
 
 def get_glossary_kick(request: Request) -> Callable[[], None]:
     """Wakes the step 05 worker (app.state.glossary_runs) through the scheduler. Called after a commit that
-    queued a run; tests replace it to record the kicks."""
+    queued a run; tests replace it to record the kicks. A kick that fails (the stub scheduler's
+    NotImplementedError included) is logged and swallowed: the write is already committed, the answer stays
+    200, and the run is taken by the next kick or start-up (phase 6 plan, assumption 30)."""
     from apps.api.jobs import kick_glossary_runs
 
-    return lambda: kick_glossary_runs(request.app.state.scheduler, request.app.state.glossary_runs)
+    def kick() -> None:
+        try:
+            kick_glossary_runs(request.app.state.scheduler, request.app.state.glossary_runs)
+        except Exception:
+            log.exception("the kick after a committed write failed; the run waits for the next kick")
+
+    return kick
 
 
 def glossary_run_user(user: Annotated[User, Depends(backend_user)]) -> User:
