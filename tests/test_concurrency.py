@@ -874,6 +874,7 @@ def _rows_for_lock_tests(engine):
         entry = ProposalLog(session).record(agent_name="ProfilerAgent", input_ref="test://lock", result=result)
         proposal = ProposalRepository(session).create(
             proposal_log_id=entry.id, kind="mapping", autonomy="A2", required_approver_roles=["data_steward"],
+            feed_id=feed.id,  # 0017: a mapping proposal has a feed
             payload={"note": "synthetic", "source_field": "qty"})  # 0016: a mapping proposal names its column
         session.commit()
         return {"requirement": requirement.id, "feed": feed.id, "proposal": proposal.id}
