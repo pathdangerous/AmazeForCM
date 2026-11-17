@@ -307,11 +307,15 @@ fixes the `apps/api/main.py` comment about 503.
 
 ### Checkpoint 2 (tasks 6 to 15; head `2078b12` plus this note)
 
-- **Ceiling breached, builder stopped (task 15).** Three back-to-back full runs: `2001 passed in 197.83s`,
-  `2001 passed in 235.75s`, `2001 passed in 247.12s` (0 skipped, 0 warnings). Median 235.75 s (limit 195 s); the
-  third run is over the 233 s single-run limit. `--durations=20`: the same tests lead every run (the concurrency
-  tests at 1.2 to 2.1 s, `test_the_offline_ddl_schema_equals_the_alembic_schema` 1.9 to 2.2 s, the 2 s libpq
-  wait), and their top-20 call time is 18 to 24 s in all three, so the extra 50 s of run 3 is not one test. Before
+- **Ceiling breached, builder stopped (task 15).** The first three runs (`197.83s`, `235.75s`, `247.12s`) ran with
+  the `dev.ps1` servers and the browser still open (my stop command had not killed them), so they are not the
+  figures. The figures are the three back-to-back runs made after every dev server, shell and browser of this
+  project was closed and checked gone (only the user's own Firefox and VS Code were left running): `2001 passed in
+  236.77s`, `2001 passed in 238.89s`, `2001 passed in 186.75s` (0 skipped, 0 warnings). Median 236.77 s (limit
+  195 s); two of the three are over the 233 s single-run limit. The earlier set had a median of 235.75 s, so the
+  open servers were not the cause. `--durations=20`: the same tests lead every run (the concurrency tests at 1.7 to
+  2.1 s, `test_the_offline_ddl_schema_equals_the_alembic_schema` about 2 s, the 2 s libpq wait), and their top-20
+  call time is 19 to 25 s in all three, so the 50 s between the fastest and the slowest run is not one test. Before
   any phase 6 code, unchanged code ran 168 s to 233 s on this laptop (task 3 notes), and the suite grew from 1859
   to 2001 tests. No change was made to bring the time down; it is the user's decision (assumption 35, section 14:
   parallel runs).
@@ -330,9 +334,18 @@ fixes the `apps/api/main.py` comment about 503.
   (`fetch_and_load` raises `LoadInProgress`, as assumption 33 says) beyond "tests only" (`3d6b1b5`). 16. Files
   outside section 11: `core/steps/errors.py` (`BackToStepNeeded`, `5d1c175`) and `tests/step_chains.py` (the
   chains, `ebd4b97`, `e28c0d5`, `5d1c175`). 17. `FeedView` reads the roles from `/api/me` instead of `App.tsx`
-  passing them (`1810134`). 18. The browser run used a scratch schema of `amaze_test`, seeded with the test
-  helpers, because `0018` could not touch `amaze` before task 15; its screenshots are in
-  `docs/phase6-screenshots/`, untracked. 19. The mock rule templates: `present` for string, date and datetime,
+  passing them (`1810134`). 18. **Rows U to Y first ran on the wrong database.** In task 13 the dev API ran with `DATABASE_URL` set by
+  `export` in the shell command that started it (not `.env`, not an argument): `amaze_test` with
+  `options=-csearch_path=ui_p6`, a scratch schema built by `alembic upgrade head` and seeded with the test helpers
+  (`tests/onboarded.py`: its feeds have a one-row profile and `raw/test/<id>/f.csv` files; the bond feed there was
+  `a6b36d94…`, created 15:39:58). It was chosen because `0018` could not touch `amaze` before task 15. It was dropped
+  afterwards: `amaze` holds `syn_bond_terms` as `553d98bd…` (created 02:20, phase 5 testing) and 0 `raw/test/%`
+  fetches, `amaze_test` holds neither. The five screenshots of that run were therefore not of `amaze`. After `0018`
+  was applied (task 15) rows U to Y were rerun on `amaze` through the dev servers started by `dev.ps1` (no
+  `DATABASE_URL` override in the shell; the API lists `amaze`'s feed ids), the five screenshots in
+  `docs/phase6-screenshots/` were replaced, and `amaze` now holds what they left: three rules (version 1) and one
+  go-live of `syn_exchange_volumes` with its test load and one scheduled load (4 stages, 10 records each), and the
+  rejected go-live of `syn_bond_terms` with a test load. The old ones stay untracked, not committed. 19. The mock rule templates: `present` for string, date and datetime,
   `not_in_future` for datetime only, `in_whole_lots` for `volume` only, to give the plan's four proposed rules and
   one returned (`e28c0d5`). 20. A rule whose every delivery was left out is kept as "not back-tested"
   (`e28c0d5`). 21. The "no fetched file" refusal of step 11 cannot happen to a registered feed (a profile needs a
