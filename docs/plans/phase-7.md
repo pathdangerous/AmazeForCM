@@ -20,7 +20,6 @@
 8. `pytest -q -n <N>` passes with nothing skipped and no warnings, three back-to-back clean runs, within the ceiling task 1 sets; no test reads another worker's schema (assumption 3).
 
 ## 2. State at the start (checked on 2026-11-17)
-
 | Item | Found |
 |---|---|
 | Git, Alembic, tests | `main` = `d4ace51`; untracked `.claude/`, `.env.main`, `docs/phase6-screenshots/`. `0018` in `amaze`, `amaze_eval`, `amaze_test`. `2001 tests collected`; phase 6's clean runs 236.77 / 238.89 / 186.75 s (median 236.77 s) |
@@ -29,7 +28,6 @@
 | Tools | No `pytest-xdist` or Playwright installed; `pytest-xdist 3.8.0`, `execnet 2.1.2` are `py3-none-any`; `@playwright/test` 1.64.1 (2026-10-14) is the newest release over two weeks old. 20 logical CPUs |
 
 ## 3. What you fixed, and where this plan answers it
-
 | Carried item | Answered in |
 |---|---|
 | Request: test time first: xdist, schema per worker, ceiling, isolation proof, seconds per task | assumptions 1 to 4; task 1; section 12 |
@@ -167,7 +165,6 @@ Other named tests: `test_s20_create_product.py::test_a_restricted_registration_g
 Every check on a nullable column spells out NULL, has a NULL case and joins `REVIEWED_NULLABLE_CHECKS`. Downgrade stops if any `load_certifications` row, product with a feed, load with an arrival field or status `quarantined`/`abandoned`, or `structure_change` run exists. Nothing from PostgreSQL 15 or later. Existing rows pass (the `amaze` loads have no arrival fields).
 
 ## 7. Domain models and repositories
-
 | Item | Change |
 |---|---|
 | `core/domain/load.py` | `LoadStatus` gains `quarantined`, `abandoned`; `ArrivalOutcome`; `Load` gains the four arrival fields; `LoadCertification`, `LoadCertificationDraft` |
@@ -208,7 +205,6 @@ New named errors: `ArrivalNotChecked` (409), `LoadNotLoaded` (409). Existing `Lo
 | Z3 | Riley: open one ready requirement; Notifications | "Ready. Your data is in Exchange daily volumes."; the Ready notice |
 
 ## 9. API
-
 | Endpoint | Who | Does |
 |---|---|---|
 | `POST /api/amaze/feeds/{id}/loads` | `operations` | as phase 6, plus the stale clear, step 12, 15 and 20; the answer adds arrival, certification and products. Commits |
@@ -257,7 +253,6 @@ Method for every task (followed by hand, `CLAUDE.md`): assumptions the plan does
 Net expected: about +28 s serial, about +4 to +7 s of wall time at `-n 4` to `-n 8`.
 
 ## 13. Commands that prove it is done
-
 Run from `F:\amaze-cm-poc` in Windows PowerShell, each as `.\.venv\Scripts\python -m ...` where it is Python:
 
 | Command | Expected |
@@ -295,5 +290,6 @@ Run from `F:\amaze-cm-poc` in Windows PowerShell, each as `.\.venv\Scripts\pytho
 **Phase 8:** 2. the Playwright test against the Azure deployment (`BUILD_PLAN.md`); 3. step 12 and 15 move to the queue with the other background work; 4. a delivery deadline per feed for `late_alert`.
 
 ## 17. Results and deviations (recorded during implementation)
-
 **Deviation 1 (task 1; accepted 2026-11-17):** assumption 3(b)'s `'public'` is also a visibility value on about 30 test lines, so the scan flags `'public'` only beside a schema keyword or cast (`nspname`, `schemaname`, `table_schema`, `schema_name`, `::regnamespace`), plus `w_gw*`, `search_path=` and `SET search_path`.
+**Deviation 2 (task 1):** the lock key is `concat(current_schema(), ':', key)`, not `||`: with no schema in the search_path `||` gives NULL and PostgreSQL then takes no lock. **Deviation 3:** to keep the plan at 300 lines the blank line after six headings (2, 3, 7, 9, 13, 17) was removed; no text changed.
+**Task 1 results.** Serial before: 198.73 / 250.98 / 234.52 s (median **234.52**). One run each: `-n 4` 122.80, `-n 6` 116.11, `-n 8` 120.23 s, so **N = 6**. `-n 6` after: 142.84 / 169.16 / 163.31 s (median **163.31**, below 234.52); 2008 tests, 0 warnings; `max_connections` 100. **Ceiling: median of three at or below 200 s; no single run above 245 s** (1.2 and 1.5 × 163.31, rounded up to 5). Before assumption 2a one `-n 4` run in two deadlocked. Removal proofs: all workers on `w_shared` → `assert ('w_shared', 'w_shared') == ('w_gw0', 'w_gw0')`; key without the schema → `LockNotAvailable: canceling statement due to lock timeout` in `test_the_same_lock_in_two_schemas_has_two_keys_and_nobody_waits[source_lock]` and `[glossary_lock]`.

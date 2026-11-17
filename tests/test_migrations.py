@@ -150,7 +150,7 @@ def test_no_constraint_name_repeats_its_prefix(migrated_engine):
     with migrated_engine.connect() as connection:
         rows = connection.execute(text(
             "SELECT c.conrelid::regclass::text, c.conname FROM pg_constraint c "
-            "JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = 'public'"
+            "JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.oid = current_schema()::regnamespace"
         )).all()
     def repeats(table: str, name: str) -> bool:
         prefix = f"{name.split('_')[0]}_{table}_"  # ck_products_, uq_feeds_, ...
@@ -233,7 +233,7 @@ def test_every_check_on_a_nullable_column_is_reviewed(migrated_engine):
         rows = connection.execute(text(
             "SELECT DISTINCT c.conrelid::regclass::text || '.' || c.conname FROM pg_constraint c "
             "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) "
-            "WHERE c.contype = 'c' AND c.connamespace = 'public'::regnamespace AND NOT a.attnotnull"
+            "WHERE c.contype = 'c' AND c.connamespace = current_schema()::regnamespace AND NOT a.attnotnull"
         )).scalars().all()
     assert sorted(rows) == sorted(REVIEWED_NULLABLE_CHECKS)
 

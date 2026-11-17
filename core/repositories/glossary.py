@@ -94,8 +94,10 @@ class GlossaryRepository:
 
     def lock(self) -> None:
         """The advisory lock on the glossary, held until the transaction ends. Last in the lock order (phase 5
-        plan, assumption 49); the next element version and phrases_taken() are read after it."""
-        self._session.execute(select(func.pg_advisory_xact_lock(func.hashtext(GLOSSARY_LOCK))))
+        plan, assumption 49); the next element version and phrases_taken() are read after it. The key includes
+        the schema (phase 7 plan, assumption 2a)."""
+        key = func.concat(func.current_schema(), ":", GLOSSARY_LOCK)
+        self._session.execute(select(func.pg_advisory_xact_lock(func.hashtext(key))))
 
     def phrases_taken(self, draft: GlossaryElementDraft) -> list[tuple[str, str]]:
         """Each (phrase, owner key) where another current element owns a key, name or alias of draft, by
