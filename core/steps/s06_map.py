@@ -43,7 +43,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.proposals import ProposalRepository
 from core.steps.candidates import candidate_list, kept_elements
-from core.steps.errors import ChoiceNeeded, ChoiceNotOffered
+from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s05_glossary import queue_run
 from core.steps.s1_scope import RunsAgent
@@ -218,6 +218,7 @@ def decide_mapping(session: Session, *, proposal_id: UUID, user: User, decision:
     proposal = proposals.get(proposal_id)
     if proposal.kind != "mapping":
         raise WrongProposalKind(f"Proposal {proposal_id} is a {proposal.kind} proposal, not mapping")
+    needs_a_note(decision, note)  # refused input, before any lock
     FeedRepository(session).lock(proposal.feed_id)  # before the proposal and the next version are read
     proposal = proposals.lock(proposal_id)
     if proposal.status != "pending":

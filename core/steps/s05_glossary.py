@@ -56,7 +56,7 @@ from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.proposals import ProposalRepository
 from core.steps.candidates import candidate_list, covered_by, glossary_payloads, new_columns, phrases
-from core.steps.errors import ChoiceNeeded, ChoiceNotOffered
+from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.matching import words
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
@@ -273,6 +273,7 @@ def decide_element(session: Session, *, proposal_id: UUID, user: User, decision:
     proposal = proposals.get(proposal_id)
     if proposal.kind != "glossary_element":
         raise WrongProposalKind(f"Proposal {proposal_id} is a {proposal.kind} proposal, not glossary_element")
+    needs_a_note(decision, note)  # refused input, before any lock
     feed = FeedRepository(session).lock(proposal.feed_id)
     proposal = proposals.lock(proposal_id)
     if decision == "rejected":

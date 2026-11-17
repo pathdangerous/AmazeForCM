@@ -29,5 +29,15 @@ class ChoiceNeeded(StepInputError):
     """The proposal recommends nothing (a conflict or a tie): the person must choose one option (phase 5)."""
 
 
+class NoteNeeded(StepInputError):
+    """A glossary or mapping proposal is rejected with a note that says why (phase 5 plan, assumptions 17
+    and 28); the note is missing or blank."""
+
+
+def needs_a_note(decision: str, note: str | None) -> None:
+    if decision == "rejected" and not (note or "").strip():
+        raise NoteNeeded("A rejection needs a note that says why")
+
+
 class ChoiceNotOffered(StepInputError):
     """The option or candidate chosen is not one the proposal offers (phase 5)."""

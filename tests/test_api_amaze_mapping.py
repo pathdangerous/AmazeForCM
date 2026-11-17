@@ -292,6 +292,26 @@ async def test_refused_input_is_422(client, bond, kicks, drain):
     await decide(client, glossary["id"], choice=5, headers=GLENN, expect=422)  # ChoiceNotOffered
 
 
+@pytest.mark.parametrize("note", [None, "", "   "])
+async def test_a_rejection_without_a_note_is_422_at_both_steps(client, bond, kicks, drain, note):
+    """Assumptions 17 and 28 (section 17, finding 1 of checkpoint 4): reject with a note, by the API too."""
+    proposed = await propose(client, bond)
+    cpn = next(r for r in proposed["result"]["recommended"] if r["source_field"] == "cpn")
+    refused = await decide(client, cpn["proposal_id"], "rejected", note=note, expect=422)  # step 06
+    assert "note" in refused["detail"]
+    drain()  # the sent-back run of that propose: rating, maturity
+    [rating] = await pending_glossary(client, "rating")
+    refused = await decide(client, rating["id"], "rejected", note=note, headers=GLENN, expect=422)  # step 05
+    assert "note" in refused["detail"]
+    for kind in ("mapping", "glossary_element"):
+        waiting = await call(client, "GET", "proposals", kind=kind, status="pending", feed_id=bond)
+        assert all(p["decisions"] == [] for p in waiting)
+    assert {p["id"] for p in await call(client, "GET", "proposals", status="pending", feed_id=bond)} >= {
+        cpn["proposal_id"], rating["id"]}
+    await decide(client, cpn["proposal_id"], "rejected", note="Not the coupon rate")
+    await decide(client, rating["id"], "rejected", note="Not a standard element", headers=GLENN)
+
+
 # ---------------------------------------------------------------- fixes after the independent review (plan, section 17)
 
 
