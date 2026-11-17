@@ -158,7 +158,8 @@ def a_load(session, feed_id: UUID, status: str = "received", *, purpose: str = "
     return loaded if status == "loaded" else repo.set_status(load.id, status)
 
 
-def certified_load(session, feed_id: UUID, status: str = "released", *, rows: int = 10) -> Load:
+def certified_load(session, feed_id: UUID, status: str = "released", *, rows: int = 10,
+                   content: bytes | None = None) -> Load:
     """A scheduled load of the feed, reached the way the database allows (0019): a go-live, an arrival
     (on_time_complete), `rows` standard records, four completed stages, loaded, a certification, then released
     (no record flagged: score 100.0) or held (half flagged: score 50.0; threshold 90)."""
@@ -166,8 +167,8 @@ def certified_load(session, feed_id: UUID, status: str = "released", *, rows: in
     repo = LoadRepository(session)
     load = repo.create(feed_id=feed_id, file_ref=f"local://raw/{feed_id}/scheduled.csv", purpose="scheduled",
                        go_live_id=gl.id)
-    repo.record_arrival(load.id, outcome="on_time_complete", content_sha256=hashlib.sha256(load.id.bytes).hexdigest(),
-                        detail={})
+    repo.record_arrival(load.id, outcome="on_time_complete", detail={},
+                        content_sha256=hashlib.sha256(load.id.bytes if content is None else content).hexdigest())
     flagged = 0 if status == "released" else rows // 2
     StandardRecordRepository(session).add_many(load_id=load.id, feed_id=feed_id, records=[
         StandardRecordDraft(row_number=number, values={}, flags=["synthetic_rule"] if number <= flagged else [])

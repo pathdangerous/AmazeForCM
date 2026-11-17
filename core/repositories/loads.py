@@ -108,9 +108,12 @@ class LoadRepository:
         return Load.model_validate(row)
 
     def scheduled_hashes(self, feed_id: UUID) -> dict[str, UUID]:
-        """The SHA-256 of every scheduled load of the feed that carries one, with the oldest load that had it."""
+        """The SHA-256 of the feed's scheduled loads that were loaded, released or held, with the oldest load that
+        had it. A failed_rolled_back, abandoned or quarantined load is not compared (phase 7 assumption 12): after
+        a new go-live the same file must load."""
         query = (select(Row.content_sha256, Row.id)
-                 .where(Row.feed_id == feed_id, Row.purpose == "scheduled", Row.content_sha256.is_not(None))
+                 .where(Row.feed_id == feed_id, Row.purpose == "scheduled", Row.content_sha256.is_not(None),
+                        Row.status.in_(("loaded", "released", "held")))
                  .order_by(Row.received_at.desc(), Row.created_at.desc()))
         return {sha: load_id for sha, load_id in self._session.execute(query)}  # the oldest is read last, so it wins
 

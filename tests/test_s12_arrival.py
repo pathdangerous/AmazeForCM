@@ -8,11 +8,13 @@ no database connection held; the first match wins: resent, breaking, additive, o
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
+from core.domain.load import LoadStageDraft
 from core.domain.profiling import FileColumn, SourceSpec
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feeds import FeedRepository
@@ -34,7 +36,7 @@ from core.steps.s12_arrival import (
 )
 from ports.notify.inapp import InAppNotifier, NotificationRow
 from ports.storage.local import LocalBlobStore
-from tests.configured import go_live
+from tests.configured import certified_load, go_live
 from tests.onboarded import registered_feed
 from tests.step_chains import arrive, end_read
 
@@ -120,9 +122,40 @@ def test_column_order_and_a_header_only_file_do_not_matter(world):
 # ---------------------------------------------------------------- resent_quarantined
 
 
+def earlier(world, content: str, how: str):
+    """An earlier scheduled load of this file, ended the way `how` says."""
+    if how in ("released", "held"):
+        return certified_load(world.session, world.feed, how, content=content.encode())
+    repo = LoadRepository(world.session)
+    load = deliver(world, content)
+    repo.record_arrival(load.id, outcome="on_time_complete", detail={},
+                        content_sha256=hashlib.sha256(content.encode()).hexdigest())
+    if how == "abandoned":
+        return repo.abandon(load.id, "Synthetic: left received by a dead process.")
+    now = datetime.now(UTC)
+    repo.record_stages(load.id, [LoadStageDraft(stage="raw", outcome="failed_rolled_back", rows_in=1, rows_out=0,
+                                                detail={}, started_at=now, finished_at=now)])
+    return repo.finish(load.id, status="failed_rolled_back", failed_stage="raw", failure="Synthetic.")
+
+
+@pytest.mark.parametrize("how", ["failed_rolled_back", "abandoned"])
+def test_a_file_whose_earlier_load_never_loaded_is_not_a_resend(world, how):
+    """Assumption 12 (deviation 7): after a new go-live, or a stale clear, the same file must load."""
+    before = earlier(world, GOOD, how)
+    assert before.status == how
+    _, result, _ = check(world, GOOD)
+    assert isinstance(result, OnTimeComplete)
+
+
+@pytest.mark.parametrize("how", ["released", "held"])
+def test_a_file_whose_earlier_load_was_released_or_held_is_still_a_resend(world, how):
+    before = earlier(world, GOOD, how)
+    _, result, _ = check(world, GOOD)
+    assert isinstance(result, ResentQuarantined) and result.same_as == before.id
+
+
 def test_a_byte_identical_delivery_is_quarantined_and_never_loaded(world):
-    first, _, _ = check(world, GOOD)
-    LoadRepository(world.session).abandon(first.id, "Synthetic: the first delivery was not loaded.")
+    first = earlier(world, GOOD, "released")
     again, result, after = check(world, GOOD)
     assert isinstance(result, ResentQuarantined)
     assert (result.load_id, result.same_as) == (again.id, first.id)

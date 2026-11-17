@@ -194,13 +194,14 @@ def test_a_stale_load_is_abandoned_with_its_failure(repo, live):
     assert scheduled(repo, live).status == "received"  # the feed may load again
 
 
-def test_scheduled_hashes_name_the_oldest_load_of_each_file(repo, live):
-    first = repo.record_arrival(scheduled(repo, live).id, outcome="on_time_complete", content_sha256=SHA_A, detail={})
-    repo.abandon(first.id, "Synthetic.")
+def test_scheduled_hashes_are_those_of_loaded_released_or_held_loads_only(repo, live):
+    """Phase 7 assumption 12: a quarantined, abandoned or failed load's file is not compared with later ones."""
+    first = repo.record_arrival(scheduled(repo, live).id, outcome="breaking_held", content_sha256=SHA_A, detail={})
     resent = repo.record_arrival(scheduled(repo, live).id, outcome="resent_quarantined", content_sha256=SHA_A, detail={})
-    other = repo.record_arrival(scheduled(repo, live).id, outcome="on_time_complete", content_sha256=SHA_B, detail={})
-    assert resent.status == "quarantined"
-    assert repo.scheduled_hashes(live[0]) == {SHA_A: first.id, SHA_B: other.id}
+    gone = repo.record_arrival(scheduled(repo, live).id, outcome="on_time_complete", content_sha256=SHA_B, detail={})
+    repo.abandon(gone.id, "Synthetic.")
+    assert (first.status, resent.status) == ("held", "quarantined")
+    assert repo.scheduled_hashes(live[0]) == {SHA_A: first.id}  # SHA_B: abandoned; the quarantined copy: not the oldest
     assert repo.scheduled_hashes(uuid.uuid4()) == {}
 
 
