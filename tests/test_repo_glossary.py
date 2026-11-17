@@ -105,6 +105,17 @@ def test_only_an_option_the_proposal_offers_is_written(seeded, db_session):
         seeded.add_version(option=alias("isin", "something_else"), proposal_id=proposal.id, created_by=GLENN)
 
 
+def test_an_alias_the_element_already_has_is_refused_by_name(seeded, db_session):
+    """Review finding 1: a named error, before the draft is built (its validator would raise a bare one)."""
+    from core.repositories.errors import AliasAlreadyOnElement
+    from tests.configured import alias, glossary_proposal
+
+    option = alias("isin", "isin_code")  # a seed alias of isin
+    proposal = glossary_proposal(db_session, [option], decision="approved")
+    with pytest.raises(AliasAlreadyOnElement):
+        seeded.add_version(option=option, proposal_id=proposal.id, created_by=GLENN)
+
+
 def test_a_new_element_whose_key_exists_is_phrase_taken(seeded, db_session):
     from core.repositories.errors import PhraseTaken
     from tests.configured import glossary_proposal, new_element

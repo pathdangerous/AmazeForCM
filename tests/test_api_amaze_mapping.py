@@ -276,6 +276,72 @@ async def test_refused_input_is_422(client, bond, kicks, drain):
     await decide(client, glossary["id"], choice=5, headers=GLENN, expect=422)  # ChoiceNotOffered
 
 
+# ---------------------------------------------------------------- fixes after the independent review (plan, section 17)
+
+
+@pytest.fixture
+def bond_b(client, db_session):
+    """A second registered feed with the same seven columns (so the same new columns as bond)."""
+    feed = FeedRepository(db_session).create_candidate(code="syn_bond_terms_b", name="Bond terms B")
+    feed = registered_feed(db_session, feed.id, spec=BOND_SPEC, columns=BOND_COLUMNS)
+    db_session.commit()
+    return str(feed.id)
+
+
+@pytest.fixture
+def ccy_feed(client, db_session):
+    """A registered feed whose one column, ccy, is an alias of the seed element currency."""
+    from core.domain.profiling import FileColumn, SourceSpec
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_ccy_only", name="Currency only")
+    spec = SourceSpec(source_code="syn_ccy_only", elements=[], other_fields=[], columns={})
+    feed = registered_feed(db_session, feed.id, spec=spec, columns=[
+        FileColumn(name="ccy", type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=3)])
+    db_session.commit()
+    return str(feed.id)
+
+
+async def pending_glossary(client, column_name):
+    waiting = await call(client, "GET", "proposals", kind="glossary_element", status="pending")
+    return [p for p in waiting if p["column"] == column_name]
+
+
+async def test_an_alias_the_element_already_has_is_409_and_nothing_is_written(client, bond, bond_b, kicks, drain):
+    """Review finding 1, scenario A: two feeds each have the new column venue_mic_code and both runs end
+    before the owner decides. The first approval gives exchange_mic the alias; the second is a named 409."""
+    for feed_id in (bond, bond_b):
+        await call(client, "POST", f"feeds/{feed_id}/glossary/run", headers=GLENN)
+    drain()
+    first, second = await pending_glossary(client, "venue_mic_code")
+    assert {first["payload"]["outcome"], second["payload"]["outcome"]} == {"duplicate_alias"}
+    await decide(client, first["id"], headers=GLENN)
+    refused = await decide(client, second["id"], headers=GLENN, expect=409)
+    assert "exchange_mic" in refused["detail"] and "already has" in refused["detail"]
+    [still] = await pending_glossary(client, "venue_mic_code")
+    assert (still["id"], still["decisions"]) == (second["id"], [])
+    await decide(client, second["id"], "rejected", note="exchange_mic already has this alias", headers=GLENN)
+
+
+async def test_a_sent_back_column_that_is_already_an_alias_is_a_conflict_with_no_option(client, ccy_feed, kicks,
+                                                                                        drain):
+    """Review finding 1, scenario B: the steward rejects the exact-name mapping of ccy, so step 06 sends it
+    back. The builder says it is currency, which already has the alias ccy: nothing can be added, so it is a
+    conflict with no option (the owner sees it and rejects), not an alias proposal that cannot be approved."""
+    proposed = await propose(client, ccy_feed)
+    [recommended] = proposed["result"]["recommended"]
+    assert (recommended["source_field"], recommended["element_key"]) == ("ccy", "currency")
+    await decide(client, recommended["proposal_id"], "rejected", note="Not the instrument's currency")
+    [back] = (await propose(client, ccy_feed))["result"]["results"]
+    assert (back["outcome"], back["reason"]) == ("no_element_back_to_05", "every_candidate_rejected")
+    assert back["glossary_run_id"] is not None
+    drain()
+    [proposal] = await pending_glossary(client, "ccy")
+    await decide(client, proposal["id"], headers=GLENN, expect=422)  # nothing to approve: a choice is needed
+    payload = proposal["payload"]
+    assert (payload["outcome"], payload["options"], payload["clashes"]) == ("conflict_to_owner", [], ["currency"])
+    await decide(client, proposal["id"], "rejected", note="currency already has the alias ccy", headers=GLENN)
+
+
 async def test_an_unknown_feed_or_proposal_is_404(client, kicks):
     await propose(client, uuid.uuid4(), expect=404)
     await call(client, "POST", f"feeds/{uuid.uuid4()}/glossary/run", headers=GLENN, expect=404)

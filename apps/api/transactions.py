@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from core.repositories.errors import (
+    AliasAlreadyOnElement,
     ElementAlreadyMapped,
     FeedHasNoFile,
     FeedNotACandidate,
@@ -49,7 +50,9 @@ CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyH
              FeedNotACandidate, FeedHasNoFile, FeedNotProfiled, ProfileAlreadySummarised, ProfileSuperseded,
              ProfileNotSummarised, FeedNotSignedOff, FeedNotRegistered, SourceRejected,
              # phase 5 (plan, section 9)
-             NothingToMap, MappingAlreadyProposed, ElementAlreadyMapped, PhraseTaken)
+             NothingToMap, MappingAlreadyProposed, ElementAlreadyMapped, PhraseTaken,
+             # fixes after the independent review of phase 5 (plan, section 17)
+             AliasAlreadyOnElement)
 NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound)
 FORBIDDEN = (NotAnApprover,)  # phase 5: the proposal's approver role is checked by the step (403)
 

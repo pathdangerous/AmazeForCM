@@ -149,6 +149,10 @@ class PhraseTaken(RepositoryError):
     """Another current glossary element already owns a key, name or alias of the new version."""
 
 
+class AliasAlreadyOnElement(RepositoryError):
+    """The element's current version already has this alias (or it is its key or name): nothing to add."""
+
+
 class NothingToMap(RepositoryError):
     """The feed's latest profile has no column to look at."""
 

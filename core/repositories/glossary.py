@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from core.domain.glossary import GlossaryElement, GlossaryElementDraft
 from core.domain.mapping import ElementOption
-from core.repositories.errors import NotAProposalOption, PhraseTaken, UnknownGlossaryElement
+from core.repositories.errors import AliasAlreadyOnElement, NotAProposalOption, PhraseTaken, UnknownGlossaryElement
 from core.repositories.proposals import ProposalRepository
 from core.repositories.tables import GlossaryElementRow as Row
 from core.steps.matching import words
@@ -124,6 +124,8 @@ class GlossaryRepository:
                 raise PhraseTaken(f"The key {option.key!r} is already a glossary element")
             return self._insert(option.element, version=1, created_by=created_by, proposal_id=proposal_id)
         last = self.get_current(option.key)
+        if words(option.alias) in {words(p) for p in (last.key, last.name, *last.aliases)}:
+            raise AliasAlreadyOnElement(f"{last.key} (version {last.version}) already has the name {option.alias}")
         draft = GlossaryElementDraft(key=last.key, name=last.name, domain=last.domain, data_type=last.data_type,
                                      definition=last.definition, aliases=[*last.aliases, option.alias])
         return self._insert(draft, version=last.version + 1, created_by=created_by, proposal_id=proposal_id)

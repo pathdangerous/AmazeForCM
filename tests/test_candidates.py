@@ -203,6 +203,15 @@ def test_one_hit_whose_type_differs_is_a_conflict_with_no_option_when_the_names_
     assert got.options == []
 
 
+def test_one_hit_that_fits_and_already_has_the_name_is_a_conflict_with_no_option(glossary):
+    """Review finding 1: an alias the element already has is never offered, in the single-hit branch too."""
+    column = c.NewColumn(name="Venue MIC", type="VARCHAR", sent_back=True)
+    cands = c.candidate_list(column.name, column.type, glossary)
+    got = c.classify_element(column, cands, same_as="exchange_mic", new_element=None)
+    assert (got.outcome, got.options, got.recommended, got.clashes) == ("conflict_to_owner", [], None,
+                                                                        ["exchange_mic"])
+
+
 @pytest.fixture
 def two_ccy(glossary):
     return [*glossary, new_el("trade_currency", "Trade currency").model_copy(update={"aliases": ["ccy"]})]

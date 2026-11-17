@@ -42,6 +42,7 @@ from core.domain.mapping import (
 )
 from core.repositories.configuration import MappingRepository
 from core.repositories.errors import (
+    AliasAlreadyOnElement,
     FeedNotProfiled,
     FeedNotRegistered,
     NotAnApprover,
@@ -54,8 +55,9 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.proposals import ProposalRepository
-from core.steps.candidates import candidate_list, covered_by, new_columns
+from core.steps.candidates import candidate_list, covered_by, new_columns, phrases
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered
+from core.steps.matching import words
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
 from ports.identity.base import User
@@ -284,6 +286,9 @@ def decide_element(session: Session, *, proposal_id: UUID, user: User, decision:
         draft = option.element
     else:
         last = glossary.get_current(option.key)
+        if words(option.alias) in phrases(last):  # before the draft: its validator would raise a bare error
+            raise AliasAlreadyOnElement(f"{last.key} (version {last.version}) already has the name {option.alias}; "
+                                        "there is nothing to add")
         draft = GlossaryElementDraft(key=last.key, name=last.name, domain=last.domain, data_type=last.data_type,
                                      definition=last.definition, aliases=[*last.aliases, option.alias])
     taken = glossary.phrases_taken(draft)

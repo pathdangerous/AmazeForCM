@@ -179,6 +179,14 @@ def test_an_alias_row_that_is_not_the_last_version_plus_the_alias_is_refused(s, 
     answered_by(s, "is none of the options of proposal", ROW, alias_row(isin, proposal.id, **change), NONE_OF)
 
 
+def test_an_alias_the_last_version_already_has_is_refused(s, isin):
+    """0017 (review finding 1): the row is otherwise exactly the option, last version plus the alias."""
+    proposal = glossary_proposal(s, [alias("isin", "isin_code")], decision="approved")
+    answered_by(s, "already has the alias isin_code", ROW,
+                alias_row(isin, proposal.id, aliases=[*isin.aliases, "isin_code"]),
+                _branch_off("amaze_require_glossary_option", "glossary element %: version % already has the alias %"))
+
+
 def test_null_options_and_a_null_alias_match_nothing(s, isin, feed, approved_proposal):
     no_options = approved_proposal(kind="glossary_element", roles=("glossary_owner",), feed_id=feed,
                                    payload={"source_field": "isin_no"})

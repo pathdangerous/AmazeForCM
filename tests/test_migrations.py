@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0016"
+HEAD = "0017"
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",

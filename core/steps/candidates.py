@@ -218,8 +218,9 @@ def classify_element(column: NewColumn, candidates: Sequence[Candidate], *, same
         assert new_element is not None
         return Classified("proposed", [ElementOption(kind="new_element", key=new_element.key, element=new_element)], 0,
                           [])
-    if len(hits) == 1 and hits[0].type_fits:
+    if len(hits) == 1 and hits[0].type_fits and words(alias) not in phrases(hits[0]):
         return Classified("duplicate_alias", [ElementOption(kind="alias", key=hits[0].key, alias=alias)], 0, clashes)
+    # a conflict; an alias an element already has is never offered (one hit that already has it: no option)
     options = [ElementOption(kind="alias", key=x.key, alias=alias)
                for x in hits if x.type_fits and words(alias) not in phrases(x)]
     if new_element is not None:
