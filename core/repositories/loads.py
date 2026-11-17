@@ -52,6 +52,11 @@ class LoadRepository:
         order (phase 6 plan, assumption 36): after the feed row."""
         return Load.model_validate(self._row(load_id, lock=True))
 
+    def received_for_feed(self, feed_id: UUID) -> Load | None:
+        """The feed's received load, if any (at most one: uq_loads_one_received_per_feed)."""
+        row = self._session.scalars(select(Row).where(Row.feed_id == feed_id, Row.status == "received")).one_or_none()
+        return None if row is None else Load.model_validate(row)
+
     def list_for_feed(self, feed_id: UUID) -> list[Load]:
         query = select(Row).where(Row.feed_id == feed_id).order_by(Row.received_at.desc(), Row.created_at.desc())
         return [Load.model_validate(r) for r in self._session.scalars(query)]

@@ -105,7 +105,7 @@ def propose_rules(session: Session, *, feed_id: UUID, agent: RunsAgent, catalogu
 
 def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent, feed_id: UUID, notifier: Notifier,
                     backend_team: Sequence[str], owner_is_data_owner: Callable[[str], bool],
-                    rule_timeout_seconds: float = 5):
+                    rule_timeout_seconds: float = 5, operations: Sequence[str] = (), stale_minutes: int = 30):
     """Step 11 prepare as the API runs it: the checks, a test load through the engine (plan, end the read, execute
     with no session, locked write), then a TestFailedHeld, or the summary (the agent's call with no connection held)."""
     from core.engine.run import execute_load, plan_load, record_load
@@ -113,7 +113,7 @@ def prepare_go_live(session: Session, *, blob_store: BlobStore, agent: RunsAgent
 
     plan = go_live_plan(session, feed_id=feed_id, owner_is_data_owner=owner_is_data_owner, notifier=notifier,
                         backend_team=backend_team)
-    load = begin_test_load(session, plan)
+    load = begin_test_load(session, plan, stale_minutes=stale_minutes, notifier=notifier, operations=operations)
     end_read(session)
     engine_plan = plan_load(session, load.id)
     end_read(session)

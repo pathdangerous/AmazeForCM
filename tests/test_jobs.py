@@ -586,6 +586,37 @@ def test_a_load_that_meets_one_in_progress_does_not_start_a_second(db_session, d
     assert daily().load_feed(feed.id) == "load_in_progress"
 
 
+def test_a_received_load_older_than_the_stale_limit_is_abandoned_and_a_new_load_starts(db_session, daily, live,
+                                                                                       monkeypatch):
+    """Phase 7 assumption 18 (task 5). The engine is stopped right after the new load is committed: until task 7
+    puts step 12 in the job, plan_load would refuse an unchecked load. Task 7 replaces this with the full
+    test_a_received_load_older_than_the_stale_limit_is_abandoned_and_the_feed_loads."""
+    from datetime import UTC, datetime, timedelta
+
+    from core.repositories.loads import LoadRepository
+
+    class Stop(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise Stop
+
+    feed, approved = live()
+    old = LoadRepository(db_session).create(feed_id=feed.id, file_ref="raw/x.csv", purpose="scheduled",
+                                            go_live_id=approved.id,
+                                            received_at=datetime.now(UTC) - timedelta(minutes=45))
+    db_session.commit()
+    job = daily()
+    job.operations = lambda: ["dev-operations"]
+    assert job.load_stale_minutes == 30
+    monkeypatch.setattr("apps.api.jobs.plan_load", stop)
+    with pytest.raises(Stop):
+        job.load_feed(feed.id)
+    statuses = {load.id: load.status for load in loads_of(db_session, feed)}
+    assert statuses[old.id] == "abandoned" and sorted(statuses.values()) == ["abandoned", "loaded", "received"]
+    assert "Load abandoned: syn_exchange_volumes" in subjects(db_session, "dev-operations")
+
+
 async def test_the_app_under_test_runs_no_worker_of_its_own():
     """Phase 5 plan, assumption 48: running_app puts a do-nothing worker in app.state.glossary_runs, and the
     start-up kick reaches it, not a worker on the application database."""

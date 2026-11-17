@@ -36,6 +36,7 @@ from core.repositories.requirements import RequirementRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
+from core.steps.s12_arrival import clear_stale_load
 from core.steps.s05_glossary import builder_input, claim_run, fail_run, record_run
 from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
@@ -68,6 +69,7 @@ class DailyFetch:
     # Phase 6: the job also loads a feed that has a go-live, right after its fetch (assumption 28).
     operations: Callable[[], Sequence[str]] = lambda: []
     rule_timeout_seconds: float = 5
+    load_stale_minutes: int = 30  # phase 7: a load left received this long is abandoned before the next (step 12)
 
     @classmethod
     def from_settings(cls, settings: Settings, identity: Identity) -> DailyFetch:
@@ -86,6 +88,7 @@ class DailyFetch:
             release_after_days=settings.source_down_release_days,
             operations=lambda: [u.id for u in identity.list_users() if "operations" in u.roles],
             rule_timeout_seconds=settings.rule_timeout_seconds,
+            load_stale_minutes=settings.load_stale_minutes,
         )
 
     def run(self, today: date | None = None) -> dict[str, str]:
@@ -171,6 +174,9 @@ class DailyFetch:
                 session.rollback()
                 return "not_live" if live is None else "no_file"
             try:
+                notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+                clear_stale_load(session, feed_id=feed_id, stale_minutes=self.load_stale_minutes, notifier=notifier,
+                                 operations=self.operations())
                 load = LoadRepository(session).create(feed_id=feed_id, file_ref=fetch.blob_ref, purpose="scheduled",
                                                       go_live_id=live.id, fetch_id=fetch.id)
             except LoadInProgress:

@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
@@ -35,7 +36,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from core.domain.load import ArrivalOutcome
+from core.domain.load import ArrivalOutcome, Load
 from core.domain.profiling import FileProfile, SourceSpec
 from core.repositories.errors import FeedHasNoFile, FeedNotProfiled, LoadNotReceived, NotAScheduledLoad
 from core.repositories.feed_profiles import FeedProfileRepository
@@ -132,6 +133,30 @@ class ArrivalCheck(BaseModel):
     added: list[str] = []
     reason: str | None = None
     file: FileProfile | None = None  # additive_parked: the load's own profile
+
+
+# ---------------------------------------------------------------- a load left received (assumption 18)
+
+
+def clear_stale_load(session: Session, *, feed_id: UUID, stale_minutes: int, notifier: Notifier,
+                     operations: Sequence[str], now: datetime | None = None) -> Load | None:
+    """Before a load is created: the feed's received load older than `stale_minutes` was left by a process that
+    died (a load commits its stages, records and status together, so it has none) and becomes abandoned;
+    operations are told. A younger one stays (the new load is LoadInProgress). Lock order: the feed row, then the
+    load row, checked still received. Returns the abandoned load, or None."""
+    feed = FeedRepository(session).lock(feed_id)
+    loads = LoadRepository(session)
+    current = loads.received_for_feed(feed_id)
+    if current is None or current.received_at > (now or datetime.now(UTC)) - timedelta(minutes=stale_minutes):
+        return None
+    if loads.lock(current.id).status != "received":
+        return None
+    abandoned = loads.abandon(current.id, f"Left received for more than {stale_minutes} minutes by a process that "
+                                          "did not finish; abandoned before the next load.")
+    _tell(notifier, operations, f"Load abandoned: {feed.code}",
+          f"The {current.purpose} load of {feed.code} received at {current.received_at:%Y-%m-%d %H:%M} UTC was "
+          f"still received after {stale_minutes} minutes, so it was abandoned and the feed may load again.")
+    return abandoned
 
 
 # ---------------------------------------------------------------- plan

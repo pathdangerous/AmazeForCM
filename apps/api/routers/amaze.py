@@ -435,7 +435,9 @@ def go_live_summary(feed_id: UUID, session: DbSession, user: BackendTeam, catalo
             raise
 
     plan = in_transaction(session, checks)
-    load = in_transaction(session, lambda: begin_test_load(session, plan))
+    load = in_transaction(session, lambda: begin_test_load(
+        session, plan, stale_minutes=settings.load_stale_minutes, notifier=notifier,
+        operations=_users_with(identity, "operations")))
     engine_plan = read(session, lambda: plan_load(session, load.id))
     outcome = execute_load(engine_plan, blob_store=blobs, rule_timeout_seconds=settings.rule_timeout_seconds)
     load_run = in_transaction(session, lambda: record_load(session, engine_plan, outcome))

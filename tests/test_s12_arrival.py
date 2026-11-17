@@ -8,7 +8,7 @@ no database connection held; the first match wins: resent, breaking, additive, o
 from __future__ import annotations
 
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +22,7 @@ from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
-from core.repositories.errors import LoadNotReceived, NotAScheduledLoad
+from core.repositories.errors import LoadInProgress, LoadNotReceived, NotAScheduledLoad
 from core.steps.s06_map import mapping_input
 from core.steps.s12_arrival import (
     AdditiveParked,
@@ -33,6 +33,7 @@ from core.steps.s12_arrival import (
     Recipients,
     ResentQuarantined,
     arrival_plan,
+    clear_stale_load,
 )
 from ports.notify.inapp import InAppNotifier, NotificationRow
 from ports.storage.local import LocalBlobStore
@@ -258,6 +259,41 @@ def test_the_mapping_agent_sees_the_parked_column_on_the_load_profile(world, tmp
 def test_a_breaking_and_additive_file_is_breaking(world):
     _, result, _ = check(world, "instr_id,trade_date,rating\nsyn-0001,2026-11-02,AA\n")
     assert isinstance(result, BreakingHeld) and result.missing == ["px"]
+
+
+# ---------------------------------------------------------------- a load left received by a dead process (assumption 18)
+
+
+def stale_load(world, minutes: int, purpose="scheduled"):
+    return LoadRepository(world.session).create(
+        feed_id=world.feed, file_ref="raw/syn_arrival/old/f.csv", purpose=purpose,
+        go_live_id=world.live.id if purpose == "scheduled" else None,
+        received_at=datetime.now(UTC) - timedelta(minutes=minutes))
+
+
+def test_a_received_load_older_than_the_limit_is_abandoned_and_operations_are_told(world):
+    old = stale_load(world, 45)
+    cleared = clear_stale_load(world.session, feed_id=world.feed, stale_minutes=30, notifier=world.notifier,
+                               operations=OPERATIONS)
+    assert cleared.id == old.id and cleared.status == "abandoned"
+    assert cleared.finished_at is not None and "30 minutes" in cleared.failure
+    assert LoadRepository(world.session).stages(old.id) == []
+    assert told(world, "Load abandoned") == set(OPERATIONS)
+    deliver(world, GOOD)  # the feed may load again
+
+
+def test_a_younger_received_load_is_left_alone_and_a_new_one_is_load_in_progress(world):
+    young = stale_load(world, 5, purpose="go_live_test")
+    assert clear_stale_load(world.session, feed_id=world.feed, stale_minutes=30, notifier=world.notifier,
+                            operations=OPERATIONS) is None
+    assert LoadRepository(world.session).get(young.id).status == "received"
+    with pytest.raises(LoadInProgress):
+        deliver(world, GOOD)
+
+
+def test_no_received_load_means_nothing_to_clear(world):
+    assert clear_stale_load(world.session, feed_id=world.feed, stale_minutes=1, notifier=world.notifier,
+                            operations=OPERATIONS) is None
 
 
 # ---------------------------------------------------------------- refusals and shapes
