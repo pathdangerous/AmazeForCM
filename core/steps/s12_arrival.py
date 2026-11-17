@@ -135,6 +135,20 @@ class ArrivalCheck(BaseModel):
     file: FileProfile | None = None  # additive_parked: the load's own profile
 
 
+# ---------------------------------------------------------------- late_alert (the daily job's)
+
+
+def record_late_alert(session: Session, *, feed_id: UUID, detail: str, notifier: Notifier,
+                      operations: Sequence[str]) -> LateAlert:
+    """The daily fetch of a feed with a go-live found its source down: no load row is made; operations and the
+    feed's owner are told. There is no delivery deadline in the PoC (assumption 8): late is 'did not arrive today'."""
+    feed = FeedRepository(session).get(feed_id)
+    registration = FeedRegistrationRepository(session).current(feed_id)
+    _tell(notifier, [*operations, *([registration.owner_id] if registration else [])], f"Delivery late: {feed.code}",
+          f"No delivery of {feed.code} arrived today: {detail} The feed's last released data stays available.")
+    return LateAlert(feed_id=feed_id, detail=detail)
+
+
 # ---------------------------------------------------------------- a load left received (assumption 18)
 
 

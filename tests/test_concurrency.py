@@ -1314,8 +1314,8 @@ async def test_the_jobs_load_and_load_now_of_one_feed_at_once_give_one_load_and_
         release.set()
         thread.join(timeout=30)
     assert now.status_code == 409 and "load in progress" in now.json()["detail"], now.text
-    assert job == {"result": "loaded"}
-    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("loaded",)]
+    assert job == {"result": "released"}  # was "loaded" before phase 7: the load is certified and released
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("released",)]
 
 
 # ---------------------------------------------------------------- phase 6: no connection held in a file read or a rule

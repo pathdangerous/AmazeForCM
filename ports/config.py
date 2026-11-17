@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # Phase 7: a scheduled load whose trust score (100 x unflagged rows / rows) is at or above this is released
     # (step 15); below it the load is held and its consumers are warned.
     trust_release_threshold: Decimal = Field(default=Decimal("90"), ge=1, le=100)
+    # Phase 7 (plan risk 6): false registers no daily job (the glossary runs worker still runs); the e2e API sets it
+    # so the 06:00 UTC fetch cannot fire during a Playwright run.
+    daily_job_enabled: bool = True
 
     @field_validator("source_catalogue")
     @classmethod

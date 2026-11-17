@@ -664,9 +664,9 @@ async def test_load_now_commits_the_scheduled_load(own_schema, p6):
     async with p6() as p:
         await go_live(p)
         loaded = await call(p.client, f"feeds/{p.feed}/loads", {}, headers=OPAL)
-        assert loaded["result"] == {"fetch": "fetched", "load": "loaded"}
+        assert loaded["result"] == {"fetch": "fetched", "load": "released"}  # was "loaded" before phase 7
     assert committed(own_schema, "SELECT status, go_live_id IS NOT NULL FROM loads WHERE purpose = 'scheduled'") == [
-        ("loaded", True)]
+        ("released", True)]
     assert committed(own_schema, "SELECT count(*) FROM load_stages s JOIN loads l ON l.id = s.load_id "
                                  "WHERE l.purpose = 'scheduled'") == [(4,)]
     assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
@@ -680,7 +680,7 @@ async def test_the_daily_job_commits_the_scheduled_load(own_schema, p6):
     async with p6() as p:
         await go_live(p)
         assert await asyncio.to_thread(p.daily.run) == {"syn_exchange_volumes": "fetched"}
-    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("loaded",)]
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("released",)]  # was loaded
     assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
                                  "WHERE l.purpose = 'scheduled'") == [(VOLUME_ROWS,)]
     assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject = 'Load loaded: "

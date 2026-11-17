@@ -129,7 +129,8 @@ async def test_done_when_an_approved_feed_loads_end_to_end_from_configuration_al
     page = await call(client, "GET", f"feeds/{exchange.id}")
     assert page["go_live"]["latest"]["version"] == 1 and page["go_live"]["pending_summary"] is None
     scheduled = next(load for load in page["loads"] if load["purpose"] == "scheduled")
-    assert scheduled["status"] == "loaded"
+    # was "loaded"; from phase 7 step 15 certifies it: 1 of 4 rows flagged scores 75.0, below the threshold of 90
+    assert scheduled["status"] == "held"
     assert [(s["stage"], s["outcome"]) for s in scheduled["stages"]] == [
         (name, "stage_completed") for name in ("raw", "curated", "validated", "standard")]
     detail = await call(client, "GET", f"loads/{scheduled['id']}", headers=OPAL)
@@ -137,7 +138,7 @@ async def test_done_when_an_approved_feed_loads_end_to_end_from_configuration_al
     assert {r["row_number"]: r["flags"] for r in detail["records"]} == {
         1: [], 2: ["volume_not_negative"], 3: [], 4: []}  # the broken rule flags the negative volume
     assert StandardRecordRepository(db_session).count(uuid.UUID(scheduled["id"])) == 4
-    assert LoadRepository(db_session).get(uuid.UUID(scheduled["id"])).status == "loaded"
+    assert LoadRepository(db_session).get(uuid.UUID(scheduled["id"])).status == "held"  # was "loaded" (see above)
 
 
 async def test_the_roles_of_the_new_endpoints(client, exchange):
@@ -226,7 +227,7 @@ async def test_load_now_needs_a_go_live_then_fetches_and_loads(client, exchange)
     summary = (await call(client, "POST", f"feeds/{exchange.id}/go-live/summary", {}))["result"]["proposal_id"]
     await decide(client, summary, DEVON)
     loaded = await call(client, "POST", f"feeds/{exchange.id}/loads", {}, headers=OPAL)
-    assert loaded["result"] == {"fetch": "fetched", "load": "loaded"}
+    assert loaded["result"] == {"fetch": "fetched", "load": "released"}  # was "loaded" before phase 7
     assert loaded["feed"]["loads"][0]["purpose"] == "scheduled"
 
 
