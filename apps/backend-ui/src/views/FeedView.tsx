@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type Owner,
-  type SignoffOutcome,
+  type SignoffOutcome, type User,
 } from "../api";
+import GoLiveSection from "./GoLiveSection";
+import LoadsSection from "./LoadsSection";
+import RulesSection from "./RulesSection";
 
 // One feed, in the order of the work (phase 4 plan, section 10): source and requirements, the latest file,
 // the profile, the ProfilerAgent's summary, the sign-off, the registration, and the history.
@@ -136,10 +139,12 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
   const [text, setText] = useState("");
   const [owner, setOwner] = useState("");
   const [visibility, setVisibility] = useState<"open" | "restricted">("open");
+  const [me, setMe] = useState<User | null>(null); // phase 6: the rules, go-live and loads sections need every role
 
   useEffect(() => {
     if (!devUser) return;
     let current = true;
+    apiGet<User>("/api/me", devUser).then((u) => current && setMe(u)).catch(() => current && setMe(null));
     apiGet<FeedPage>(`/api/amaze/feeds/${feedId}`, devUser)
       .then((p) => current && (setPage(p), setError(null)))
       .catch((err: unknown) => current && setError(describeError(err)));
@@ -456,6 +461,13 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               <span className="muted">for every column with no mapping and no pending proposal</span>
             </p>
           ) : <p className="muted">Only the data steward proposes and decides mappings.</p>}
+
+          <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} onMessage={setDone}
+                        onError={setError} />
+          <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []}
+                         onChange={onChange} onMessage={setDone} onError={setError} />
+          <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange}
+                        onMessage={setDone} onError={setError} />
         </>
       )}
 

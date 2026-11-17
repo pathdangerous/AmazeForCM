@@ -103,7 +103,52 @@ export type FeedPage = {
   next_action: "profile" | "summarise" | "sign_off" | "register" | null;
   glossary_run: GlossaryRun | null; // phase 5: the latest
   columns: ColumnMapping[]; // phase 5: a registered feed's mapping table
+  rules: RulesOnPage; // phase 6
+  go_live: GoLiveOnPage;
+  loads: LoadOnPage[]; // the latest 10, newest first
 };
+
+// ---- phase 6: steps 09, 11 and 13
+
+export type Delivery = { label: string; rows: number; flagged: number; excluded: string | null };
+export type Backtest = {
+  status: "ran" | "not_back_tested"; total_rows: number; flagged_rows: number; share: number | null;
+  deliveries: Delivery[];
+};
+export type RuleOnPage = {
+  id: string; rule_key: string; version: number; description: string; sql: string; proposal_id: string;
+  created_at: string; backtest: Backtest | null;
+};
+export type PendingRule = {
+  id: string; status: "pending" | "approved" | "rejected"; created_at: string;
+  payload: { rule_key: string; sql: string; description: string; element_keys: string[]; template: string | null;
+             backtest: Backtest };
+  required_approver_roles: string[]; decisions: Decision[];
+};
+export type RulesOnPage = { current: RuleOnPage[]; pending: PendingRule[]; rejected_keys: string[] };
+export type GoLive = {
+  id: string; created_at: string; feed_id: string; version: number; proposal_id: string; approved_by: string;
+  mapping_ids: string[]; rule_ids: string[]; test_load_id: string; hypercare_until: string;
+};
+export type SummaryOnPage = {
+  id: string; status: "pending" | "approved" | "rejected"; created_at: string;
+  payload: { summary: string; highlights: string[]; risks: string[]; unmapped_columns: string[];
+             rejected_glossary: { source_field: string; note: string | null }[] };
+  required_approver_roles: string[]; decisions: Decision[];
+};
+export type GoLiveOnPage = { latest: GoLive | null; hypercare_active: boolean; pending_summary: SummaryOnPage | null };
+export type LoadStageRow = {
+  stage: "raw" | "curated" | "validated" | "standard"; outcome: "stage_completed" | "failed_rolled_back";
+  rows_in: number; rows_out: number; detail: Record<string, unknown>;
+};
+export type LoadOnPage = {
+  id: string; purpose: "go_live_test" | "scheduled"; status: string; received_at: string; finished_at: string | null;
+  failed_stage: string | null; failure: string | null; go_live_id: string | null; stages: LoadStageRow[];
+};
+export type ReturnedRule = {
+  rule_key: string; sql: string; description: string; share: number; flagged_rows: number; total_rows: number;
+};
+export type RefusedRule = { rule_key: string; sql: string; reason: string };
 export type Owner = { id: string; display_name: string };
 
 // ---- phase 5: steps 05 and 06
