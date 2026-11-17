@@ -17,6 +17,7 @@ AGENT_PROMPTS: dict[str, str] = {
     "GlossaryBuilderAgent": "glossary_builder",  # step 05, in the background (phase 5)
     "MappingAgent": "mapping",  # step 06 (phase 5)
     "MappingEvaluator": "mapping",  # the gold set, read only (phase 5, assumption 37)
+    "RuleRecommenderAgent": "rule_recommender",  # step 09 (phase 6)
 }
 
 PROMPT_VERSIONS: dict[str, str] = {
@@ -26,6 +27,7 @@ PROMPT_VERSIONS: dict[str, str] = {
     "profiler": "v1",
     "glossary_builder": "v1",
     "mapping": "v1",
+    "rule_recommender": "v1",
 }
 
 PROMPT_FILE_HASHES: dict[str, str] = {
@@ -34,5 +36,6 @@ PROMPT_FILE_HASHES: dict[str, str] = {
     "mapping.v1.yaml": "9afdfcd5605b25a07a26b743f2672f340f3a3251ec87de63671d6f0bb7ed2fc4",
     "intent.v1.yaml": "40ae53c05f86abac70d7993f22e0c78bd8456252d0aaa94f10627a949f0dbb05",
     "profiler.v1.yaml": "9b0b2ab260def592ebe306abacab4c30420ce28aab4a71e3c66b1cdd52c66d51",
+    "rule_recommender.v1.yaml": "24571657cbbaffc0488fba3ee1ad8e7f51c52e5a1c51063a9ce148242f3de0ae",
     "source_discovery.v1.yaml": "80fa3af7fdc9ba1429024fd0fe65bf6fbd40137bc9f8ddf91ee56b0103112d61",
 }

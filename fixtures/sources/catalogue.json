@@ -8,7 +8,10 @@
                     "redistribution": "Not allowed outside the firm", "external_approvals": []},
      "elements": ["instrument_id", "price_date", "volume"], "other_fields": [],
      "columns": {"instr_id": "instrument_id", "trade_date": "price_date", "traded_qty": "volume"},
-     "connector": "local_file", "source_ref": "files/exchange_volumes.csv"},
+     "connector": "local_file", "source_ref": "files/exchange_volumes.csv",
+     "history": ["files/history/exchange_volumes/2026-10-26.csv", "files/history/exchange_volumes/2026-10-27.csv",
+                 "files/history/exchange_volumes/2026-10-28.csv", "files/history/exchange_volumes/2026-10-29.csv",
+                 "files/history/exchange_volumes/2026-10-30.csv"]},
 
     {"code": "syn_offline_accruals", "name": "Accrued interest feed", "provider": "Synthetic Settlement House",
      "description": "Daily accrued interest per debt instrument. Its sample file is missing on purpose, so a fetch gives source_down.",

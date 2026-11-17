@@ -53,6 +53,13 @@ def test_step_06_outcomes_are_claude_mds():
         "mapped", "tie_to_steward", "no_element_back_to_05"]
 
 
+def test_step_09_outcomes_are_claude_mds():
+    from core.steps.s09_rules import RulesResult
+
+    assert union_outcomes(RulesResult) == claude_md_outcomes("09 Validation") == [
+        "rules_proposed", "flags_most_history_returned"]
+
+
 def test_step_13_outcomes_are_claude_mds():
     from core.engine.run import RunResult
 

@@ -27,7 +27,23 @@ def _intent(text="open price", purpose=None, note=None):
 
 def test_rules_are_named_by_prompt_id():
     assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler", "glossary_builder",
-                          "mapping"}
+                          "mapping", "rule_recommender"}
+
+
+def test_the_rule_recommender_rule_makes_one_rule_per_offer_and_leaves_the_checks_to_code():
+    """Phase 6 plan, assumption 13: one rule per template offered, the SQL as the template wrote it."""
+    offer = {"template": "present", "rule_key": "volume_present", "description": "Volume is present.",
+             "sql": "SELECT _row FROM curated WHERE \"volume\" IS NULL", "element_keys": ["volume"]}
+    key_offer = {"template": "one_row_per_key", "rule_key": "one_row_per_isin", "description": "One row per isin.",
+                 "sql": "SELECT _row FROM curated", "element_keys": ["isin"]}
+    data = {"elements": [{"key": "volume", "templates": [offer]}, {"key": "isin", "templates": []}],
+            "feed_templates": [key_offer]}
+    assert RULES["rule_recommender"](data) == {"rules": [
+        {"rule_key": "volume_present", "description": "Volume is present.", "sql": offer["sql"],
+         "element_keys": ["volume"], "template": "present"},
+        {"rule_key": "one_row_per_isin", "description": "One row per isin.", "sql": "SELECT _row FROM curated",
+         "element_keys": ["isin"], "template": "one_row_per_key"}]}
+    assert RULES["rule_recommender"]({"elements": [], "feed_templates": []}) == {"rules": []}
 
 
 # ---------------------------------------------------------------- phase 5: glossary_builder and mapping

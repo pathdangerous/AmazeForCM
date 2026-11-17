@@ -194,6 +194,15 @@ def mapping(data: dict[str, Any]) -> dict[str, Any]:
     return {"answers": answers}
 
 
+def rule_recommender(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 6 plan, assumption 13: one rule per template offered (each element's, then the feed's), the SQL as
+    the template wrote it. The verdict, the reason and the back-test are left for code to fill."""
+    offers = [o for element in data.get("elements", []) for o in element.get("templates", [])]
+    offers += data.get("feed_templates", [])
+    return {"rules": [{"rule_key": o["rule_key"], "description": o["description"], "sql": o["sql"],
+                       "element_keys": o["element_keys"], "template": o["template"]} for o in offers]}
+
+
 RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "intent": intent,
     "source_discovery": source_discovery,
@@ -201,4 +210,5 @@ RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "profiler": profiler,
     "glossary_builder": glossary_builder,
     "mapping": mapping,
+    "rule_recommender": rule_recommender,
 }

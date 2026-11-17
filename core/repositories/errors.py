@@ -184,6 +184,15 @@ class LoadNotFound(RepositoryError, LookupError):
     """No load has this id."""
 
 
+class RulesAlreadyProposed(RepositoryError):
+    """While the agent answered, a rule of the same key was proposed, approved or rejected for the feed
+    (step 09, phase 6 plan, assumption 11): the answer is discarded."""
+
+
+class ConfigurationChangedMeanwhile(RepositoryError):
+    """While the agent answered, the feed's current mappings changed (steps 09 and 11): the answer is discarded."""
+
+
 class LoadNotReceived(RepositoryError):
     """The load is no longer received (another run finished it): the engine writes nothing."""
 
