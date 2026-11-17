@@ -10,7 +10,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.domain.load import (
@@ -123,10 +123,13 @@ class LoadRepository:
         return {sha: load_id for sha, load_id in self._session.execute(query)}  # the oldest is read last, so it wins
 
     def fully_loaded_scheduled(self, feed_id: UUID, limit: int) -> list[Load]:
-        """The feed's newest scheduled loads that completed all four stages (loaded, then held or released)."""
+        """The feed's newest scheduled loads that completed all four stages, whatever their status: a load held on
+        arrival (breaking_held) is `held` too but has no stage, so the status alone would let it in."""
+        completed = (select(func.count()).select_from(LoadStageRow)
+                     .where(LoadStageRow.load_id == Row.id, LoadStageRow.outcome == "stage_completed")
+                     .correlate(Row).scalar_subquery())
         query = (select(Row)
-                 .where(Row.feed_id == feed_id, Row.purpose == "scheduled",
-                        Row.status.in_(("loaded", "held", "released")))
+                 .where(Row.feed_id == feed_id, Row.purpose == "scheduled", completed == len(STAGES))
                  .order_by(Row.received_at.desc(), Row.created_at.desc()).limit(limit))
         return [Load.model_validate(r) for r in self._session.scalars(query)]
 

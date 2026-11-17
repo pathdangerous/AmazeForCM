@@ -213,6 +213,15 @@ def test_fully_loaded_scheduled_are_the_newest_that_completed_four_stages(db_ses
     assert [load.id for load in repo.fully_loaded_scheduled(live[0], 1)] == [held.id]
 
 
+def test_a_breaking_held_load_has_no_stage_and_is_not_in_the_history(db_session, repo, live):
+    """Deviation 13: history is the loads that completed all four stages, whatever their status. A delivery held on
+    arrival is `held` too, but never reached the engine."""
+    released = a_load(db_session, live[0], "released")
+    breaking = repo.record_arrival(scheduled(repo, live).id, outcome="breaking_held", content_sha256=SHA_A, detail={})
+    assert breaking.status == "held" and repo.stages(breaking.id) == []
+    assert [load.id for load in repo.fully_loaded_scheduled(live[0], 10)] == [released.id]
+
+
 def test_a_certification_is_read_back_and_a_load_without_one_has_none(db_session, repo, registered):
     load = a_load(db_session, registered.id, "held")
     certifications = LoadCertificationRepository(db_session)
