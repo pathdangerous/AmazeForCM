@@ -161,6 +161,32 @@ def test_a_proposal_during_the_call_is_409_and_nothing_is_written(db_session, bo
     assert db_session.query(ProposalLogDiscardRow).count() == 1
 
 
+@pytest.mark.parametrize("meanwhile", ["mapped", "rejected"])
+def test_a_decision_during_the_call_is_409_and_nothing_is_written(db_session, bond, tmp_path, meanwhile):
+    """Review finding 5: while the agent answers, another proposal for the column is made and decided, so no
+    proposal is pending when the answer comes. The column's mapping, or its rejected elements, differ from
+    the input: MappingChangedMeanwhile, a discard row, no second proposal."""
+    from core.repositories.errors import MappingChangedMeanwhile
+    from core.repositories.tables import ProposalLogDiscardRow
+    from tests.configured import approved_mapping, mapping_proposal
+
+    agent_input = mapping_input(db_session, feed_id=bond.id, column="cpn")
+    end_read(db_session)
+
+    def decided_meanwhile(data):
+        if meanwhile == "mapped":
+            approved_mapping(db_session, bond.id, "cpn", "coupon_rate")
+        else:
+            mapping_proposal(db_session, bond.id, "cpn", ["coupon_rate"], decision="rejected", note="Not the coupon.")
+        return {"answers": [{"column": "cpn", "elements": ["coupon_rate"], "reason": "r"}]}
+
+    with pytest.raises(MappingChangedMeanwhile, match="cpn"):
+        record_mappings(db_session, agent=agent(tmp_path, FixedProvider(decided_meanwhile)), agent_input=agent_input,
+                        user=SAM)
+    assert len(ProposalRepository(db_session).list_for_feed_column("mapping", bond.id, "cpn")) == 1
+    assert db_session.query(ProposalLogDiscardRow).count() == 1
+
+
 # ---------------------------------------------------------------- the steward's decision (assumption 28)
 
 

@@ -24,6 +24,7 @@ from core.repositories.errors import (
     FeedNotSignedOff,
     GlossaryRunNotFound,
     MappingAlreadyProposed,
+    MappingChangedMeanwhile,
     NotAnApprover,
     NothingToMap,
     NothingToRelease,
@@ -52,7 +53,7 @@ CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyH
              # phase 5 (plan, section 9)
              NothingToMap, MappingAlreadyProposed, ElementAlreadyMapped, PhraseTaken,
              # fixes after the independent review of phase 5 (plan, section 17)
-             AliasAlreadyOnElement)
+             AliasAlreadyOnElement, MappingChangedMeanwhile)
 NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound)
 FORBIDDEN = (NotAnApprover,)  # phase 5: the proposal's approver role is checked by the step (403)
 

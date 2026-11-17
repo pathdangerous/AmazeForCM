@@ -6,8 +6,9 @@ proposal not made because it would change nothing, a rejection.
 
 The model-call pattern (assumption 25): mapping_input() reads; the API ends the transaction;
 record_mappings() runs Agent.run(), whose before_write locks the feed row and checks again that the feed is
-registered and that no input column got a pending proposal meanwhile (MappingAlreadyProposed: a discard
-row, nothing written). Then the proposals and, for the columns sent back that the glossary builder was
+registered, that no input column got a pending proposal meanwhile (MappingAlreadyProposed) and that each
+input column's current mapping and rejected elements are still what the input held (MappingChangedMeanwhile);
+either is a discard row, nothing written. Then the proposals and, for the columns sent back that the glossary builder was
 never asked about, one queued glossary run (reason sent_back), in the same transaction.
 
 decide_mapping(): the data steward approves one candidate (the recommended one unless another is chosen; a
@@ -31,6 +32,7 @@ from core.repositories.errors import (
     FeedNotProfiled,
     FeedNotRegistered,
     MappingAlreadyProposed,
+    MappingChangedMeanwhile,
     NotAnApprover,
     NothingToMap,
     ProposalAlreadyDecided,
@@ -145,11 +147,20 @@ def _still_mappable(session: Session, agent_input: MappingInput) -> None:
     feed = FeedRepository(session).lock(agent_input.feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} became {feed.stage} while the agent answered")
-    proposals = ProposalRepository(session)
+    proposals, mappings = ProposalRepository(session), MappingRepository(session)
+    current = {m.source_field: m.element_key for m in mappings.current_for_feed(feed.id)}
     for column in agent_input.columns:
         if proposals.pending_for_column("mapping", feed.id, column.name) is not None:
             raise MappingAlreadyProposed(f"Column {column.name!r} of feed {feed.code!r} got a pending mapping "
                                          "proposal while the agent answered")
+        # a proposal made and decided during the call leaves nothing pending (independent review, finding 5)
+        if current.get(column.name) != column.current:
+            raise MappingChangedMeanwhile(f"Column {column.name!r} of feed {feed.code!r} was mapped to "
+                                          f"{current.get(column.name)} while the agent answered")
+        rejected = mappings.rejected_elements(feed.id, column.name) & {x.key for x in column.candidates}
+        if rejected:  # the input left out every element rejected before it was built
+            raise MappingChangedMeanwhile(f"For column {column.name!r} of feed {feed.code!r}, "
+                                          f"{', '.join(sorted(rejected))} was rejected while the agent answered")
 
 
 def _why_none(session: Session, feed_id: UUID, column: ColumnToMap) -> str:

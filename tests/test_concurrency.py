@@ -1143,6 +1143,32 @@ async def test_two_mapping_requests_of_one_feed_at_once_give_200_and_409(own_sch
     assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(1,)]
 
 
+async def test_a_mapping_decided_during_another_propose_gives_409_and_a_discard_row(own_schema, flow):
+    """Review finding 5: the first Propose mappings (every column) waits for the model. Meanwhile cpn is
+    proposed on its own and approved, so no proposal is pending for it when the first answer comes. The first
+    answer finds cpn mapped, which its input did not say: 409 (MappingChangedMeanwhile), a discard row, and
+    no proposal that would map cpn again."""
+    feed_id = bond_feed(own_schema)
+    provider = HeldProvider()
+    url = f"/api/amaze/feeds/{feed_id}/mappings/propose"
+    async with flow() as f:
+        use_provider(provider)
+        first = asyncio.create_task(f.client.post(url, headers=SAM, json={}))
+        assert await asyncio.to_thread(provider.entered.wait, 10), "the first request never called the model"
+        second = await amaze_post(f.client, f"feeds/{feed_id}/mappings/propose", {"column": "cpn"})
+        [cpn] = second["result"]["recommended"]
+        await amaze_post(f.client, f"proposals/{cpn['proposal_id']}/decision", {"decision": "approved"})
+        provider.release.set()
+        first = await first
+    assert first.status_code == 409, first.text
+    assert "cpn" in first.json()["detail"] and "while the agent answered" in first.json()["detail"]
+    assert committed(own_schema, "SELECT payload->>'source_field', status FROM proposals WHERE kind = 'mapping'") == [
+        ("cpn", "approved")]
+    assert committed(own_schema, "SELECT source_field, version FROM mappings") == [("cpn", 1)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'MappingAgent'") == [(2,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(1,)]
+
+
 async def test_two_decisions_of_one_mapping_at_once_give_200_and_409(own_schema, flow, monkeypatch):
     """The second approval is sent while the first holds the feed and proposal rows (its read of the
     feed's mappings slowed): it waits, then finds the proposal approved (409). One approval, one mapping."""

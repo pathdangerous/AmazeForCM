@@ -161,6 +161,10 @@ class MappingAlreadyProposed(RepositoryError):
     """A column of the request got a pending mapping proposal while the agent was answering."""
 
 
+class MappingChangedMeanwhile(RepositoryError):
+    """A column of the request was mapped, or one of its candidates rejected, while the agent was answering."""
+
+
 class ElementAlreadyMapped(RepositoryError):
     """Another column of the feed is currently mapped to this element."""
 
