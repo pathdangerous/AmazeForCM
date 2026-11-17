@@ -129,6 +129,41 @@ async def test_register_queues_a_glossary_run_and_kicks_the_worker_after_its_com
     assert (run["id"], run["status"], run["reason"]) == (run_id, "queued", "registered")
 
 
+async def test_register_with_a_stub_scheduler_is_503_or_200_never_500(db_session, migrated_engine, tmp_path,
+                                                                       monkeypatch):
+    """Review finding 7: with SCHEDULER_PROVIDER=azure_functions (a stub until phase 8) the API still builds
+    its glossary worker, so the kick after register's commit reaches the stub: 503, as any stub adapter, not
+    a 500. The registration and its queued run are committed either way."""
+    from apps.api import main
+    from apps.api.deps import get_blob_store_port
+    from core.repositories.glossary_runs import GlossaryRunRepository
+    from core.seed import seed_demo, seed_glossary
+    from ports.config import Settings
+    from ports.scheduler.azure_functions import AzureFunctionsScheduler
+    from ports.storage.local import LocalBlobStore
+    from tests.conftest import running_app
+
+    monkeypatch.setattr(main, "get_scheduler", lambda settings: AzureFunctionsScheduler())
+    seed_glossary(db_session)
+    seed_demo(db_session)
+    db_session.commit()
+    async with running_app(engine=migrated_engine, settings=Settings(_env_file=None), session=db_session,
+                           glossary_runs=False) as stub_client:  # False: the app builds its own worker
+        main.app.dependency_overrides[get_blob_store_port] = lambda: LocalBlobStore(tmp_path / "blob")
+        requirement_id = await raise_requirement(stub_client, "volume", ["volume"])
+        await find_source(stub_client, requirement_id)
+        feed_id = await feed_of(stub_client, "syn_exchange_volumes")
+        for action, body in (("profile", {}), ("profile/summary", {}), ("signoff", {"outcome": "meets"})):
+            await amaze(stub_client, feed_id, action, body)
+        response = await stub_client.post(f"/api/amaze/feeds/{feed_id}/register", headers=BLAKE,
+                                          json={"owner_id": "dev-data-owner", "visibility": "open"})
+        assert response.status_code in (200, 503), response.text
+        page_now = await amaze(stub_client, feed_id)
+    assert page_now["feed"]["stage"] == "registered"
+    run = GlossaryRunRepository(db_session).active(uuid.UUID(feed_id))
+    assert (run.status, run.reason) == ("queued", "registered")
+
+
 async def test_the_feed_page_shows_the_conditions_each_requester_accepted(client):
     requirement_id, feed_id = await onboarding_by_pick(client, "open price", ["open_price"], VENDOR)
     feed = await amaze(client, feed_id, headers=STEWARD)  # any backend role reads

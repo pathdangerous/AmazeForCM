@@ -28,16 +28,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.scheduler = scheduler
     # A stub scheduler is not started; /api/health reports it as unavailable instead.
     runs_scheduler = not getattr(scheduler, "is_stub", False)
+    # Phase 5: the glossary runs worker, whatever the scheduler, so a kick after a commit always has one to
+    # name (with a stub scheduler the kick answers 503, as any stub adapter; independent review, finding 7).
+    # Tests set app.state.glossary_runs (running_app puts a do-nothing one there).
+    if getattr(app.state, "glossary_runs", None) is None:
+        app.state.glossary_runs = GlossaryRuns.from_settings(settings, app.state.identity)
     if runs_scheduler:
         # The daily fetch is registered at every start: it reads the feeds table when it runs, so a
         # restart loses nothing (phase 3 plan, assumption 17). Tests set app.state.daily_fetch.
         daily = getattr(app.state, "daily_fetch", None) or DailyFetch.from_settings(settings, app.state.identity)
         register_daily_fetch(scheduler, daily)
         scheduler.start()
-        # Phase 5: the glossary runs worker, kicked at every start so runs left by the last process are taken.
-        # Tests set app.state.glossary_runs (running_app puts a do-nothing one there).
-        if getattr(app.state, "glossary_runs", None) is None:
-            app.state.glossary_runs = GlossaryRuns.from_settings(settings, app.state.identity)
+        # Kicked at every start so runs left by the last process are taken.
         kick_glossary_runs(scheduler, app.state.glossary_runs)
     try:
         yield

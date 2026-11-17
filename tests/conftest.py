@@ -108,14 +108,16 @@ async def running_app(engine=None, settings=None, session=None, glossary_runs=No
 
     session: every request uses this session (the test's rolled-back db_session), so a request sees
     rows the test created without committing them.
-    glossary_runs: the step 05 worker; a do-nothing one unless the test gives its own.
+    glossary_runs: the step 05 worker; a do-nothing one unless the test gives its own. False: none is set, so
+    the app builds its own from the settings (only for a test whose scheduler is a stub, which runs nothing).
     """
     import httpx
 
     from apps.api.deps import get_app_settings, get_db_engine, get_db_session
     from apps.api.main import app
 
-    app.state.glossary_runs = glossary_runs or NoGlossaryRuns()
+    if glossary_runs is not False:
+        app.state.glossary_runs = glossary_runs or NoGlossaryRuns()
     if engine is not None:
         app.dependency_overrides[get_db_engine] = lambda: engine
     if settings is not None:
@@ -129,7 +131,8 @@ async def running_app(engine=None, settings=None, session=None, glossary_runs=No
                 yield client
     finally:
         app.dependency_overrides.clear()
-        del app.state.glossary_runs
+        if hasattr(app.state, "glossary_runs"):
+            del app.state.glossary_runs
 
 
 # ---------------------------------------------------------------- phase 1: proposals and approvals
