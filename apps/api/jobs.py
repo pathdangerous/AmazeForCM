@@ -153,7 +153,10 @@ class DailyFetch:
         outcome = self._fetch_one(feed_id, today=today, catalogue=None)
         if outcome != "fetched":
             return {"fetch": outcome, "load": None}
-        return {"fetch": outcome, "load": self.load_feed(feed_id, today=today)}
+        status = self.load_feed(feed_id, today=today)
+        if status == "load_in_progress":  # the job's load (or another Load now) runs: 409, as the job logs it
+            raise LoadInProgress("This feed has a load in progress; try again when it has finished")
+        return {"fetch": outcome, "load": status}
 
     def load_feed(self, feed_id: UUID, *, today: date | None = None) -> str:
         """A scheduled load of the feed's latest fetched file under its latest go-live (step 13). Returns the load's

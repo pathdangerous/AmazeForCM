@@ -523,3 +523,165 @@ def test_the_daily_job_commits_each_fetch(own_schema, tmp_path):
     ]
     assert committed(own_schema, "SELECT outcome FROM source_fetches") == [("fetched",)]
     assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'File ready%'") == [(1,)]
+
+
+# ---------------------------------------------------------------- phase 6: one test per committing endpoint or job
+
+CASEY = {"X-Dev-User": "dev-checker"}
+DEVON = {"X-Dev-User": "dev-data-owner"}
+OPAL = {"X-Dev-User": "dev-operations"}
+VOLUME_ROWS = 10
+
+
+def volumes_feed(engine, blobs, *, mapped=True) -> str:
+    """syn_exchange_volumes, registered, with its three columns mapped and a fetched file of ten rows in the
+    blob store, all committed; returns the feed id."""
+    from core.domain.profiling import FileColumn, SourceSpec
+    from core.repositories.feeds import FeedRepository
+    from tests.configured import approved_mapping
+    from tests.onboarded import registered_feed
+
+    columns = [FileColumn(name=n, type=t, null_count=0, null_rate=0.0, distinct_count=VOLUME_ROWS)
+               for n, t in (("instr_id", "VARCHAR"), ("trade_date", "DATE"), ("traded_qty", "BIGINT"))]
+    spec = SourceSpec(source_code="syn_exchange_volumes", elements=["instrument_id", "price_date", "volume"],
+                      other_fields=[], columns={"instr_id": "instrument_id", "trade_date": "price_date",
+                                                "traded_qty": "volume"})
+    with get_sessionmaker(engine)() as session:
+        feed = FeedRepository(session).create_candidate(
+            code="syn_exchange_volumes", name="Exchange daily volumes", source_code="syn_exchange_volumes",
+            connector="local_file", source_ref="files/exchange_volumes.csv")
+        registered_feed(session, feed.id, spec=spec, columns=columns)
+        if mapped:
+            for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"),
+                               ("traded_qty", "volume")):
+                approved_mapping(session, feed.id, field, key)
+        session.commit()
+    rows = "".join(f"syn-{n:04d},2026-11-02,{1000 + n}\n" for n in range(VOLUME_ROWS))
+    blobs.put(f"raw/test/{feed.id}/f.csv", ("instr_id,trade_date,traded_qty\n" + rows).encode())
+    return str(feed.id)
+
+
+def daily_on(engine, blobs):
+    """The daily job on the test's schema: real sessions, the sample files of the catalogue."""
+    settings = Settings(_env_file=None)
+    return DailyFetch(session_factory=get_sessionmaker(engine), blob_store=blobs,
+                      connector_factory=lambda name: get_connector(name, settings),
+                      backend_team=lambda: ["dev-backend-team"], operations=lambda: ["dev-operations"])
+
+
+@pytest.fixture
+def p6(own_schema, tmp_path):
+    """The API on the test's schema with a mapped syn_exchange_volumes, its blob store and its daily job."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from apps.api.deps import get_blob_store_port, get_daily_fetch
+    from apps.api.main import app
+
+    blobs = LocalBlobStore(tmp_path / "blob")
+
+    @asynccontextmanager
+    async def _p6(mapped=True):
+        feed = volumes_feed(own_schema, blobs, mapped=mapped)
+        daily = daily_on(own_schema, blobs)
+        async with running_app(engine=own_schema, settings=Settings(_env_file=None)) as client:
+            app.dependency_overrides[get_blob_store_port] = lambda: blobs
+            app.dependency_overrides[get_daily_fetch] = lambda: daily
+            yield SimpleNamespace(client=client, feed=feed, blobs=blobs, daily=daily)
+
+    return _p6
+
+
+async def call(client, path, body=None, headers=BLAKE, method="POST", expect=200):
+    response = await client.request(method, f"/api/amaze/{path}", headers=headers,
+                                    json=body if method == "POST" else None)
+    assert response.status_code == expect, response.text
+    return response.json()
+
+
+async def go_live(p, *, approve=True):
+    """Prepare the feed's go-live as Blake and, by default, approve it as Devon; returns the proposal id."""
+    prepared = await call(p.client, f"feeds/{p.feed}/go-live/summary", {})
+    proposal_id = prepared["result"]["proposal_id"]
+    if approve:
+        await call(p.client, f"proposals/{proposal_id}/decision", {"decision": "approved"}, headers=DEVON)
+    return proposal_id
+
+
+@pytest.mark.anyio
+async def test_rules_propose_commits_the_proposals(own_schema, p6):
+    async with p6() as p:
+        proposed = await call(p.client, f"feeds/{p.feed}/rules/propose", {}, headers=SAM)
+        assert proposed["result"]["outcome"] == "rules_proposed"
+    assert committed(own_schema, "SELECT count(*), min(status) FROM proposals WHERE kind = 'rule'") == [(4, "pending")]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'RuleRecommenderAgent'") == [
+        (1,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(0,)]
+
+
+@pytest.mark.anyio
+async def test_the_rule_decision_commits_the_rule(own_schema, p6):
+    async with p6() as p:
+        await call(p.client, f"feeds/{p.feed}/rules/propose", {}, headers=SAM)
+        [(proposal_id,)] = committed(own_schema, "SELECT id FROM proposals WHERE payload->>'rule_key' = "
+                                                 "'volume_not_negative'")
+        await call(p.client, f"proposals/{proposal_id}/decision", {"decision": "approved"}, headers=SAM)
+        assert committed(own_schema, "SELECT count(*) FROM rules") == [(0,)]  # one approval is not a rule
+        await call(p.client, f"proposals/{proposal_id}/decision", {"decision": "approved"}, headers=CASEY)
+    assert committed(own_schema, "SELECT rule_key, version, proposal_id = :p FROM rules", p=proposal_id) == [
+        ("volume_not_negative", 1, True)]
+    assert committed(own_schema, "SELECT role, decided_by FROM approvals WHERE proposal_id = :p ORDER BY step",
+                     p=proposal_id) == [("data_steward", "dev-data-steward"), ("checker", "dev-checker")]
+
+
+@pytest.mark.anyio
+async def test_the_go_live_summary_commits_the_test_load_and_the_proposal(own_schema, p6):
+    async with p6() as p:
+        prepared = await call(p.client, f"feeds/{p.feed}/go-live/summary", {})
+    assert prepared["result"]["test_load"]["status"] == "loaded"
+    assert committed(own_schema, "SELECT purpose, status FROM loads") == [("go_live_test", "loaded")]
+    assert committed(own_schema, "SELECT count(*) FROM load_stages WHERE outcome = 'stage_completed'") == [(4,)]
+    assert committed(own_schema, "SELECT count(*) FROM standard_records") == [(VOLUME_ROWS,)]
+    assert committed(own_schema, "SELECT kind, status FROM proposals WHERE kind = 'review_summary'") == [
+        ("review_summary", "pending")]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'ReviewSummariserAgent'") == [
+        (1,)]
+
+
+@pytest.mark.anyio
+async def test_the_owners_decision_commits_the_go_live(own_schema, p6):
+    async with p6() as p:
+        proposal_id = await go_live(p)
+    assert committed(own_schema, "SELECT version, approved_by, proposal_id = :p, hypercare_until > now()::date "
+                                 "FROM feed_go_lives", p=proposal_id) == [(1, "dev-data-owner", True, True)]
+    assert committed(own_schema, "SELECT role, decision FROM approvals WHERE proposal_id = :p", p=proposal_id) == [
+        ("data_owner", "approved")]
+    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'Feed goes live%'") == [(2,)]
+
+
+@pytest.mark.anyio
+async def test_load_now_commits_the_scheduled_load(own_schema, p6):
+    async with p6() as p:
+        await go_live(p)
+        loaded = await call(p.client, f"feeds/{p.feed}/loads", {}, headers=OPAL)
+        assert loaded["result"] == {"fetch": "fetched", "load": "loaded"}
+    assert committed(own_schema, "SELECT status, go_live_id IS NOT NULL FROM loads WHERE purpose = 'scheduled'") == [
+        ("loaded", True)]
+    assert committed(own_schema, "SELECT count(*) FROM load_stages s JOIN loads l ON l.id = s.load_id "
+                                 "WHERE l.purpose = 'scheduled'") == [(4,)]
+    assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
+                                 "WHERE l.purpose = 'scheduled'") == [(VOLUME_ROWS,)]
+
+
+@pytest.mark.anyio
+async def test_the_daily_job_commits_the_scheduled_load(own_schema, p6):
+    import asyncio
+
+    async with p6() as p:
+        await go_live(p)
+        assert await asyncio.to_thread(p.daily.run) == {"syn_exchange_volumes": "fetched"}
+    assert committed(own_schema, "SELECT status FROM loads WHERE purpose = 'scheduled'") == [("loaded",)]
+    assert committed(own_schema, "SELECT count(*) FROM standard_records r JOIN loads l ON l.id = r.load_id "
+                                 "WHERE l.purpose = 'scheduled'") == [(VOLUME_ROWS,)]
+    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject = 'Load loaded: "
+                                 "syn_exchange_volumes'") == [(2,)]  # hypercare: the owner and operations
