@@ -113,3 +113,44 @@ test("P21: FeedView takes the signed-in user from App: no /api/me call, role but
   expect(await screen.findByTestId("load-now")).toBeTruthy();
   expect(fetchStub.mock.calls.map(([url]) => String(url))).not.toContain("/api/me");
 });
+
+const unmapped = { name: "qty", type: "BIGINT", source_says: "volume", mapped_to: null, mapped_version: null,
+                   pending: null, why_none: null, versions: [] };
+
+test("P12: a column with nothing proposed waits for Propose mappings", async () => {
+  show(feedPage({ columns: [feedPage().columns[0], unmapped] }));
+  const row = (await screen.findAllByTestId("mapping-row")).find((r) => r.dataset.column === "qty")!;
+  expect(within(row).getByTestId("why-none").textContent).toBe("waiting for Propose mappings");
+});
+
+test("P17: a sent-back run lists its own columns first and folds the skipped ones under not asked", async () => {
+  show(feedPage({ glossary_run: { ...feedPage().glossary_run!, reason: "sent_back", columns: ["maturity"],
+                                  results: { rating: "already_asked", maturity: "conflict_to_owner",
+                                             venue_mic_code: "already_asked", date: "left_to_step_06" } } }));
+  const run = await screen.findByTestId("glossary-run");
+  const asked = Array.from(run.querySelectorAll("li")).map((li) => li.textContent);
+  expect(asked).toEqual(["maturity: conflict to owner", "date: left to step 06"]);
+  expect(within(run).getByTestId("run-not-asked").textContent).toBe(
+    "Not asked: rating (already asked), venue_mic_code (already asked)");
+});
+
+test("P18: Propose mappings is disabled with a word when nothing is left to map", async () => {
+  show(feedPage()); // instr_id mapped, qty pending
+  const button = await screen.findByTestId("propose-mappings");
+  expect(button.hasAttribute("disabled")).toBe(true);
+  expect(screen.getByTestId("section-mapping").textContent).toContain("Nothing left to map");
+  cleanup();
+  show(feedPage({ columns: [feedPage().columns[0], unmapped] }));
+  expect((await screen.findByTestId("propose-mappings")).hasAttribute("disabled")).toBe(false);
+});
+
+test("P19: the result of Propose mappings shows above the mapping table", async () => {
+  show(feedPage({ columns: [feedPage().columns[0], unmapped] }), {}, USERS[1], {
+    [`POST /api/amaze/feeds/${FEED_ID}/mappings/propose`]: { result: {
+      recommended: [{ source_field: "qty" }], results: [], unchanged: [] } } });
+  fireEvent.click(await screen.findByTestId("propose-mappings"));
+  const done = await screen.findByTestId("feed-done");
+  const table = screen.getByTestId("mapping-table");
+  expect(screen.getByTestId("section-mapping").contains(done)).toBe(true);
+  expect(done.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});

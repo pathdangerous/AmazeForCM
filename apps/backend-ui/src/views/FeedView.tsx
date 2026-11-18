@@ -1,8 +1,8 @@
 import { Anchor, Badge, Button, Group, NativeSelect, Radio, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type Owner,
-  type SignoffOutcome, type User,
+  apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type GlossaryRun,
+  type Owner, type SignoffOutcome, type User,
 } from "../api";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
@@ -96,7 +96,7 @@ function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
           </>
         ) : !pending && (
           <span className="muted" data-testid="why-none">
-            {column.why_none ? WHY_NONE[column.why_none] : "not proposed yet"}
+            {column.why_none ? WHY_NONE[column.why_none] : "waiting for Propose mappings"}
           </span>
         )}
         {pending && (
@@ -135,6 +135,29 @@ function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
         )}
       </Table.Td>
     </Table.Tr>
+  );
+}
+
+// P17: what a glossary run did, its own columns first (a sent-back run's, in its order); the columns the builder
+// skipped (step 05's SKIPPED outcomes) are folded into one "Not asked" line.
+const NOT_ASKED = new Set(["covered_by_name", "mapped", "already_asked"]);
+
+function RunResults({ run }: { run: GlossaryRun }) {
+  const entries = Object.entries(run.results ?? {});
+  const own = (c: string) => (run.columns.includes(c) ? run.columns.indexOf(c) : run.columns.length);
+  const asked = entries.filter(([, o]) => !NOT_ASKED.has(o)).sort(([a], [b]) => own(a) - own(b));
+  const skipped = entries.filter(([, o]) => NOT_ASKED.has(o));
+  return (
+    <>
+      {asked.length > 0 && (
+        <ul>{asked.map(([c, outcome]) => <li key={c}><code>{c}</code>: {words(outcome)}</li>)}</ul>
+      )}
+      {skipped.length > 0 && (
+        <div className="muted" data-testid="run-not-asked">
+          Not asked: {skipped.map(([c, outcome]) => `${c} (${words(outcome)})`).join(", ")}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -257,6 +280,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
   const specOnly = profile?.outcome === "spec_only_low_confidence";
   const items = outcome === "rejected" ? "reasons" : "gaps";
   const ofLatestFile = profile !== null && page.last_file !== null && profile.fetch_id === page.last_file.id; // P6
+  const leftToMap = page.columns.some((c) => !c.mapped_to && !c.pending); // P18
 
   return (
     <section data-testid="feed-view">
@@ -479,11 +503,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
                 </div>
                 {page.glossary_run.error && <div className="bad">Failed: {page.glossary_run.error}</div>}
                 {page.glossary_run.results && Object.keys(page.glossary_run.results).length > 0 ? (
-                  <ul>
-                    {Object.entries(page.glossary_run.results).map(([c, outcome]) => (
-                      <li key={c}><code>{c}</code>: {words(outcome)}</li>
-                    ))}
-                  </ul>
+                  <RunResults run={page.glossary_run} />
                 ) : page.glossary_run.status === "done" ? <div className="muted">No new column to ask about.</div>
                   : <div className="muted">Columns: {page.glossary_run.columns.join(", ") || "every new one"}</div>}
               </div>
@@ -512,10 +532,13 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
             </Table.ScrollContainer>
             {canMap ? (
               <Group gap="sm" mt="sm">
-                <Button disabled={busy} data-testid="propose-mappings" onClick={() => proposeMappings()}>
+                <Button disabled={busy || !leftToMap} data-testid="propose-mappings" onClick={() => proposeMappings()}>
                   Propose mappings
                 </Button>
-                <span className="muted">for every column with no mapping and no pending proposal</span>
+                <span className="muted">
+                  {leftToMap ? "for every column with no mapping and no pending proposal"
+                    : "Nothing left to map: every column is mapped or waits for a decision."}
+                </span>
               </Group>
             ) : <Text className="muted" mt="sm">Only the data steward proposes and decides mappings.</Text>}
 
