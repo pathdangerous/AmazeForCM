@@ -138,6 +138,17 @@ def test_the_profiler_rule(data, outcome, gaps, reasons):
     assert out["summary"]
 
 
+@pytest.mark.parametrize(("data", "summary"), [
+    (_profiler(_item("volume")), "10 rows; 1 of 1 requested items is in the file."),
+    (_profiler(_item("volume"), _item("isin", declared=False, in_file=False)),
+     "10 rows; 1 of 2 requested items is in the file."),
+    (_profiler(_item("volume"), _item("isin")), "10 rows; 2 of 2 requested items are in the file."),
+])
+def test_the_profiler_summary_agrees_with_the_found_count(data, summary):
+    """Phase 7.5, P10 (plan, assumption 22): the verb agrees with the number of items found."""
+    assert RULES["profiler"](data)["summary"] == summary
+
+
 # ---------------------------------------------------------------- intent
 
 
