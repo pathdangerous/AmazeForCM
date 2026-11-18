@@ -155,6 +155,8 @@ The screenshots of phase 7.5 walk the same path with their own spec and the same
 cd e2e; $env:SHOTS_SET="after"; npx playwright test -c playwright.screens.config.ts   # expect: 1 passed, 25 files
 ```
 
+If a story run right after a screens run fails with "The API cannot be reached" (`net::ERR_NO_BUFFER_SPACE` in its trace), run the story and the screens set with a pause between, and check that both `vite.config.ts` still give the `/api` proxy keep-alive connections (phase 7.5).
+
 Evaluate the mapping prompt on the gold set (`fixtures/gold/mappings.json`, phase 5). Its model calls are
 logged to a database of their own, `amaze_eval`, owned by the same `amaze` user; the script refuses to
 run when `EVAL_DATABASE_URL` is not set or names the application database. One-time set-up, as the

@@ -177,7 +177,7 @@ Task 1 adds `section-*` testids (for the shots), before any restyle; the spec ga
 ## 11. Files
 - **Documents (edit):** this file, `docs/ui-polish.md`, `BUILD_PLAN.md`, `CLAUDE.md`, `README.md`.
 - **New:** `apps/{backend-ui,consumer-ui}/src/theme.ts`, `vitest.config.ts`, `src/test/fixtures.ts`, `src/**/*.test.tsx`; `e2e/playwright.screens.config.ts`, `e2e/screens/screens.spec.ts`; `docs/phase75-screenshots/`; `tests/test_ui_shared_look.py`.
-- **Edit, UI:** both apps' `package.json`, `package-lock.json`, `index.html`, `src/main.tsx`, `src/App.tsx`, `src/api.ts` and every file in `src/views/`.
+- **Edit, UI:** both apps' `package.json`, `package-lock.json`, `index.html`, `src/main.tsx`, `src/App.tsx`, `src/api.ts` and every file in `src/views/`; `vite.config.ts` (added at the checkpoint 2 follow-up: the `/api` proxy's keep-alive, dev server only).
 - **Edit, backend:** `apps/api/routers/amaze.py`; `core/steps/feed_page.py`, `requirement_page.py`; `core/steps/s12_arrival.py`, `s15_certify.py`, `s20_create_product.py`, `apps/api/jobs.py` (assumption 16 only); `ports/llm/mock_rules.py` (line 128 only).
 - **Tests, edit:** `test_api_amaze.py`, `test_api_amaze_onboarding.py`, `test_api_amaze_mapping.py`, `test_api_consumer_sourcing.py`, `test_s12_arrival.py`, `test_s15_certify.py`, `test_s20_create_product.py`, `test_jobs.py`, `test_mock_rules.py`.
 
