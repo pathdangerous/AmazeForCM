@@ -230,8 +230,9 @@ def check_arrival(plan: ArrivalPlan, *, blob_store: BlobStore) -> ArrivalCheck:
     added = [name for name in header if name.lower() not in known] if plan.template else []
     if missing:
         return ArrivalCheck(plan=plan, kind="breaking_held", sha256=sha, columns=header, missing=missing,
-                            reason=f"{len(missing)} column(s) of the last accepted structure are not in the "
-                                   f"file: {', '.join(missing)}")
+                            reason=("1 column of the last accepted structure is not" if len(missing) == 1 else
+                                    f"{len(missing)} columns of the last accepted structure are not")
+                                   + f" in the file: {', '.join(missing)}")
     if added and file.row_count > 0:
         return ArrivalCheck(plan=plan, kind="additive_parked", sha256=sha, columns=header, added=added, file=file,
                             reason=f"{len(added)} new column(s): {', '.join(added)}")
