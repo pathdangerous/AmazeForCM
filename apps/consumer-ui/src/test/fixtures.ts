@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { render } from "@testing-library/react";
 import { createElement, type ReactElement } from "react";
 import { vi } from "vitest";
-import type { User } from "../api";
+import type { RequirementPage, User } from "../api";
 import { cssVariablesResolver, theme } from "../theme";
 
 // Renders inside the app's MantineProvider (main.tsx does the same). jsdom has no matchMedia, which Mantine reads
@@ -46,5 +46,21 @@ export function shellRoutes(user: User = USERS[0]): Routes {
   return {
     "GET /api/dev/users?app=consumer": USERS,
     "GET /api/me": user,
+  };
+}
+
+// ---- one synthetic requirement page (task 15): onboarding from a picked source
+export const REQUIREMENT_ID = "00000000-0000-4000-8000-0000000000a1";
+const AT = "2026-11-18T09:00:00Z";
+
+export function requirementPage(overrides: Partial<RequirementPage> = {}): RequirementPage {
+  return {
+    id: REQUIREMENT_ID, created_at: AT, title: "coupon rate", description: "", status: "onboarding",
+    message: "Your data is getting onboarded; we will notify you once it is ready.", elements: ["coupon_rate"],
+    terms: [], source: null, last_fetch: null, next_action: null, proposed_scope: null, scope: null, listed: [],
+    choices: [], can_release: false, signoff_note: null,
+    progress: { state: "setting_up", text: "Bond terms is registered; the backend team is setting up how its data is read and checked." },
+    product: null, held_note: null, element_names: { coupon_rate: "Coupon rate" },
+    ...overrides,
   };
 }

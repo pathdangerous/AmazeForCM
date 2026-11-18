@@ -18,6 +18,7 @@ export default function StatusLine() {
   const mark = (good: boolean | null, text: string) =>
     good === null ? <span>checking...</span> : <span className={good ? "ok" : "bad"}>{text}</span>;
 
+  // phase 7.5: on a panel strip under the header bar (App); ok and bad are text on the panel
   return (
     <p className="status-line">
       API <span data-testid="api-status">{mark(reachable, reachable ? "ok" : "unreachable")}</span>

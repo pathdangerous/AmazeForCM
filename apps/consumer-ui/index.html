@@ -6,14 +6,14 @@
     <title>Amaze Marketplace</title>
     <link rel="icon" href="data:," />
     <!--
-      The shell and the class names of views not yet converted (phase 7.5). Colours only through the theme's CSS
-      variables (src/theme.ts: --amz-* and Mantine's), which switch with the light or dark scheme. Warning is a fill
-      or a bar, never text.
+      The shell and the few page classes the views use (phase 7.5). Colours only through the theme's CSS variables
+      (src/theme.ts: --amz-* and Mantine's), which switch with the light or dark scheme. Warning and the
+      current-state marker are fills or bars, never text. Content width: backend-ui's (1200px).
     -->
     <style>
       body { margin: 0; }
       .app-header { background: var(--amz-header); color: var(--amz-on-fill); }
-      .app-header-inner { max-width: 1100px; margin-inline: auto; padding: 8px 16px; display: flex; flex-wrap: wrap;
+      .app-header-inner { max-width: 1200px; margin-inline: auto; padding: 8px 16px; display: flex; flex-wrap: wrap;
                           align-items: center; gap: 8px 24px; }
       .app-header h1 { color: var(--amz-on-fill); margin: 0; }
       .app-nav { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -24,43 +24,35 @@
       .who label { color: var(--amz-on-fill); }
       .who-error { background: var(--amz-danger); color: var(--amz-on-fill); border-radius: 4px; padding: 2px 8px; }
       .app-status { background: var(--amz-panel); border-bottom: 1px solid var(--amz-line); }
-      .app-status .status-line { max-width: 1100px; margin: 0 auto; padding: 4px 16px; font-size: 12px; }
-      .app-main { max-width: 1100px; margin: 16px auto 0; padding: 0 16px; }
+      .app-status .status-line { max-width: 1200px; margin: 0 auto; padding: 4px 16px; font-size: 12px; }
+      .app-main { max-width: 1200px; margin: 16px auto 0; padding: 0 16px; }
       .app-panel { background: var(--amz-panel); border: 1px solid var(--amz-line); border-radius: 6px; padding: 16px 20px; }
-      footer { max-width: 1100px; margin: 16px auto 24px; padding: 0 16px; color: var(--amz-muted); font-size: 12px; }
+      footer { max-width: 1200px; margin: 16px auto 24px; padding: 0 16px; color: var(--amz-muted); font-size: 12px; }
       :focus-visible, .mantine-focus-auto:focus-visible { outline: 2px solid var(--amz-focus); outline-offset: 2px; }
       h2, h3, h4 { color: var(--amz-heading); font-weight: 600; }
-      h2 { font-size: 20px; margin: 0 0 12px; }
-      h3 { font-size: 16px; margin: 24px 0 8px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+      dt { font-weight: 600; }
+      dd { margin: 0; }
       .ok { color: var(--amz-success-text); }
       .bad { color: var(--amz-danger-text); }
       .muted { color: var(--amz-muted); font-size: 13px; }
-      select, input, textarea, button { font: inherit; color: inherit; }
+      code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
       input[type="checkbox"], input[type="radio"] { accent-color: var(--amz-primary); }
-      :where(select, input:not([type="radio"], [type="checkbox"]), textarea):not([class*="mantine"]) {
-        padding: 4px 8px; background: var(--amz-panel); border: 1px solid var(--amz-line); border-radius: 6px; }
-      :where(button):not([class*="mantine"]) { padding: 4px 12px; background: var(--amz-panel); border: 1px solid var(--amz-line);
-                                               border-radius: 6px; cursor: pointer; }
-      :where(button):not([class*="mantine"]):disabled { color: var(--amz-muted); background: var(--amz-subtle);
-                                                        border-color: var(--amz-disabled); cursor: default; }
-      .row { display: flex; gap: 8px; }
-      .row input { flex: 1; }
-      .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
       .hits { list-style: none; padding: 0; }
       .hits li { border: 1px solid var(--amz-line); border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
-      .badge { font-size: 12px; border: 1px solid currentColor; border-radius: 10px; padding: 0 8px; }
-      .badge.warn { background: var(--amz-warning); color: var(--amz-on-bright); border-color: transparent; }
       .route { margin-top: 4px; font-style: italic; }
-      .request { border-top: 1px solid var(--amz-line); margin-top: 16px; padding-top: 8px; display: grid; gap: 8px; }
-      fieldset { border: 1px solid var(--amz-line); border-radius: 6px; }
-      .choice { display: block; }
-      .warn:not(.badge) { border-left: 4px solid var(--amz-warning); padding-left: 8px; }
+      .request { border-top: 1px solid var(--amz-line); margin-top: 16px; padding-top: 12px; display: grid; gap: 12px; }
+      .warn { border-left: 4px solid var(--amz-warning); padding-left: 8px; }
       .result { border-left: 4px solid var(--amz-success); padding: 4px 12px; margin-top: 16px; }
       .result.warn { border-left-color: var(--amz-warning); background: var(--amz-subtle); }
-      table:not([class*="mantine"]) { border-collapse: collapse; width: 100%; }
-      table:not([class*="mantine"]) :is(th, td) { border-bottom: 1px solid var(--amz-line); padding: 4px 8px; text-align: left;
-                                                  vertical-align: top; }
-      code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+      /* P29: where the data is; the current step a marker fill, a held one a warning fill (dark text on both) */
+      .progress-steps { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 12px 0 4px; }
+      .progress-steps li { border: 1px solid var(--amz-line); border-radius: 12px; padding: 2px 10px; font-size: 13px;
+                           color: var(--amz-muted); }
+      .progress-steps li[data-done="true"] { color: var(--amz-text); }
+      .progress-steps li[aria-current="step"] { background: var(--amz-marker); color: var(--amz-on-bright);
+                                                border-color: transparent; font-weight: 600; }
+      .progress-steps li[aria-current="step"][data-warn="true"] { background: var(--amz-warning); }
     </style>
   </head>
   <body>

@@ -1,3 +1,4 @@
+import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, describeError, type FindSourceResponse, type RequestSummary } from "../api";
 
@@ -44,42 +45,45 @@ export default function RequestsView({ devUser }: { devUser: string }) {
 
   return (
     <section>
-      <h2>My requests</h2>
-      {error && <p className="bad" role="alert" data-testid="error">{error}</p>}
-      {requests && requests.length === 0 && <p data-testid="no-requests">No requests yet.</p>}
+      <Title order={2} mb="md">My requests</Title>
+      {error && <Text className="bad" role="alert" data-testid="error">{error}</Text>}
+      {requests && requests.length === 0 && <Text data-testid="no-requests">No requests yet.</Text>}
       {requests && requests.length > 0 && (
-        <table data-testid="requests">
-          <thead>
-            <tr><th>When</th><th>Asked for</th><th>Outcome</th><th>Products</th><th>Requirement</th><th>Message</th></tr>
-          </thead>
-          <tbody>
-            {requests.map((r) => (
-              <tr key={r.id}>
-                <td>{new Date(r.created_at).toLocaleString()}</td>
-                <td>{r.query}</td>
-                <td data-testid="outcome">{OUTCOMES[r.outcome]}</td>
-                <td>{r.product_codes.join(", ") || "-"}</td>
-                <td data-testid="requirement-status">
-                  {r.requirement_id ? (
-                    <>
-                      <a href={`#/requirement/${r.requirement_id}`}>{(r.requirement_status ?? "").replaceAll("_", " ")}</a>
-                      {r.requirement_status === "defined" && (
-                        <>
-                          {" "}
-                          <button type="button" data-testid="find-source" disabled={busy !== null}
-                                  onClick={() => findSource(r.requirement_id as string)}>
-                            Find a source
-                          </button>
-                        </>
-                      )}
-                    </>
-                  ) : "-"}
-                </td>
-                <td>{r.message}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <Table.ScrollContainer minWidth={800}>
+          <Table data-testid="requests" verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr><Table.Th>When</Table.Th><Table.Th>Asked for</Table.Th><Table.Th>Outcome</Table.Th>
+                <Table.Th>Products</Table.Th><Table.Th>Requirement</Table.Th><Table.Th>Message</Table.Th></Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {requests.map((r) => (
+                <Table.Tr key={r.id}>
+                  <Table.Td>{new Date(r.created_at).toLocaleString()}</Table.Td>
+                  <Table.Td>{r.query}</Table.Td>
+                  <Table.Td data-testid="outcome">{OUTCOMES[r.outcome]}</Table.Td>
+                  <Table.Td>{r.product_codes.join(", ") || "-"}</Table.Td>
+                  <Table.Td data-testid="requirement-status">
+                    {r.requirement_id ? (
+                      <>
+                        <Anchor href={`#/requirement/${r.requirement_id}`}>{(r.requirement_status ?? "").replaceAll("_", " ")}</Anchor>
+                        {r.requirement_status === "defined" && (
+                          <>
+                            {" "}
+                            <Button size="compact-xs" data-testid="find-source" disabled={busy !== null}
+                                    onClick={() => findSource(r.requirement_id as string)}>
+                              Find a source
+                            </Button>
+                          </>
+                        )}
+                      </>
+                    ) : "-"}
+                  </Table.Td>
+                  <Table.Td>{r.message}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </section>
   );

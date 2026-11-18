@@ -68,6 +68,13 @@ def test_both_apps_hand_the_one_theme_to_mantine():
         assert re.search(r"cssVariablesResolver=\{cssVariablesResolver\}", main), ui
 
 
+def test_both_apps_use_one_content_width():
+    """Checkpoint 1 addition A2: consumer-ui takes backend-ui's content width (header, status strip, main, footer)."""
+    widths = {ui: set(re.findall(r"max-width: (\d+)px", (APPS / ui / "index.html").read_text(encoding="utf-8")))
+              for ui in UIS}
+    assert widths == {"backend-ui": {"1200"}, "consumer-ui": {"1200"}}
+
+
 def test_every_listed_pair_meets_4_5_to_1():
     text = _theme(UIS[0])
     pairs = PAIR.findall(_block(text, "CONTRAST_PAIRS"))

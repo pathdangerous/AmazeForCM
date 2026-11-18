@@ -6,7 +6,7 @@
     <title>Amaze Backend Workbench</title>
     <link rel="icon" href="data:," />
     <!--
-      The shell and the class names of views not yet converted (phase 7.5). Colours only through the theme's CSS
+      The shell and the few page classes the views use (phase 7.5). Colours only through the theme's CSS
       variables (src/theme.ts: --amz-* and Mantine's), which switch with the light or dark scheme.
     -->
     <style>
@@ -36,23 +36,8 @@
       .ok { color: var(--amz-success-text); }
       .bad { color: var(--amz-danger-text); }
       .muted { color: var(--amz-muted); }
-      select, input, textarea, button { font: inherit; color: inherit; }
       input[type="checkbox"], input[type="radio"] { accent-color: var(--amz-primary); }
-      :where(button):not([class*="mantine"]) { padding: 4px 12px; background: var(--amz-panel); border: 1px solid var(--amz-line);
-                                               border-radius: 6px; cursor: pointer; }
-      :where(button):not([class*="mantine"]):disabled { color: var(--amz-muted); background: var(--amz-subtle);
-                                                        border-color: var(--amz-disabled); cursor: default; }
-      :where(select, input:not([type="radio"], [type="checkbox"]), textarea):not([class*="mantine"]) {
-        padding: 4px 8px; background: var(--amz-panel); border: 1px solid var(--amz-line); border-radius: 6px; }
       .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-      .filters button { font: inherit; padding: 4px 12px; border: 1px solid var(--amz-line); background: transparent;
-                        color: inherit; border-radius: 6px; cursor: pointer; }
-      .filters button[aria-pressed="true"] { background: var(--amz-subtle); border-color: var(--amz-primary); }
-      .table-wrap { overflow-x: auto; }
-      table:not([class*="mantine"]) { border-collapse: collapse; width: 100%; }
-      table:not([class*="mantine"]) :is(th, td) { text-align: left; padding: 8px; border-bottom: 1px solid var(--amz-line);
-                                                  vertical-align: top; }
-      table:not([class*="mantine"]) th { font-weight: 600; white-space: nowrap; }
       tbody tr.clickable { cursor: pointer; }
       tbody tr.clickable:hover, tbody tr[aria-selected="true"] { background: var(--amz-subtle); }
       code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
