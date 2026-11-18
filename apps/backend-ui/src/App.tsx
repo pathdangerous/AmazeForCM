@@ -4,7 +4,7 @@ import { apiGet, describeError, type Person, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
-import NotificationsView from "./views/NotificationsView";
+import NotificationsView, { useInbox } from "./views/NotificationsView";
 import RunBanner from "./views/RunBanner";
 import StatusView from "./views/StatusView";
 
@@ -58,6 +58,7 @@ export default function App() {
   // phase 5: bumped when an action or a finished glossary run changes what the banner and the views show
   const [changed, setChanged] = useState(0);
   const onChange = useCallback(() => setChanged((c) => c + 1), []);
+  const inbox = useInbox(me ? selected : "", view === "notifications"); // phase 7.5, P27
 
   useEffect(() => {
     const onHash = () => {
@@ -107,7 +108,7 @@ export default function App() {
           <nav aria-label="Views" className="app-nav">
             {(Object.keys(VIEWS) as View[]).map((name) => (
               <Anchor key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
-                {VIEWS[name]}
+                {VIEWS[name]}{name === "notifications" && inbox.unseen > 0 ? ` (${inbox.unseen})` : ""}
               </Anchor>
             ))}
           </nav>
@@ -131,7 +132,7 @@ export default function App() {
           <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")} people={people}
                         changed={changed} onChange={onChange} />
         )}
-        {view === "notifications" && <NotificationsView devUser={me ? selected : ""} />}
+        {view === "notifications" && <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />}
         {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} people={people} />}
         {view === "feeds" && feedId && (
           <FeedView feedId={feedId} devUser={me ? selected : ""} me={me} people={people}

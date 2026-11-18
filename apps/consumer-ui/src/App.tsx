@@ -1,7 +1,7 @@
 import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
-import NotificationsView from "./views/NotificationsView";
+import NotificationsView, { useInbox } from "./views/NotificationsView";
 import RequestsView from "./views/RequestsView";
 import RequirementView from "./views/RequirementView";
 import SearchView from "./views/SearchView";
@@ -80,6 +80,7 @@ export default function App() {
   }, [selected]);
 
   const devUser = me ? selected : "";
+  const inbox = useInbox(devUser, route.view === "notifications"); // phase 7.5, P27
 
   return (
     <>
@@ -89,7 +90,7 @@ export default function App() {
           <nav aria-label="Views" className="app-nav">
             {(Object.keys(VIEWS) as View[]).map((name) => (
               <Anchor key={name} href={`#/${name}`} aria-current={route.view === name ? "page" : undefined}>
-                {VIEWS[name]}
+                {VIEWS[name]}{name === "notifications" && inbox.unseen > 0 ? ` (${inbox.unseen})` : ""}
               </Anchor>
             ))}
           </nav>
@@ -110,7 +111,9 @@ export default function App() {
         <div className="app-panel">
         {route.view === "search" && <SearchView devUser={devUser} />}
         {route.view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
-        {route.view === "notifications" && <NotificationsView key={devUser} devUser={devUser} />}
+        {route.view === "notifications" && (
+          <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />
+        )}
         {route.view === "requirement" && (
           <RequirementView key={`${devUser}-${route.id}`} devUser={devUser} requirementId={route.id} />
         )}
