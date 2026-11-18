@@ -145,6 +145,14 @@ async def test_another_requesters_requirement_is_404(client, db_session):
     await page(client, "00000000-0000-4000-8000-000000000000", expect=404)
 
 
+async def test_the_requirement_page_names_each_element(client):
+    """Phase 7.5, P1 (plan, assumption 14): each element key with its current glossary name."""
+    requirement_id = await raise_requirement(client, "open price and volume", ["open_price", "volume"])
+    shown = await page(client, requirement_id)
+    assert shown["elements"] == ["open_price", "volume"]
+    assert shown["element_names"] == {"open_price": "Open price", "volume": "Volume"}
+
+
 async def test_backend_users_and_no_user(client):
     requirement_id = await raise_requirement(client, "volume", ["volume"])
     await page(client, requirement_id, headers=BLAKE, expect=403)

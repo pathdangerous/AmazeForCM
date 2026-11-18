@@ -179,6 +179,8 @@ class RequirementPage(BaseModel):
     progress: Progress | None = None
     product: ProductOnPage | None = None
     held_note: str | None = None
+    # Phase 7.5, P1: each element key with its current glossary name (a key the glossary lost shows as itself).
+    element_names: dict[str, str] = {}
 
 
 def _held_reason(session: Session, load) -> str:
@@ -330,4 +332,10 @@ def requirement_page(session: Session, requirement: Requirement, catalogue: Sour
         if status == "onboarding" and current.action == "selected" and signoff and signoff.outcome == "meets_with_gaps"
         else None,
         progress=progress, product=product, held_note=note,
+        element_names=_element_names(session, requirement.elements),
     )
+
+
+def _element_names(session: Session, keys: list[str]) -> dict[str, str]:
+    names = {e.key: e.name for e in GlossaryRepository(session).list_current()}
+    return {key: names.get(key, key) for key in keys}
