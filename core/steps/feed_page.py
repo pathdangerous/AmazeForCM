@@ -43,7 +43,7 @@ from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
-from core.steps.candidates import candidate_list, new_columns
+from core.steps.candidates import candidate_list, covered_by, new_columns
 from core.steps.s02_profile import ProfileSummary, summary_of
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
 
@@ -58,6 +58,7 @@ class FeedRequirement(BaseModel):
     title: str
     status: str
     requester_id: str
+    raised_at: datetime  # phase 7.5, P7: the requirement's created_at, to tell same-title requirements apart
     basis: str | None
     accepted_conditions: SourceConditions | None  # None for a known source: Amaze holds the agreement
 
@@ -140,6 +141,8 @@ class FeedPage(BaseModel):
     loads: list[LoadOnPage]  # the latest LOADS_ON_PAGE, newest first
     product: Product | None = None  # phase 7: the product made at the feed's first release
     parked_columns: list[str] = []  # phase 7: step 12's new columns, not mapped yet
+    # phase 7.5, P11: the title of every requirement in the latest profile's coverage, selecting the feed or not
+    coverage_titles: dict[UUID, str] = {}
 
 
 class RuleOnPage(BaseModel):
@@ -245,6 +248,22 @@ def _why_none(column, *, last_glossary, with_builder: set[str], glossary) -> Why
     return None
 
 
+def _asked_by_active_run(session: Session, feed: Feed, mapped: set[str], asked: set[str], glossary) -> set[str]:
+    """Phase 7.5, P12 (plan, assumption 15): the columns the feed's active glossary run will ask about, by the
+    builder's own rule (s05_glossary.builder_input): the new columns of the run's profile, less those covered_by()
+    a mapping, an earlier proposal or a name. Empty when no run is active."""
+    run = GlossaryRunRepository(session).active(feed.id)
+    if run is None:
+        return set()
+    profile = FeedProfileRepository(session).get(run.profile_id)
+    if run.reason == "structure_change":
+        looked_at, sent_back = [c for c in profile.columns if c.name in set(run.columns)], ()
+    else:
+        looked_at, sent_back = profile.columns, run.columns
+    return {c.name for c in new_columns(looked_at, profile.spec, sent_back=sent_back)
+            if covered_by(c, glossary, mapped=mapped, asked=asked) is None}
+
+
 def mapping_table(session: Session, feed: Feed, profile: FeedProfile | None) -> list[ColumnMapping]:
     """Read only. Per column: the current mapping, the pending proposal, or why there is none."""
     if feed.stage != "registered" or profile is None:
@@ -253,10 +272,8 @@ def mapping_table(session: Session, feed: Feed, profile: FeedProfile | None) -> 
     current = {m.source_field: m for m in mappings.current_for_feed(feed.id)}
     pending = {p.payload["source_field"]: p for p in proposals.list_for_feed(feed.id, "mapping", status="pending")}
     last_glossary = {p.payload["source_field"]: p for p in proposals.list_for_feed(feed.id, "glossary_element")}
-    run = GlossaryRunRepository(session).active(feed.id)
-    with_builder = ({c.name for c in new_columns(profile.columns, profile.spec, sent_back=run.columns)}
-                    if run is not None else set())
     glossary = GlossaryRepository(session).list_current()
+    with_builder = _asked_by_active_run(session, feed, set(current), set(last_glossary), glossary)
     rows = []
     for column in profile.columns:
         mapped, waiting = current.get(column.name), pending.get(column.name)
@@ -306,7 +323,8 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
     for requirement_id in choices.requirements_selecting(feed.id):
         requirement, choice = requirements.get(requirement_id), choices.current(requirement_id)
         rows.append(FeedRequirement(id=requirement.id, title=requirement.title, status=requirement.status,
-                                    requester_id=requirement.requester_id, basis=choice.basis,
+                                    requester_id=requirement.requester_id, raised_at=requirement.created_at,
+                                    basis=choice.basis,
                                     accepted_conditions=choice.accepted_conditions))
     profiles = FeedProfileRepository(session).history(feed.id)
     latest = profiles[-1] if profiles else None
@@ -342,7 +360,9 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest),
         rules=_rules_on_page(session, feed), go_live=_go_live_on_page(session, feed, date.today()),
         loads=[load_on_page(session, load) for load in LoadRepository(session).list_for_feed(feed.id)[:LOADS_ON_PAGE]],
-        product=ProductRepository(session).for_feed(feed.id), parked_columns=parked_columns(session, feed.id))
+        product=ProductRepository(session).for_feed(feed.id), parked_columns=parked_columns(session, feed.id),
+        coverage_titles={c.requirement_id: requirements.get(c.requirement_id).title
+                         for c in (latest.coverage if latest else [])})
 
 
 FeedPage.model_rebuild()  # its phase 6 sections are declared below it

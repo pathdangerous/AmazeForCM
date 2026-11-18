@@ -177,6 +177,17 @@ async def test_the_feed_page_says_why_a_column_has_no_mapping(client, bond, kick
     assert column(await call(client, "GET", f"feeds/{bond}"), "maturity")["why_none"] == "rejected_by_glossary_owner"
 
 
+async def test_while_a_run_is_active_only_the_columns_it_asks_about_are_with_the_builder(client, bond, kicks):
+    """Phase 7.5, P12 (plan, assumption 15): the builder's own rule (new_columns, then covered_by) decides which
+    columns are "with the glossary builder"; maturity, covered by name, keeps its own reason."""
+    queued = await call(client, "POST", f"feeds/{bond}/glossary/run", headers=GLENN)
+    assert queued["run"]["status"] == "queued"
+    page = await call(client, "GET", f"feeds/{bond}")
+    assert column(page, "rating")["why_none"] == "with_glossary_builder"
+    assert column(page, "maturity")["why_none"] == "type_does_not_fit"
+    assert column(page, "cpn")["why_none"] is None
+
+
 async def test_a_model_that_does_not_answer_gives_503_and_writes_nothing(client, bond, kicks, db_session):
     from sqlalchemy import func, select
 

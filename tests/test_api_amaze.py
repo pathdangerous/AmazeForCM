@@ -78,7 +78,35 @@ async def test_feed_registry_lists_and_filters(client, db_session):
     assert (await client.get("/api/amaze/feeds", params={"stage": "lost"}, headers=STEWARD)).status_code == 422
 
 
-@pytest.mark.parametrize("path", ["/api/amaze/glossary/domains", "/api/amaze/glossary/elements", "/api/amaze/feeds"])
+async def test_feed_registry_names_each_catalogue_source(client, db_session):
+    """Phase 7.5, P4 (plan, assumption 13): the catalogue's name beside the raw reference, None when unknown."""
+    feeds = FeedRepository(db_session)
+    feeds.create_candidate(code="syn_volumes", name="Volumes", source_ref="files/exchange_volumes.csv",
+                           source_code="syn_exchange_volumes", connector="local_file")
+    feeds.create_candidate(code="syn_gone", name="Gone", source_ref="files/gone.csv", source_code="syn_not_listed",
+                           connector="local_file")
+    feeds.create_candidate(code="synthetic_prices", name="Synthetic prices", source_ref="vendor_a/prices.csv")
+    listed = (await client.get("/api/amaze/feeds", headers=STEWARD)).json()
+    assert {f["code"]: (f["source_ref"], f["source_name"]) for f in listed} == {
+        "syn_volumes": ("files/exchange_volumes.csv", "Exchange daily volumes"),
+        "syn_gone": ("files/gone.csv", None),
+        "synthetic_prices": ("vendor_a/prices.csv", None),
+    }
+
+
+@pytest.mark.parametrize("user", BACKEND_USERS)
+async def test_people_names_every_dev_user_for_any_backend_role(client, user):
+    """Phase 7.5, P3 and P8 (plan, assumption 12): one lookup of display names, backend and consumer users."""
+    response = await client.get("/api/amaze/people", headers={"X-Dev-User": user})
+    assert response.status_code == 200
+    people = response.json()
+    assert all(set(p) == {"id", "display_name"} for p in people)
+    names = {p["id"]: p["display_name"] for p in people}
+    assert (names["dev-data-owner"], names["dev-requester"]) == ("Devon Owner", "Riley Requester")
+
+
+@pytest.mark.parametrize("path", ["/api/amaze/glossary/domains", "/api/amaze/glossary/elements", "/api/amaze/feeds",
+                                  "/api/amaze/people"])
 async def test_signed_out_is_401_and_requester_is_403(client, path):
     assert (await client.get(path)).status_code == 401
     assert (await client.get(path, headers={"X-Dev-User": "dev-requester"})).status_code == 403

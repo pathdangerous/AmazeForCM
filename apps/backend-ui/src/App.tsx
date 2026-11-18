@@ -1,9 +1,10 @@
+import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, describeError, type User } from "./api";
+import { apiGet, describeError, type Person, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
-import NotificationsView from "./views/NotificationsView";
+import NotificationsView, { useInbox } from "./views/NotificationsView";
 import RunBanner from "./views/RunBanner";
 import StatusView from "./views/StatusView";
 
@@ -53,9 +54,11 @@ export default function App() {
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
+  const [people, setPeople] = useState<Record<string, string>>({}); // phase 7.5, P3 and P8: id -> display name
   // phase 5: bumped when an action or a finished glossary run changes what the banner and the views show
   const [changed, setChanged] = useState(0);
   const onChange = useCallback(() => setChanged((c) => c + 1), []);
+  const inbox = useInbox(me ? selected : "", view === "notifications"); // phase 7.5, P27
 
   useEffect(() => {
     const onHash = () => {
@@ -90,46 +93,54 @@ export default function App() {
       });
   }, [selected]);
 
+  useEffect(() => {
+    if (!me) return;
+    apiGet<Person[]>("/api/amaze/people", me.id)
+      .then((list) => setPeople(Object.fromEntries(list.map((p) => [p.id, p.display_name]))))
+      .catch(() => setPeople({})); // ids then show as themselves
+  }, [me]);
+
   return (
     <>
-      <header>
-        <h1>{TITLE}</h1>
-        <nav aria-label="Views">
-          {(Object.keys(VIEWS) as View[]).map((name) => (
-            <a key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
-              {VIEWS[name]}
-            </a>
-          ))}
-        </nav>
-        <div className="who">
-          <label htmlFor="dev-user">Dev user</label>
-          <select id="dev-user" data-testid="dev-user" value={selected} onChange={(e) => setSelected(e.target.value)}>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.display_name} ({u.roles.join(", ")})
-              </option>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <Title order={1}>{TITLE}</Title>
+          <nav aria-label="Views" className="app-nav">
+            {(Object.keys(VIEWS) as View[]).map((name) => (
+              <Anchor key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
+                {VIEWS[name]}{name === "notifications" && inbox.unseen > 0 ? ` (${inbox.unseen})` : ""}
+              </Anchor>
             ))}
-          </select>
-          <span data-testid="signed-in-as">
-            {me ? `Signed in as ${me.display_name}` : meError ? <span className="bad">{meError}</span> : ""}
-          </span>
+          </nav>
+          <div className="who">
+            <label htmlFor="dev-user">Dev user</label>
+            <NativeSelect id="dev-user" data-testid="dev-user" value={selected} w={240} style={{ flex: "none" }}
+                          onChange={(e) => setSelected(e.currentTarget.value)}
+                          data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
+            <span data-testid="signed-in-as" className="who-name" title={me ? `Signed in as ${me.display_name}` : undefined}>
+              {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}
+            </span>
+          </div>
         </div>
       </header>
-      <main>
+      <main className="app-main">
+        <div className="app-panel">
         <RunBanner devUser={me ? selected : ""} refresh={`${view}/${feedId}/${changed}`} onChange={onChange}
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "status" && <StatusView />}
         {view === "glossary" && (
-          <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")}
+          <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")} people={people}
                         changed={changed} onChange={onChange} />
         )}
-        {view === "notifications" && <NotificationsView devUser={me ? selected : ""} />}
-        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} />}
+        {view === "notifications" && <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />}
+        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} people={people} />}
         {view === "feeds" && feedId && (
-          <FeedView feedId={feedId} devUser={me ? selected : ""} canAct={!!me && me.roles.includes("backend_team")}
+          <FeedView feedId={feedId} devUser={me ? selected : ""} me={me} people={people}
+                    canAct={!!me && me.roles.includes("backend_team")}
                     canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))}
                     canMap={!!me && me.roles.includes("data_steward")} changed={changed} onChange={onChange} />
         )}
+        </div>
       </main>
       <footer>Synthetic data only.</footer>
     </>

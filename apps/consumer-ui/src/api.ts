@@ -121,6 +121,7 @@ export type RequirementPage = {
   progress: { state: "checking_file" | "setting_up" | "approved" | "delivery_held" | "part_missing"; text: string } | null;
   product: { code: string; name: string; entitled: boolean; route: string | null } | null;
   held_note: string | null;
+  element_names: Record<string, string>; // phase 7.5, P1: key -> current glossary name
 };
 
 export type Notification = { id: string; created_at: string; subject: string; body: string; link: string | null;

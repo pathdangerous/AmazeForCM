@@ -158,9 +158,35 @@ def glossary_element(key: str, session: DbSession) -> ElementDetail:
         raise HTTPException(status_code=404, detail=str(exc)) from None
 
 
-@router.get("/feeds", response_model=list[Feed])
-def feeds(session: DbSession, stage: FeedStage | None = None) -> list[Feed]:
-    return FeedRepository(session).list(stage=stage)
+class FeedRow(Feed):
+    """A registry row (phase 7.5, P4): the feed and its catalogue entry's name (None when the feed has no catalogue
+    source or the catalogue no longer lists it)."""
+
+    source_name: str | None
+
+
+def _source_name(catalogue: SourceCatalogue, feed: Feed) -> str | None:
+    try:
+        return catalogue.get(feed.source_code).name if feed.source_code else None
+    except UnknownSource:
+        return None
+
+
+@router.get("/feeds", response_model=list[FeedRow])
+def feeds(session: DbSession, catalogue: Catalogue, stage: FeedStage | None = None) -> list[FeedRow]:
+    return [FeedRow(**feed.model_dump(), source_name=_source_name(catalogue, feed))
+            for feed in FeedRepository(session).list(stage=stage)]
+
+
+class Person(BaseModel):
+    id: str
+    display_name: str
+
+
+@router.get("/people", response_model=list[Person])
+def people(identity: IdentityPort) -> list[Person]:
+    """Phase 7.5, P3 and P8 (plan, assumption 12): every user's display name, for the ids the pages show."""
+    return [Person(id=u.id, display_name=u.display_name) for u in identity.list_users()]
 
 
 # ---- phase 4: steps 02 to 04

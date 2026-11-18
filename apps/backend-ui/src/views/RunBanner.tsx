@@ -1,3 +1,4 @@
+import { Anchor, Button, Stack, Text } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, describeError, type RunOnBanner, type RunsBanner } from "../api";
 
@@ -60,7 +61,7 @@ export default function RunBanner({ devUser, canRun, refresh, onChange }: {
     }
   }
 
-  if (!banner) return error ? <div className="detail bad" role="alert" data-testid="run-banner">{error}</div> : null;
+  if (!banner) return error ? <div className="detail run-banner bad" role="alert" data-testid="run-banner">{error}</div> : null;
 
   const running = banner.active.filter((r) => r.status === "running");
   const queued = banner.active.filter((r) => r.status === "queued");
@@ -73,8 +74,8 @@ export default function RunBanner({ devUser, canRun, refresh, onChange }: {
   if (banner.active.length === 0 && banner.waiting_proposals === 0 && failed.length === 0 && !error) return null;
 
   return (
-    <div className="detail" role="status" aria-live="polite" data-testid="run-banner"
-         style={{ marginTop: 0, marginBottom: 16, display: "flex", flexDirection: "column", gap: 4 }}>
+    // phase 7.5: a panel with the info colour as a bar (a fill, never text: plan, assumption 2)
+    <Stack gap={4} className="detail run-banner" role="status" aria-live="polite" data-testid="run-banner">
       {banner.active.length > 0 && (
         <div data-testid="run-banner-active">
           <strong>Glossary builder:</strong>{" "}
@@ -84,23 +85,24 @@ export default function RunBanner({ devUser, canRun, refresh, onChange }: {
       )}
       {banner.waiting_proposals > 0 && (
         <div data-testid="run-banner-waiting">
-          <a href="#/glossary">
+          <Anchor href="#/glossary">
             {banner.waiting_proposals} {banner.waiting_proposals === 1 ? "proposal waits" : "proposals wait"} for the
             glossary owner
-          </a>
+          </Anchor>
         </div>
       )}
       {failed.map((r) => (
-        <div key={r.id} className="bad" data-testid="run-banner-failed">
-          Glossary builder failed for {feedLabel(r)}: {r.error ?? "no reason recorded"}{" "}
+        <div key={r.id} data-testid="run-banner-failed">
+          <span className="bad">Glossary builder failed for {feedLabel(r)}: {r.error ?? "no reason recorded"}</span>{" "}
           {canRun && (
-            <button type="button" disabled={busy} onClick={() => runAgain(r.feed_id)} data-testid="run-again">
+            <Button size="compact-xs" variant="default" disabled={busy} onClick={() => runAgain(r.feed_id)}
+                    data-testid="run-again">
               Run again
-            </button>
+            </Button>
           )}
         </div>
       ))}
-      {error && <div className="bad" role="alert">{error}</div>}
-    </div>
+      {error && <Text className="bad" role="alert">{error}</Text>}
+    </Stack>
   );
 }

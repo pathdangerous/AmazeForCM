@@ -125,7 +125,7 @@ def profiler(data: dict[str, Any]) -> dict[str, Any]:
             continue
         if gap not in gaps:
             gaps.append(gap)
-    summary = f"{rows} rows; {len({i['item'] for i in found})} of {len({i['item'] for i in items})} requested items are in the file."
+    summary = f"{rows} rows; {(n := len({i['item'] for i in found}))} of {len({i['item'] for i in items})} requested items {'is' if n == 1 else 'are'} in the file."
     return {"summary": summary, "recommended_outcome": "meets_with_gaps" if gaps else "meets", "gaps": gaps,
             "reasons": []}
 

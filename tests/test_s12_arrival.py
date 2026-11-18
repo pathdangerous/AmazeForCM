@@ -193,6 +193,19 @@ def test_a_missing_template_column_holds_the_delivery_and_warns_consumers(world)
     assert (after.status, after.arrival_outcome) == ("held", "breaking_held")
     assert after.arrival_detail["missing"] == ["px"] and LoadRepository(world.session).stages(load.id) == []
     assert told(world, "Delivery held") == {*TEAM, *OPERATIONS, "dev-data-owner", "dev-requester"}
+    links = world.session.scalars(select(NotificationRow.link).where(NotificationRow.subject.like("Delivery held%")))
+    assert set(links) == {f"#/feed/{world.feed}"}  # phase 7.5, P28 (plan, assumption 16)
+
+
+@pytest.mark.parametrize(("csv", "reason"), [
+    ("instr_id,trade_date\nsyn-0001,2026-11-02\n",
+     "1 column of the last accepted structure is not in the file: px"),
+    ("instr_id\nsyn-0001\n", "2 columns of the last accepted structure are not in the file: trade_date, px"),
+])
+def test_the_held_reason_counts_its_columns_in_words(world, csv, reason):
+    """Phase 7.5, checkpoint 2 item 3: no "column(s)"; 1 column is, 2 columns are."""
+    _, result, _ = check(world, csv)
+    assert isinstance(result, BreakingHeld) and result.reason == reason
 
 
 def test_a_file_that_is_not_a_csv_table_is_held_too(world):

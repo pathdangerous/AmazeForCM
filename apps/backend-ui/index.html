@@ -5,48 +5,57 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Amaze Backend Workbench</title>
     <link rel="icon" href="data:," />
+    <!--
+      The shell and the few page classes the views use (phase 7.5). Colours only through the theme's CSS
+      variables (src/theme.ts: --amz-* and Mantine's), which switch with the light or dark scheme.
+    -->
     <style>
-      :root {
-        color-scheme: light dark;
-        font-family: system-ui, sans-serif;
-        --line: #d0d7de;
-        --muted: #59636e;
-        --accent: #0969da;
-        --selected: #ddf4ff;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root { --line: #3d444d; --muted: #9198a1; --accent: #4493f8; --selected: #13233a; }
-      }
-      body { margin: 0; padding: 16px; max-width: 1100px; margin-inline: auto; }
-      header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px;
-               border-bottom: 1px solid var(--line); padding-bottom: 12px; }
-      header h1 { font-size: 1.25rem; margin: 0; }
-      nav { display: flex; gap: 16px; }
-      nav a { color: var(--accent); text-decoration: none; padding: 4px 0; }
-      nav a[aria-current="page"] { font-weight: 600; border-bottom: 2px solid var(--accent); }
+      body { margin: 0; }
+      .app-header { background: var(--amz-header); color: var(--amz-on-fill); }
+      .app-header-inner { max-width: 1200px; margin-inline: auto; padding: 8px 16px; display: flex; flex-wrap: wrap;
+                          align-items: center; gap: 8px 24px; }
+      .app-header h1 { color: var(--amz-on-fill); margin: 0; }
+      .app-nav { display: flex; flex-wrap: wrap; gap: 4px; }
+      .app-nav a { color: var(--amz-on-fill); text-decoration: none; padding: 8px; border-bottom: 3px solid transparent; }
+      .app-nav a:hover { text-decoration: underline; }
+      .app-nav a[aria-current="page"] { font-weight: 600; border-bottom-color: var(--amz-marker); }
       .who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-      footer { margin-top: 32px; color: var(--muted); font-size: 0.85rem; }
-      h2 { font-size: 1.1rem; }
-      dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+      /* checkpoint 2, item 2: one line at 1280 px; "Signed in as" is the part that gives way (ellipsis, full text
+         in its title); below 1100 px the header may wrap */
+      @media (min-width: 1100px) {
+        .app-header-inner { flex-wrap: nowrap; }
+        .app-header-inner > h1, .app-nav { flex: none; }
+        .who { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; }
+        .who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .who label { flex: none; white-space: nowrap; }
+      }
+      .who label { color: var(--amz-on-fill); }
+      .who-error { background: var(--amz-danger); color: var(--amz-on-fill); border-radius: 4px; padding: 2px 8px; }
+      .app-main { max-width: 1200px; margin: 16px auto 0; padding: 0 16px; }
+      .app-panel { background: var(--amz-panel); border: 1px solid var(--amz-line); border-radius: 6px; padding: 16px 20px; }
+      footer { max-width: 1200px; margin: 16px auto 24px; padding: 0 16px; color: var(--amz-muted); font-size: 12px; }
+      :focus-visible, .mantine-focus-auto:focus-visible { outline: 2px solid var(--amz-focus); outline-offset: 2px; }
+      h2, h3, h4 { color: var(--amz-heading); font-weight: 600; }
+      h2 { font-size: 20px; margin: 0 0 12px; }
+      h3 { font-size: 16px; margin: 24px 0 8px; }
+      h4 { font-size: 14px; margin: 16px 0 8px; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
       dt { font-weight: 600; }
       dd { margin: 0; }
-      .ok { color: #1a7f37; }
-      .bad { color: #cf222e; }
-      .muted { color: var(--muted); }
-      select, input { font: inherit; padding: 4px 6px; }
+      .ok { color: var(--amz-success-text); }
+      .bad { color: var(--amz-danger-text); }
+      .muted { color: var(--amz-muted); }
+      input[type="checkbox"], input[type="radio"] { accent-color: var(--amz-primary); }
       .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-      .filters button { font: inherit; padding: 4px 10px; border: 1px solid var(--line);
-                        background: transparent; color: inherit; border-radius: 4px; cursor: pointer; }
-      .filters button[aria-pressed="true"] { background: var(--selected); border-color: var(--accent); }
-      .table-wrap { overflow-x: auto; }
-      table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
-      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-      th { font-weight: 600; white-space: nowrap; }
       tbody tr.clickable { cursor: pointer; }
-      tbody tr.clickable:hover, tbody tr[aria-selected="true"] { background: var(--selected); }
-      code { font-size: 0.88rem; }
-      .detail { margin-top: 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 6px; }
-      .empty { padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; }
+      tbody tr.clickable:hover, tbody tr[aria-selected="true"] { background: var(--amz-subtle); }
+      code { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+      .detail { margin-top: 16px; padding: 12px 16px; border: 1px solid var(--amz-line); border-radius: 6px; }
+      .run-banner { margin: 0 0 16px; border-left: 4px solid var(--amz-info); }
+      .hits { list-style: none; padding: 0; }
+      .hits li { border: 1px solid var(--amz-line); border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+      .empty { padding: 24px; text-align: center; color: var(--amz-muted); border: 1px dashed var(--amz-line);
+               border-radius: 6px; }
     </style>
   </head>
   <body>

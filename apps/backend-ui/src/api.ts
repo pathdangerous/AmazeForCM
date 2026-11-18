@@ -76,6 +76,7 @@ export type RequirementCoverage = { requirement_id: string; items: ItemCoverage[
 export type Conditions = { licence: string; permitted_use: string; redistribution: string; external_approvals: string[] };
 export type FeedProfile = {
   id: string; created_at: string; version: number; outcome: "profiled" | "spec_only_low_confidence";
+  fetch_id: string; // the file it profiled (phase 7.5, P6)
   row_count: number | null; columns: FileColumn[]; coverage: RequirementCoverage[];
   spec: { source_code: string; columns: Record<string, string> }; detail: string | null; engine: string; profiled_by: string;
 };
@@ -88,8 +89,8 @@ export type FeedPage = {
   feed: Feed & { source_code: string | null };
   source: { code: string; name: string; provider: string; conditions: Conditions } | null;
   requirements: { id: string; title: string; status: string; requester_id: string; basis: string | null;
-                  accepted_conditions: Conditions | null }[];
-  last_file: { outcome: string; created_at: string; blob_ref: string | null; detail: string | null } | null;
+                  raised_at: string; accepted_conditions: Conditions | null }[]; // raised_at: phase 7.5, P7
+  last_file: { id: string; outcome: string; created_at: string; blob_ref: string | null; detail: string | null } | null;
   profile: FeedProfile | null;
   undeclared_columns: string[];
   missing_columns: string[];
@@ -108,7 +109,12 @@ export type FeedPage = {
   loads: LoadOnPage[]; // the latest 10, newest first
   product: { code: string; name: string; visibility: "open" | "restricted"; owner_id: string; created_at: string } | null;
   parked_columns: string[]; // phase 7: new columns step 12 found, not mapped yet
+  coverage_titles: Record<string, string>; // phase 7.5, P11: requirement id -> title, for every coverage card
 };
+
+// Phase 7.5: a registry row (P4) and one person's display name (GET /api/amaze/people, P3 and P8).
+export type FeedRow = Feed & { source_name: string | null };
+export type Person = { id: string; display_name: string };
 
 // ---- phase 7: steps 12, 15 and 20, and the inbox
 export type ArrivalOutcome = "on_time_complete" | "resent_quarantined" | "additive_parked" | "breaking_held";

@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { Button, Group, NativeSelect, Text, TextInput, Title } from "@mantine/core";
+import { useState, type ReactNode } from "react";
 import { apiPost, describeError, type FeedPage } from "../api";
+import { formatWhen } from "../theme";
 
 // Step 11 on a registered feed (phase 6 plan, section 10). Prepare (backend team): a test load of the latest file,
 // then the ReviewSummariserAgent's draft. The draft is the agent's: it decides nothing. The feed's named owner, and
@@ -12,10 +14,12 @@ const STEPS = [
   { value: "09", label: "09 Rules" },
 ] as const;
 
-export default function GoLiveSection({ page, devUser, userId, roles, onChange, onMessage, onError }: {
-  page: FeedPage; devUser: string; userId: string; roles: string[]; onChange: () => void;
-  onMessage: (m: string) => void; onError: (m: string | null) => void;
+export default function GoLiveSection({ page, devUser, userId, roles, people, onChange, onMessage, onError, notice }: {
+  page: FeedPage; devUser: string; userId: string; roles: string[]; people: Record<string, string>;
+  onChange: () => void; onMessage: (m: string) => void; onError: (m: string | null) => void;
+  notice?: ReactNode; // phase 7.5: the page's result line, when it is ours
 }) {
+  const name = (id: string) => people[id] ?? id; // phase 7.5, assumption 12
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [step, setStep] = useState<"05" | "06" | "09" | "">("");
@@ -53,7 +57,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
   const approve = () => run(async () => {
     const r = await apiPost<{ result: { hypercare_until: string; daily_run_utc: string } }>(
       `/api/amaze/proposals/${summary!.id}/decision`, { decision: "approved" }, devUser);
-    return `Approved: the daily job loads this feed at ${r.result.daily_run_utc} UTC; hypercare until ${r.result.hypercare_until}.`;
+    return `Approved: the daily job loads this feed at ${r.result.daily_run_utc} UTC; hypercare until ${formatWhen(r.result.hypercare_until)}.`;
   });
   const reject = () => run(async () => {
     await apiPost(`/api/amaze/proposals/${summary!.id}/decision`, { decision: "rejected", note, back_to_step: step }, devUser);
@@ -63,21 +67,22 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
   });
 
   return (
-    <>
-      <h3>Go-live</h3>
+    <div data-testid="section-go-live">
+      <Title order={3} mt="xl" mb="xs">Go-live</Title>
+      {notice}
       {live.latest ? (
-        <p data-testid="go-live-latest">
-          Version {live.latest.version} approved by {live.latest.approved_by}; the daily job loads this feed.{" "}
+        <Text data-testid="go-live-latest">
+          Version {live.latest.version} approved by {name(live.latest.approved_by)}; the daily job loads this feed.{" "}
           <span className={live.hypercare_active ? "ok" : "muted"}>
-            Hypercare {live.hypercare_active ? "until" : "ended"} {live.latest.hypercare_until}.
+            Hypercare {live.hypercare_active ? "until" : "ended"} {formatWhen(live.latest.hypercare_until)}.
           </span>
-        </p>
-      ) : <p className="muted" data-testid="go-live-none">Not live: the owner has not approved it for loading.</p>}
-      {held && <p className="bad" role="alert" data-testid="go-live-held">{held}</p>}
+        </Text>
+      ) : <Text className="muted" data-testid="go-live-none">Not live: the owner has not approved it for loading.</Text>}
+      {held && <Text className="bad" role="alert" data-testid="go-live-held">{held}</Text>}
 
       {summary && (
         <div className="detail" data-testid="go-live-summary">
-          <div className="muted">ReviewSummariserAgent's draft; it decides nothing. The owner is {owner ?? "not named"}.</div>
+          <div className="muted">ReviewSummariserAgent's draft; it decides nothing. The owner is {owner ? name(owner) : "not named"}.</div>
           <p>{summary.payload.summary}</p>
           {summary.payload.highlights.length > 0 && <ul>{summary.payload.highlights.map((h) => <li key={h}>{h}</li>)}</ul>}
           {summary.payload.risks.length > 0 && (
@@ -93,32 +98,31 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
                 {g.note ? ` (${g.note})` : ""} </span>) : "none"}
           </p>
           {isOwner ? (
-            <div className="toolbar" style={{ marginBottom: 0 }}>
-              <button type="button" disabled={busy} data-testid="approve-go-live" onClick={approve}>Approve go-live</button>
-              <select aria-label="Back to step" value={step} data-testid="back-to-step"
-                      onChange={(e) => setStep(e.target.value as typeof step)}>
-                <option value="">— back to step —</option>
-                {STEPS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-              <input aria-label="Note for the rejection" placeholder="Note (needed to reject)" value={note}
-                     maxLength={500} size={20} onChange={(e) => setNote(e.target.value)} />
-              <button type="button" disabled={busy || !note.trim() || !step} data-testid="reject-go-live"
-                      onClick={reject}>Reject</button>
-            </div>
+            <Group gap="xs">
+              <Button size="xs" disabled={busy} data-testid="approve-go-live" onClick={approve}>Approve go-live</Button>
+              <NativeSelect size="xs" aria-label="Back to step" value={step} data-testid="back-to-step"
+                            onChange={(e) => setStep(e.currentTarget.value as typeof step)}
+                            data={[{ value: "", label: "— back to step —" }, ...STEPS]} />
+              <TextInput size="xs" w={200} aria-label="Note for the rejection" placeholder="Note (needed to reject)"
+                         value={note} maxLength={500} onChange={(e) => setNote(e.currentTarget.value)} />
+              <Button size="xs" variant="default" disabled={busy || !note.trim() || !step} data-testid="reject-go-live"
+                      onClick={reject}>Reject</Button>
+            </Group>
           ) : (
-            <p className="muted">Only {owner ?? "the named owner"} decides this go-live.</p>
+            <Text className="muted">Only {owner ? name(owner) : "the named owner"} decides this go-live.</Text>
           )}
         </div>
       )}
 
       {canPrepare ? (
-        <p>
-          <button type="button" disabled={busy || !!summary} data-testid="prepare-go-live" onClick={prepare}>
+        <Group gap="sm" mt="sm">
+          <Button disabled={busy || !!summary} data-testid="prepare-go-live" onClick={prepare}>
             Prepare go-live
-          </button>{" "}
-          <span className="muted">a test load of the latest file, then the agent's summary for the owner</span>
-        </p>
-      ) : <p className="muted">Only the backend team prepares a go-live.</p>}
-    </>
+          </Button>
+          {summary ? <span className="muted" data-testid="prepare-why">A summary already waits for the owner.</span>
+            : <span className="muted">a test load of the latest file, then the agent's summary for the owner</span>}
+        </Group>
+      ) : <Text className="muted" mt="sm">Only the backend team prepares a go-live.</Text>}
+    </div>
   );
 }

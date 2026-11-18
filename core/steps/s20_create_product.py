@@ -143,7 +143,8 @@ def _create_product(session: Session, load: Load, context: FinishContext) -> tup
         missing, outstanding = uncovered(session, held, requirement.elements, requirement.terms)
         if missing or outstanding:
             results.append(DataNotInDomains(requirement_id=requirement.id, missing=missing, terms=outstanding))
-            _tell_backend(context, product.name, requirement.title, missing, outstanding)
+            _tell_backend(context, product.name, requirement.title, missing, outstanding,
+                          link=f"#/feed/{product.feed_id}")
             continue
         access = decide(visibility=product.visibility, owner_id=product.owner_id, user_id=requirement.requester_id,
                         roles=list(context.roles_of(requirement.requester_id)),
@@ -155,7 +156,8 @@ def _create_product(session: Session, load: Load, context: FinishContext) -> tup
         else:
             route = route_to_access(context.display_name(product.owner_id), product.name)
             subject, body = f"Access restricted: {requirement.title}", f"Your data is in {product.name}. {route}."
-        context.notifier.notify(recipient=requirement.requester_id, subject=subject, body=body)
+        context.notifier.notify(recipient=requirement.requester_id, subject=subject, body=body,
+                                link=f"#/requirement/{requirement.id}")  # phase 7.5, P28
         results.append(Created(requirement_id=requirement.id, product_code=product.code, product_new=new,
                                status=status))
     return product.code, results
@@ -186,7 +188,7 @@ def _new_product(session: Session, feed_id: UUID, requirement_id: UUID | None):
 
 
 def _tell_backend(context: FinishContext, product: str, title: str, missing: Sequence[str],
-                  outstanding: Sequence[str]) -> None:
+                  outstanding: Sequence[str], *, link: str) -> None:
     parts = []
     if missing:
         parts.append(f"elements {', '.join(missing)}")
@@ -196,4 +198,4 @@ def _tell_backend(context: FinishContext, product: str, title: str, missing: Seq
         context.notifier.notify(
             recipient=person, subject=f"Requirement not covered: {title}",
             body=f"{product} was released, but it does not hold {' and '.join(parts)} that the requirement "
-                 "asks for. It stays onboarding.")
+                 "asks for. It stays onboarding.", link=link)

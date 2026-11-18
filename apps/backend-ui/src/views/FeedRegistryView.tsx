@@ -1,5 +1,7 @@
+import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
-import { apiGet, describeError, type Feed } from "../api";
+import { apiGet, describeError, type Feed, type FeedRow } from "../api";
+import { formatWhen } from "../theme";
 
 const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "", label: "All" },
@@ -8,16 +10,18 @@ const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "rejected", label: "Rejected" },
 ];
 
-export default function FeedRegistryView({ devUser }: { devUser: string }) {
+// Converted to the phase 7.5 look (task 4). P3: the owner by name; P4: the source by its catalogue name, the raw
+// reference beside it; P5: an empty state in the backend team's words.
+export default function FeedRegistryView({ devUser, people }: { devUser: string; people: Record<string, string> }) {
   const [stage, setStage] = useState<"" | Feed["stage"]>("");
-  const [feeds, setFeeds] = useState<Feed[] | null>(null);
+  const [feeds, setFeeds] = useState<FeedRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!devUser) return;
     let current = true;
     const query = stage ? `?stage=${stage}` : "";
-    apiGet<Feed[]>(`/api/amaze/feeds${query}`, devUser)
+    apiGet<FeedRow[]>(`/api/amaze/feeds${query}`, devUser)
       .then((list) => {
         if (!current) return;
         setFeeds(list);
@@ -31,53 +35,63 @@ export default function FeedRegistryView({ devUser }: { devUser: string }) {
 
   return (
     <section>
-      <h2>Feed registry</h2>
+      <Title order={2} mb="md">Feed registry</Title>
       <div className="toolbar">
-        <div className="filters" role="group" aria-label="Stage">
+        <Button.Group aria-label="Stage">{/* renders role="group" */}
           {STAGES.map((s) => (
-            <button key={s.value} type="button" aria-pressed={stage === s.value} onClick={() => setStage(s.value)}>
+            <Button key={s.value} size="xs" variant={stage === s.value ? "filled" : "default"}
+                    aria-pressed={stage === s.value} onClick={() => setStage(s.value)}>
               {s.label}
-            </button>
+            </Button>
           ))}
-        </div>
+        </Button.Group>
       </div>
 
-      {error && <p className="bad" role="alert">{error}</p>}
+      {error && <Text className="bad" role="alert">{error}</Text>}
 
       {feeds !== null && feeds.length === 0 && (
         <div className="empty" data-testid="feeds-empty">
           {stage ? `No ${stage} feeds.` : "No feeds yet."}
-          <div className="muted">Feeds appear here when the custom data product finds a source (phase 3).</div>
+          <div className="muted">Feeds appear here when a requester's source is selected.</div>
         </div>
       )}
 
       {feeds !== null && feeds.length > 0 && (
-        <div className="table-wrap">
-          <table data-testid="feeds-table">
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Name</th>
-                <th>Stage</th>
-                <th>Owner</th>
-                <th>Source</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Table.ScrollContainer minWidth={720}>
+          <Table data-testid="feeds-table" highlightOnHover verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Code</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Stage</Table.Th>
+                <Table.Th>Owner</Table.Th>
+                <Table.Th>Source</Table.Th>
+                <Table.Th>Created</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {feeds.map((f) => (
-                <tr key={f.id}>
-                  <td><a href={`#/feed/${f.id}`} data-testid={`feed-link-${f.code}`}><code>{f.code}</code></a></td>
-                  <td>{f.name}</td>
-                  <td>{f.stage}</td>
-                  <td>{f.owner_id ?? <span className="muted">none</span>}</td>
-                  <td>{f.source_ref ?? <span className="muted">none</span>}</td>
-                  <td>{new Date(f.created_at).toLocaleString()}</td>
-                </tr>
+                <Table.Tr key={f.id}>
+                  <Table.Td>
+                    <Anchor href={`#/feed/${f.id}`} data-testid={`feed-link-${f.code}`}><code>{f.code}</code></Anchor>
+                  </Table.Td>
+                  <Table.Td>{f.name}</Table.Td>
+                  <Table.Td>{f.stage}</Table.Td>
+                  <Table.Td>{f.owner_id ? (people[f.owner_id] ?? f.owner_id) : <span className="muted">none</span>}</Table.Td>
+                  <Table.Td>
+                    {f.source_name ? (
+                      <>
+                        <span data-testid="source-name">{f.source_name}</span>
+                        {f.source_ref && <div className="muted" data-testid="source-ref">{f.source_ref}</div>}
+                      </>
+                    ) : f.source_ref ?? <span className="muted">none</span>}
+                  </Table.Td>
+                  <Table.Td>{formatWhen(f.created_at)}</Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </section>
   );

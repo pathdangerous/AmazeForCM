@@ -128,7 +128,16 @@ Check:
 .\.venv\Scripts\python -m alembic current     # expect: 0019 (head)
 npm --prefix apps\backend-ui run build
 npm --prefix apps\consumer-ui run build
+npm --prefix apps\backend-ui test              # component checks (vitest, jsdom, a stubbed fetch); phase 7.5
+npm --prefix apps\consumer-ui test
 ```
+
+Run `npm test` from PowerShell (or Git Bash at `/F/`, not `/f/`): from a lower-case drive path vitest loads
+itself twice and every file fails with "failed to find the current suite".
+
+Both UIs share one look (phase 7.5): Mantine 9.7.4 and `src/theme.ts`, byte-identical in the two apps
+(`tests/test_ui_shared_look.py` checks that, the pinned versions and that every text/background pair meets
+4.5:1). Change `theme.ts` in both apps at once.
 
 The Playwright story (phase 7) runs on its own copy of the world, schema `e2e_story` of `amaze_test`, never on
 `amaze`. Stop `dev.ps1` first (the story starts the API and both UIs on ports 8000, 5173 and 5174 itself and
@@ -137,6 +146,16 @@ refuses to reuse a running one). One-time: `npm --prefix e2e install` and `cd e2
 ```powershell
 cd e2e; npx playwright test                   # expect: 1 passed (about 20 seconds)
 ```
+
+The screenshots of phase 7.5 walk the same path with their own spec and the same servers, and write
+`docs/phase75-screenshots/<SHOTS_SET>/` (`before`, `after`, `checkpoint1`; `SHOTS_ONLY` picks shots, for example
+`S1,S2,S7`; `SHOTS_SCHEME=dark` takes them dark):
+
+```powershell
+cd e2e; $env:SHOTS_SET="after"; npx playwright test -c playwright.screens.config.ts   # expect: 1 passed, 25 files
+```
+
+If a story run right after a screens run fails with "The API cannot be reached" (`net::ERR_NO_BUFFER_SPACE` in its trace), run the story and the screens set with a pause between, and check that both `vite.config.ts` still give the `/api` proxy keep-alive connections (phase 7.5).
 
 Evaluate the mapping prompt on the gold set (`fixtures/gold/mappings.json`, phase 5). Its model calls are
 logged to a database of their own, `amaze_eval`, owned by the same `amaze` user; the script refuses to

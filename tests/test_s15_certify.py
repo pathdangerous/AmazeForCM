@@ -67,6 +67,8 @@ def test_a_load_below_the_threshold_is_held_and_its_consumers_warned(world):
     assert certification.trust_score == Decimal("80.0") and finished.run.load.status == "held"
     people = {"dev-requester", *OPERATIONS, *TEAM}  # the consumers, operations, the backend team (no product yet)
     assert set(certification.warned) == people and told(world, "Load held") == people
+    links = world.session.scalars(select(NotificationRow.link).where(NotificationRow.subject.like("Load held%")))
+    assert set(links) == {f"#/feed/{finished.run.load.feed_id}"}  # phase 7.5, P28 (plan, assumption 16)
     assert LoadCertificationRepository(world.session).for_load(finished.run.load.id).warned == certification.warned
     assert finished.product_code is None  # nothing was released, so no product (step 20 runs on release only)
 

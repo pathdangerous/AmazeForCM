@@ -187,6 +187,18 @@ async def test_the_feed_page_shows_the_conditions_each_requester_accepted(client
     assert feed["source"]["code"] == VENDOR and feed["last_file"]["outcome"] == "fetched"
 
 
+async def test_the_feed_page_dates_each_requirement_and_titles_each_coverage_card(client):
+    """Phase 7.5, P7 and P11 (plan, assumption 14): raised_at per requirement; coverage_titles per coverage card."""
+    requirement_id, feed_id = await onboarding_by_pick(client, "open price", ["open_price"], VENDOR)
+    profiled = await amaze(client, feed_id, "profile")
+    [requirement] = profiled["feed"]["requirements"]
+    raised = await page(client, requirement_id)
+    assert requirement["raised_at"] == raised["created_at"]
+    covered = [c["requirement_id"] for c in profiled["feed"]["profile"]["coverage"]]
+    assert covered == [requirement_id]
+    assert profiled["feed"]["coverage_titles"] == {requirement_id: requirement["title"]}
+
+
 async def test_the_owners_are_the_data_owners(client):
     owners = (await client.get("/api/amaze/owners", headers=STEWARD)).json()
     assert [(o["id"], o["display_name"]) for o in owners] == [("dev-data-owner", "Devon Owner")]

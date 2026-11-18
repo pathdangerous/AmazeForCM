@@ -302,7 +302,8 @@ class DailyFetch:
             if failure.reason == "configuration_changed_since_go_live":
                 body += " The owner approves a new go-live to load this feed again."
         for person in dict.fromkeys(p for p in people if p):
-            notifier.notify(recipient=person, subject=f"Load {word}: {feed.code}", body=body)
+            notifier.notify(recipient=person, subject=f"Load {word}: {feed.code}", body=body,
+                            link=f"#/feed/{feed.id}")  # phase 7.5, P28
 
     def _tell_catalogue_broken(self, error: Exception) -> None:
         with self.session_factory() as session:

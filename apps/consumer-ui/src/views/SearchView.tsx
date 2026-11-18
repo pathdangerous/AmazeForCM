@@ -1,3 +1,4 @@
+import { Anchor, Badge, Button, Checkbox, Fieldset, Group, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { useState, type FormEvent } from "react";
 import {
   apiGet,
@@ -98,31 +99,33 @@ export default function SearchView({ devUser }: { devUser: string }) {
 
   return (
     <section>
-      <h2>Search</h2>
-      <form onSubmit={onSearch} className="row">
-        <label htmlFor="q" className="visually-hidden">Search for data</label>
-        <input id="q" data-testid="search-box" value={query} onChange={(e) => setQuery(e.target.value)}
-               placeholder="for example: close price and volume" maxLength={500} />
-        <button type="submit" disabled={busy || !devUser}>Search</button>
+      <Title order={2} mb="md">Search</Title>
+      <form onSubmit={onSearch}>
+        <Group gap="sm" wrap="nowrap">
+          <TextInput id="q" flex={1} aria-label="Search for data" data-testid="search-box" value={query}
+                     onChange={(e) => setQuery(e.currentTarget.value)}
+                     placeholder="for example: close price and volume" maxLength={500} />
+          <Button type="submit" variant="filled" disabled={busy || !devUser}>Search</Button>
+        </Group>
       </form>
 
-      {error && <p className="bad" role="alert" data-testid="error">{error}</p>}
+      {error && <Text className="bad" role="alert" data-testid="error">{error}</Text>}
 
       {found && (
         <>
           {found.match.domains.length > 0 && (
-            <p className="muted">Filtered to domain: {found.match.domains.join(", ").replaceAll("_", " ")}</p>
+            <Text className="muted" mt="sm">Filtered to domain: {found.match.domains.join(", ").replaceAll("_", " ")}</Text>
           )}
           {found.hits.length === 0 ? (
-            <p data-testid="no-hits">No products hold this data.</p>
+            <Text mt="sm" data-testid="no-hits">No products hold this data.</Text>
           ) : (
             <ul className="hits" data-testid="hits">
               {found.hits.map((h) => (
                 <li key={h.product.code} data-testid={`hit-${h.product.code}`}>
                   <strong>{h.product.name}</strong>{" "}
-                  <span className={h.outcome === "found" ? "badge ok" : "badge warn"}>
-                    {h.outcome === "found" ? "Available" : "Access restricted"}
-                  </span>
+                  {h.outcome === "found"
+                    ? <Badge tt="none" color="var(--amz-success)">Available</Badge>
+                    : <Badge tt="none" color="var(--amz-warning)" c="var(--amz-on-bright)">Access restricted</Badge>}
                   <div>{h.product.description}</div>
                   <div className="muted">Elements: {h.product.element_keys.join(", ")}</div>
                   {h.outcome === "not_entitled_visible" && <div className="route">{h.route}</div>}
@@ -132,62 +135,60 @@ export default function SearchView({ devUser }: { devUser: string }) {
           )}
 
           <form onSubmit={onSubmit} className="request" data-testid="request-form">
-            <h3>Request this data</h3>
+            <Title order={3}>Request this data</Title>
             {elementChoices.length > 0 && (
-              <fieldset>
-                <legend>Data items in the glossary</legend>
-                {elementChoices.map((key) => (
-                  <label key={key} className="choice">
-                    <input type="checkbox" checked={elements.has(key)} onChange={() => toggle(elements, setElements, key)} />
-                    {found.element_names[key] ?? key}{candidates.includes(key) ? " (one of several meanings)" : ""}
-                  </label>
-                ))}
-              </fieldset>
+              <Fieldset legend="Data items in the glossary">
+                <Stack gap={6}>
+                  {elementChoices.map((key) => (
+                    <Checkbox key={key} checked={elements.has(key)} onChange={() => toggle(elements, setElements, key)}
+                              label={`${found.element_names[key] ?? key}${candidates.includes(key) ? " (one of several meanings)" : ""}`} />
+                  ))}
+                </Stack>
+              </Fieldset>
             )}
             {found.match.terms.length > 0 && (
-              <fieldset>
-                <legend>Is this a data item you need?</legend>
-                {found.match.terms.map((t) => (
-                  <label key={t} className="choice">
-                    <input type="checkbox" checked={terms.has(t)} onChange={() => toggle(terms, setTerms, t)} />
-                    {t}
-                  </label>
-                ))}
+              <Fieldset legend="Is this a data item you need?">
+                <Stack gap={6}>
+                  {found.match.terms.map((t) => (
+                    <Checkbox key={t} checked={terms.has(t)} onChange={() => toggle(terms, setTerms, t)} label={t} />
+                  ))}
+                </Stack>
                 {!assistance && (
-                  <button type="button" data-testid="assist" onClick={onAssist} disabled={busy}>
+                  <Button size="xs" variant="default" mt="sm" data-testid="assist" onClick={onAssist} disabled={busy}>
                     Ask the assistant
-                  </button>
+                  </Button>
                 )}
-              </fieldset>
+              </Fieldset>
             )}
             {assistance && (
-              <fieldset data-testid="suggestions">
-                <legend>The assistant suggests</legend>
-                {suggested.length === 0 && <p className="muted">No suggestion for these words.</p>}
-                {suggested.map((s) => (
-                  <div key={`${s.term}-${s.element_key}`}>
-                    <label className="choice">
-                      <input type="checkbox" data-testid={`suggested-${s.element_key}`}
-                             checked={elements.has(s.element_key)}
-                             onChange={() => toggle(elements, setElements, s.element_key)} />
-                      {s.element_name} <span className="badge">suggested</span> for "{s.term}"
-                    </label>
-                    <div className="muted">{s.reason}</div>
-                    {s.products.length > 0 && (
-                      <div className="muted">
-                        Held by: {s.products.map((h) => `${h.product.name}${h.outcome === "found" ? "" : " (access restricted)"}`).join(", ")}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </fieldset>
+              <Fieldset legend="The assistant suggests" data-testid="suggestions">
+                {suggested.length === 0 && <Text className="muted">No suggestion for these words.</Text>}
+                <Stack gap={8}>
+                  {suggested.map((s) => (
+                    <div key={`${s.term}-${s.element_key}`}>
+                      <Checkbox data-testid={`suggested-${s.element_key}`} checked={elements.has(s.element_key)}
+                                onChange={() => toggle(elements, setElements, s.element_key)}
+                                label={<>{s.element_name} <Badge size="xs" variant="default" tt="none">suggested</Badge> for "{s.term}"</>} />
+                      <div className="muted">{s.reason}</div>
+                      {s.products.length > 0 && (
+                        <div className="muted">
+                          Held by: {s.products.map((h) => `${h.product.name}${h.outcome === "found" ? "" : " (access restricted)"}`).join(", ")}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </Stack>
+              </Fieldset>
             )}
-            <label htmlFor="purpose">Purpose (optional)</label>
-            <textarea id="purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={2000} rows={2} />
-            <button type="submit" data-testid="submit" disabled={busy || nothingTicked || !searched.trim()}>
-              Submit request
-            </button>
-            {nothingTicked && <span className="muted"> Tick at least one item.</span>}
+            <Textarea id="purpose" label="Purpose (optional)" value={purpose} maxLength={2000} autosize minRows={2}
+                      onChange={(e) => setPurpose(e.currentTarget.value)} />
+            <Group gap="sm">
+              <Button type="submit" variant="filled" data-testid="submit"
+                      disabled={busy || nothingTicked || !searched.trim()}>
+                Submit request
+              </Button>
+              {nothingTicked && <span className="muted">Tick at least one item.</span>}
+            </Group>
           </form>
         </>
       )}
@@ -204,9 +205,9 @@ export default function SearchView({ devUser }: { devUser: string }) {
             </p>
           )}
           {result.requirement && (
-            <p><a href={`#/requirement/${result.requirement.requirement.id}`}>See this requirement</a></p>
+            <p><Anchor href={`#/requirement/${result.requirement.requirement.id}`}>See this requirement</Anchor></p>
           )}
-          <p><a href="#/requests">See My requests</a></p>
+          <p><Anchor href="#/requests">See My requests</Anchor></p>
         </div>
       )}
     </section>

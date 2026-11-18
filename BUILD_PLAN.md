@@ -92,6 +92,13 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - Work through `docs/ui-polish.md`.
 - First decide on a component library and the visual reference; then apply them to both UIs.
 - **Done when:** the Playwright test still passes and the screenshots are approved.
+- **As built (phase 7.5, `docs/plans/phase-7.5.md`):** Mantine 9.7.4 and one `src/theme.ts` (the Hexaware
+  palette, derived dark values, every text/background pair at 4.5:1; byte-identical in both apps, checked by
+  `tests/test_ui_shared_look.py`); both UIs converted; component checks (`npm test`, vitest) in both apps; the
+  screens harness (`e2e/playwright.screens.config.ts`) and the before and after shots in
+  `docs/phase75-screenshots/`. Read fields only, no migration: `GET /api/amaze/people`, `source_name`,
+  `raised_at`, `coverage_titles`, `element_names`, the builder's own rule for `why_none`; notification links at
+  five sites. Each polish line's fate is in `docs/ui-polish.md`.
 
 ## Phase 8 — Azure move (on the office laptop)
 

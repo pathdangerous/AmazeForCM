@@ -1,6 +1,7 @@
+import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
-import NotificationsView from "./views/NotificationsView";
+import NotificationsView, { useInbox } from "./views/NotificationsView";
 import RequestsView from "./views/RequestsView";
 import RequirementView from "./views/RequirementView";
 import SearchView from "./views/SearchView";
@@ -79,40 +80,44 @@ export default function App() {
   }, [selected]);
 
   const devUser = me ? selected : "";
+  const inbox = useInbox(devUser, route.view === "notifications"); // phase 7.5, P27
 
   return (
     <>
-      <header>
-        <h1>{TITLE}</h1>
-        <nav aria-label="Views">
-          {(Object.keys(VIEWS) as View[]).map((name) => (
-            <a key={name} href={`#/${name}`} aria-current={route.view === name ? "page" : undefined}>
-              {VIEWS[name]}
-            </a>
-          ))}
-        </nav>
-        <div className="who">
-          <label htmlFor="dev-user">Dev user</label>
-          <select id="dev-user" data-testid="dev-user" value={selected} onChange={(e) => setSelected(e.target.value)}>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.display_name} ({u.roles.join(", ")})
-              </option>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <Title order={1}>{TITLE}</Title>
+          <nav aria-label="Views" className="app-nav">
+            {(Object.keys(VIEWS) as View[]).map((name) => (
+              <Anchor key={name} href={`#/${name}`} aria-current={route.view === name ? "page" : undefined}>
+                {VIEWS[name]}{name === "notifications" && inbox.unseen > 0 ? ` (${inbox.unseen})` : ""}
+              </Anchor>
             ))}
-          </select>
-          <span data-testid="signed-in-as">
-            {me ? `Signed in as ${me.display_name}` : meError ? <span className="bad">{meError}</span> : ""}
-          </span>
+          </nav>
+          <div className="who">
+            <label htmlFor="dev-user">Dev user</label>
+            <NativeSelect id="dev-user" data-testid="dev-user" value={selected}
+                          onChange={(e) => setSelected(e.currentTarget.value)}
+                          data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
+            <span data-testid="signed-in-as">
+              {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}
+            </span>
+          </div>
         </div>
-        <StatusLine />
       </header>
-      <main>
+      {/* below the header bar, on a panel: its ok/bad colours are not legible on the navy bar (phase 7.5) */}
+      <div className="app-status"><StatusLine /></div>
+      <main className="app-main">
+        <div className="app-panel">
         {route.view === "search" && <SearchView devUser={devUser} />}
         {route.view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
-        {route.view === "notifications" && <NotificationsView key={devUser} devUser={devUser} />}
+        {route.view === "notifications" && (
+          <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />
+        )}
         {route.view === "requirement" && (
           <RequirementView key={`${devUser}-${route.id}`} devUser={devUser} requirementId={route.id} />
         )}
+        </div>
       </main>
       <footer>Synthetic data only.</footer>
     </>
