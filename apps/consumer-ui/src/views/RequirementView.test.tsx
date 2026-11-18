@@ -45,6 +45,14 @@ test("P29: the five states as a list with the current one marked; the progress s
   expect((await screen.findByTestId("progress-steps")).querySelector('[aria-current="step"]')?.textContent).toBe("Ready");
 });
 
+test("checkpoint 2: the product badge is a span (a div may not sit in the product paragraph)", async () => {
+  show(requirementPage({ status: "ready", progress: null, message: "Ready. Your data is in Bond terms.",
+                         product: { code: "syn_bond_terms", name: "Bond terms", entitled: true, route: null } }));
+  const product = await screen.findByTestId("product");
+  expect(product.tagName).toBe("P");
+  expect(product.querySelector("div")).toBeNull();
+});
+
 test("A2: Search is a filled primary button, not full width", async () => {
   stubFetch({});
   renderWithTheme(<SearchView devUser="dev-requester" />);

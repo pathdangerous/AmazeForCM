@@ -130,6 +130,7 @@ export const theme = createTheme({
   },
   components: {
     Table: { defaultProps: { borderColor: "var(--amz-line)", highlightOnHoverColor: "var(--amz-subtle)" } },
+    Badge: { defaultProps: { component: "span" } }, // badges sit inside text (p, h2): never a div there
   },
 });
 

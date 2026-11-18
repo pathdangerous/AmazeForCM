@@ -59,6 +59,12 @@ test("task 8: the sign-off and register forms keep native radios, a native selec
     expect((await screen.findByTestId("owner")).tagName).toBe("SELECT");
   });
 
+test("checkpoint 2: the stage badge in the title is a span (a div may not sit in an h2)", async () => {
+  show();
+  const title = (await screen.findByTestId("feed-view")).querySelector("h2") as HTMLElement;
+  expect(title.querySelector("div")).toBeNull();
+});
+
 test("P6: Profile is offered only while the latest file has no profile", async () => {
   show(candidate(), { canAct: true }, USERS[0]); // the fixture's profile is of the latest file
   const file = await screen.findByTestId("section-file");
