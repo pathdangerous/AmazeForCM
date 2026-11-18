@@ -1,3 +1,4 @@
+import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
@@ -92,30 +93,29 @@ export default function App() {
 
   return (
     <>
-      <header>
-        <h1>{TITLE}</h1>
-        <nav aria-label="Views">
-          {(Object.keys(VIEWS) as View[]).map((name) => (
-            <a key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
-              {VIEWS[name]}
-            </a>
-          ))}
-        </nav>
-        <div className="who">
-          <label htmlFor="dev-user">Dev user</label>
-          <select id="dev-user" data-testid="dev-user" value={selected} onChange={(e) => setSelected(e.target.value)}>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.display_name} ({u.roles.join(", ")})
-              </option>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <Title order={1}>{TITLE}</Title>
+          <nav aria-label="Views" className="app-nav">
+            {(Object.keys(VIEWS) as View[]).map((name) => (
+              <Anchor key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
+                {VIEWS[name]}
+              </Anchor>
             ))}
-          </select>
-          <span data-testid="signed-in-as">
-            {me ? `Signed in as ${me.display_name}` : meError ? <span className="bad">{meError}</span> : ""}
-          </span>
+          </nav>
+          <div className="who">
+            <label htmlFor="dev-user">Dev user</label>
+            <NativeSelect id="dev-user" data-testid="dev-user" value={selected}
+                          onChange={(e) => setSelected(e.currentTarget.value)}
+                          data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
+            <span data-testid="signed-in-as">
+              {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}
+            </span>
+          </div>
         </div>
       </header>
-      <main>
+      <main className="app-main">
+        <div className="app-panel">
         <RunBanner devUser={me ? selected : ""} refresh={`${view}/${feedId}/${changed}`} onChange={onChange}
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "status" && <StatusView />}
@@ -130,6 +130,7 @@ export default function App() {
                     canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))}
                     canMap={!!me && me.roles.includes("data_steward")} changed={changed} onChange={onChange} />
         )}
+        </div>
       </main>
       <footer>Synthetic data only.</footer>
     </>

@@ -1,6 +1,22 @@
 // Component checks (phase 7.5 plan, assumption 9): synthetic answers for a stubbed fetch. Synthetic data only.
+import { MantineProvider } from "@mantine/core";
+import { render } from "@testing-library/react";
+import { createElement, type ReactElement } from "react";
 import { vi } from "vitest";
 import type { User } from "../api";
+import { cssVariablesResolver, theme } from "../theme";
+
+// Renders inside the app's MantineProvider (main.tsx does the same). jsdom has no matchMedia, which Mantine reads
+// for the colour scheme (a stub that never matches: light), and no ResizeObserver (Table.ScrollContainer).
+export function renderWithTheme(ui: ReactElement) {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: false, media: query, onchange: null, addEventListener: () => undefined,
+    removeEventListener: () => undefined, addListener: () => undefined, removeListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+  return render(createElement(MantineProvider, { theme, cssVariablesResolver, children: ui }));
+}
 
 export const USERS: User[] = [
   { id: "dev-backend-team", display_name: "Blake Backend", email: "blake@example.test", roles: ["backend_team"], app: "backend" },

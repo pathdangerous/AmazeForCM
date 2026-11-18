@@ -1,3 +1,4 @@
+import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type Feed } from "../api";
 
@@ -8,6 +9,7 @@ const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "rejected", label: "Rejected" },
 ];
 
+// Converted to the phase 7.5 look (task 4); its polish lines P3 to P5 are task 13.
 export default function FeedRegistryView({ devUser }: { devUser: string }) {
   const [stage, setStage] = useState<"" | Feed["stage"]>("");
   const [feeds, setFeeds] = useState<Feed[] | null>(null);
@@ -31,18 +33,19 @@ export default function FeedRegistryView({ devUser }: { devUser: string }) {
 
   return (
     <section>
-      <h2>Feed registry</h2>
+      <Title order={2} mb="md">Feed registry</Title>
       <div className="toolbar">
-        <div className="filters" role="group" aria-label="Stage">
+        <Button.Group aria-label="Stage">{/* renders role="group" */}
           {STAGES.map((s) => (
-            <button key={s.value} type="button" aria-pressed={stage === s.value} onClick={() => setStage(s.value)}>
+            <Button key={s.value} size="xs" variant={stage === s.value ? "filled" : "default"}
+                    aria-pressed={stage === s.value} onClick={() => setStage(s.value)}>
               {s.label}
-            </button>
+            </Button>
           ))}
-        </div>
+        </Button.Group>
       </div>
 
-      {error && <p className="bad" role="alert">{error}</p>}
+      {error && <Text className="bad" role="alert">{error}</Text>}
 
       {feeds !== null && feeds.length === 0 && (
         <div className="empty" data-testid="feeds-empty">
@@ -52,32 +55,34 @@ export default function FeedRegistryView({ devUser }: { devUser: string }) {
       )}
 
       {feeds !== null && feeds.length > 0 && (
-        <div className="table-wrap">
-          <table data-testid="feeds-table">
-            <thead>
-              <tr>
-                <th>Code</th>
-                <th>Name</th>
-                <th>Stage</th>
-                <th>Owner</th>
-                <th>Source</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
+        <Table.ScrollContainer minWidth={720}>
+          <Table data-testid="feeds-table" highlightOnHover verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Code</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th>Stage</Table.Th>
+                <Table.Th>Owner</Table.Th>
+                <Table.Th>Source</Table.Th>
+                <Table.Th>Created</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {feeds.map((f) => (
-                <tr key={f.id}>
-                  <td><a href={`#/feed/${f.id}`} data-testid={`feed-link-${f.code}`}><code>{f.code}</code></a></td>
-                  <td>{f.name}</td>
-                  <td>{f.stage}</td>
-                  <td>{f.owner_id ?? <span className="muted">none</span>}</td>
-                  <td>{f.source_ref ?? <span className="muted">none</span>}</td>
-                  <td>{new Date(f.created_at).toLocaleString()}</td>
-                </tr>
+                <Table.Tr key={f.id}>
+                  <Table.Td>
+                    <Anchor href={`#/feed/${f.id}`} data-testid={`feed-link-${f.code}`}><code>{f.code}</code></Anchor>
+                  </Table.Td>
+                  <Table.Td>{f.name}</Table.Td>
+                  <Table.Td>{f.stage}</Table.Td>
+                  <Table.Td>{f.owner_id ?? <span className="muted">none</span>}</Table.Td>
+                  <Table.Td>{f.source_ref ?? <span className="muted">none</span>}</Table.Td>
+                  <Table.Td>{new Date(f.created_at).toLocaleString()}</Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </section>
   );

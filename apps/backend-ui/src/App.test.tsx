@@ -1,7 +1,7 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import App from "./App";
-import { shellRoutes, stubFetch } from "./test/fixtures";
+import { renderWithTheme, shellRoutes, stubFetch } from "./test/fixtures";
 
 afterEach(() => {
   cleanup();
@@ -10,7 +10,7 @@ afterEach(() => {
 
 test("the dev-user select lists the stubbed users", async () => {
   stubFetch(shellRoutes());
-  render(<App />);
+  renderWithTheme(<App />);
   const select = await screen.findByTestId("dev-user");
   expect(select.tagName).toBe("SELECT"); // a native select: the story's selectOption needs it (plan, 10.3)
   await within(select).findByText("Blake Backend (backend_team)");
