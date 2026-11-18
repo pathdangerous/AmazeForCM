@@ -13,7 +13,9 @@ const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const SET = process.env.SHOTS_SET ?? "before";
 const ONLY = process.env.SHOTS_ONLY ? new Set(process.env.SHOTS_ONLY.split(",").map((s) => s.trim())) : null;
 const DIR = `${REPO}docs/phase75-screenshots/${SET}/`;
-const CONTEXT = { viewport: { width: 1280, height: 900 }, colorScheme: "light" as const };
+// SHOTS_SCHEME=dark (checkpoint 2, A4): the shots in the dark scheme, each file named <id>-dark.png
+const SCHEME = process.env.SHOTS_SCHEME === "dark" ? "dark" as const : "light" as const;
+const CONTEXT = { viewport: { width: 1280, height: 900 }, colorScheme: SCHEME };
 
 const RILEY = ["dev-requester", "Riley Requester"] as const;
 const BLAKE = ["dev-backend-team", "Blake Backend"] as const;
@@ -29,7 +31,7 @@ const written: string[] = [];
 // A shot: the whole page, one element, or the band from the top of `from` to the bottom of `to`.
 async function shot(page: Page, name: string, from?: Locator, to?: Locator) {
   if (ONLY && !ONLY.has(name.split("-")[0])) return;
-  const path = `${DIR}${name}.png`;
+  const path = SCHEME === "dark" ? `${DIR}${name.split("-")[0]}-dark.png` : `${DIR}${name}.png`;
   await page.waitForLoadState("networkidle");
   if (!from) {
     await page.screenshot({ path, fullPage: true, animations: "disabled" });
@@ -137,6 +139,11 @@ test("the phase 7.5 screens, S1 to S25", async ({ browser }) => {
   });
   await approvable.first().getByTestId("approve").click();
   await expect(backend.getByTestId("glossary-decided")).toContainText(`Approved for ${FEED}.`);
+  const decidedFilter = backend.getByRole("button", { name: "Decided", exact: true });
+  if (await decidedFilter.count()) { // phase 7.5, P16 (task 12): the Decided list; absent in the before set
+    await decidedFilter.click();
+    await expect(backend.getByTestId("glossary-decided-row").first()).toBeVisible();
+  }
   await shot(backend, "S13-glossary-decided");
 
   // ---- E5 Sam: Propose mappings (shot), then the three approvals
