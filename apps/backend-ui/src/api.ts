@@ -76,6 +76,7 @@ export type RequirementCoverage = { requirement_id: string; items: ItemCoverage[
 export type Conditions = { licence: string; permitted_use: string; redistribution: string; external_approvals: string[] };
 export type FeedProfile = {
   id: string; created_at: string; version: number; outcome: "profiled" | "spec_only_low_confidence";
+  fetch_id: string; // the file it profiled (phase 7.5, P6)
   row_count: number | null; columns: FileColumn[]; coverage: RequirementCoverage[];
   spec: { source_code: string; columns: Record<string, string> }; detail: string | null; engine: string; profiled_by: string;
 };
@@ -89,7 +90,7 @@ export type FeedPage = {
   source: { code: string; name: string; provider: string; conditions: Conditions } | null;
   requirements: { id: string; title: string; status: string; requester_id: string; basis: string | null;
                   raised_at: string; accepted_conditions: Conditions | null }[]; // raised_at: phase 7.5, P7
-  last_file: { outcome: string; created_at: string; blob_ref: string | null; detail: string | null } | null;
+  last_file: { id: string; outcome: string; created_at: string; blob_ref: string | null; detail: string | null } | null;
   profile: FeedProfile | null;
   undeclared_columns: string[];
   missing_columns: string[];

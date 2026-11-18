@@ -1,3 +1,4 @@
+import { Button, Group, NativeSelect, Text, TextInput, Title } from "@mantine/core";
 import { useState } from "react";
 import { apiPost, describeError, type FeedPage } from "../api";
 
@@ -64,16 +65,16 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
 
   return (
     <div data-testid="section-go-live">
-      <h3>Go-live</h3>
+      <Title order={3} mt="xl" mb="xs">Go-live</Title>
       {live.latest ? (
-        <p data-testid="go-live-latest">
+        <Text data-testid="go-live-latest">
           Version {live.latest.version} approved by {live.latest.approved_by}; the daily job loads this feed.{" "}
           <span className={live.hypercare_active ? "ok" : "muted"}>
             Hypercare {live.hypercare_active ? "until" : "ended"} {live.latest.hypercare_until}.
           </span>
-        </p>
-      ) : <p className="muted" data-testid="go-live-none">Not live: the owner has not approved it for loading.</p>}
-      {held && <p className="bad" role="alert" data-testid="go-live-held">{held}</p>}
+        </Text>
+      ) : <Text className="muted" data-testid="go-live-none">Not live: the owner has not approved it for loading.</Text>}
+      {held && <Text className="bad" role="alert" data-testid="go-live-held">{held}</Text>}
 
       {summary && (
         <div className="detail" data-testid="go-live-summary">
@@ -93,32 +94,30 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
                 {g.note ? ` (${g.note})` : ""} </span>) : "none"}
           </p>
           {isOwner ? (
-            <div className="toolbar" style={{ marginBottom: 0 }}>
-              <button type="button" disabled={busy} data-testid="approve-go-live" onClick={approve}>Approve go-live</button>
-              <select aria-label="Back to step" value={step} data-testid="back-to-step"
-                      onChange={(e) => setStep(e.target.value as typeof step)}>
-                <option value="">— back to step —</option>
-                {STEPS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-              <input aria-label="Note for the rejection" placeholder="Note (needed to reject)" value={note}
-                     maxLength={500} size={20} onChange={(e) => setNote(e.target.value)} />
-              <button type="button" disabled={busy || !note.trim() || !step} data-testid="reject-go-live"
-                      onClick={reject}>Reject</button>
-            </div>
+            <Group gap="xs">
+              <Button size="xs" disabled={busy} data-testid="approve-go-live" onClick={approve}>Approve go-live</Button>
+              <NativeSelect size="xs" aria-label="Back to step" value={step} data-testid="back-to-step"
+                            onChange={(e) => setStep(e.currentTarget.value as typeof step)}
+                            data={[{ value: "", label: "— back to step —" }, ...STEPS]} />
+              <TextInput size="xs" w={200} aria-label="Note for the rejection" placeholder="Note (needed to reject)"
+                         value={note} maxLength={500} onChange={(e) => setNote(e.currentTarget.value)} />
+              <Button size="xs" variant="default" disabled={busy || !note.trim() || !step} data-testid="reject-go-live"
+                      onClick={reject}>Reject</Button>
+            </Group>
           ) : (
-            <p className="muted">Only {owner ?? "the named owner"} decides this go-live.</p>
+            <Text className="muted">Only {owner ?? "the named owner"} decides this go-live.</Text>
           )}
         </div>
       )}
 
       {canPrepare ? (
-        <p>
-          <button type="button" disabled={busy || !!summary} data-testid="prepare-go-live" onClick={prepare}>
+        <Group gap="sm" mt="sm">
+          <Button disabled={busy || !!summary} data-testid="prepare-go-live" onClick={prepare}>
             Prepare go-live
-          </button>{" "}
+          </Button>
           <span className="muted">a test load of the latest file, then the agent's summary for the owner</span>
-        </p>
-      ) : <p className="muted">Only the backend team prepares a go-live.</p>}
+        </Group>
+      ) : <Text className="muted" mt="sm">Only the backend team prepares a go-live.</Text>}
     </div>
   );
 }

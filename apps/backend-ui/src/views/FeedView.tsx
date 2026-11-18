@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Anchor, Badge, Button, Group, NativeSelect, Radio, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type Owner,
   type SignoffOutcome, type User,
@@ -12,6 +13,7 @@ import RulesSection from "./RulesSection";
 // The four actions show only for the backend team; every other backend role reads.
 // Phase 5 (plan, section 10.3), on a registered feed: the glossary builder's last run, and the mapping table.
 // Run the glossary builder shows for the glossary owner and the backend team; the mapping actions for the steward.
+// Phase 7.5: the look of task 4 (Mantine); each section is a section-<name> element (task 1).
 
 const WHY_NONE: Record<string, string> = {
   with_glossary_builder: "with the glossary builder",
@@ -34,6 +36,16 @@ function proposedText(r: Proposed): string {
   return `Mappings proposed: ${parts.join(", ")}.`;
 }
 
+// One part of the feed page: a section-<name> element with its heading.
+function Section({ name, title, children }: { name: string; title: ReactNode; children: ReactNode }) {
+  return (
+    <div data-testid={`section-${name}`}>
+      <Title order={3} mt="xl" mb="xs">{title}</Title>
+      {children}
+    </div>
+  );
+}
+
 // One column of the mapping table: mapped (with Propose again), pending (choose, approve, reject), or why none.
 function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
   column: ColumnMapping; canMap: boolean; busy: boolean; onPropose: (column: string) => void;
@@ -46,18 +58,19 @@ function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
   useEffect(() => setChoice(pending?.recommended ?? ""), [pending?.proposal_id, pending?.recommended]);
 
   return (
-    <tr data-testid="mapping-row" data-column={column.name}>
-      <td><code>{column.name}</code></td>
-      <td>{column.type ?? <span className="muted">unknown</span>}</td>
-      <td>{column.source_says ?? <span className="muted">not declared</span>}</td>
-      <td>
+    <Table.Tr data-testid="mapping-row" data-column={column.name}>
+      <Table.Td><code>{column.name}</code></Table.Td>
+      <Table.Td>{column.type ?? <span className="muted">unknown</span>}</Table.Td>
+      <Table.Td>{column.source_says ?? <span className="muted">not declared</span>}</Table.Td>
+      <Table.Td>
         {column.mapped_to ? (
           <>
             <code>{column.mapped_to}</code> <span className="muted">version {column.mapped_version}</span>
             {column.versions.length > 1 && (
-              <> <button type="button" onClick={() => setShowVersions(!showVersions)} data-testid="versions">
+              <> <Button size="compact-xs" variant="default" onClick={() => setShowVersions(!showVersions)}
+                         data-testid="versions">
                 {showVersions ? "Hide versions" : `${column.versions.length} versions`}
-              </button></>
+              </Button></>
             )}
             {showVersions && (
               <ul data-testid="mapping-versions">
@@ -79,36 +92,36 @@ function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
               {pending.recommended ? "MappingAgent recommends one" : "A tie: choose one"} (it decides nothing):{" "}
               {pending.reason}
             </div>
-            <div role="radiogroup" aria-label={`Candidates for ${column.name}`}>
-              {pending.candidates.map((c) => (
-                <label key={c} style={{ marginRight: 12 }}>
-                  <input type="radio" name={`candidate-${pending.proposal_id}`} value={c} checked={choice === c}
-                         disabled={!canMap} onChange={() => setChoice(c)} /> <code>{c}</code>
-                  {c === pending.recommended && <span className="muted"> (recommended)</span>}
-                </label>
-              ))}
-            </div>
+            <Radio.Group value={choice} onChange={setChoice} aria-label={`Candidates for ${column.name}`}>
+              <Group gap="md" mt={4}>
+                {pending.candidates.map((c) => (
+                  <Radio key={c} name={`candidate-${pending.proposal_id}`} value={c} disabled={!canMap} size="xs"
+                         label={<><code>{c}</code>{c === pending.recommended && <span className="muted"> (recommended)</span>}</>} />
+                ))}
+              </Group>
+            </Radio.Group>
           </div>
         )}
-      </td>
-      <td>
+      </Table.Td>
+      <Table.Td>
         {canMap && pending && (
-          <div className="toolbar" style={{ marginBottom: 0 }}>
-            <button type="button" disabled={busy || !choice} data-testid="approve-mapping"
-                    onClick={() => onDecide(pending.proposal_id, "approved", choice || null, "")}>Approve</button>
-            <input aria-label={`Note for ${column.name}`} placeholder="Note (needed to reject)" value={note}
-                   maxLength={500} size={16} onChange={(e) => setNote(e.target.value)} />
-            <button type="button" disabled={busy || !note.trim()} data-testid="reject-mapping"
-                    onClick={() => onDecide(pending.proposal_id, "rejected", null, note)}>Reject</button>
-          </div>
+          <Group gap="xs" wrap="nowrap">
+            <Button size="xs" disabled={busy || !choice} data-testid="approve-mapping"
+                    onClick={() => onDecide(pending.proposal_id, "approved", choice || null, "")}>Approve</Button>
+            <TextInput size="xs" w={170} aria-label={`Note for ${column.name}`} placeholder="Note (needed to reject)"
+                       value={note} maxLength={500} onChange={(e) => setNote(e.currentTarget.value)} />
+            <Button size="xs" variant="default" disabled={busy || !note.trim()} data-testid="reject-mapping"
+                    onClick={() => onDecide(pending.proposal_id, "rejected", null, note)}>Reject</Button>
+          </Group>
         )}
         {canMap && !pending && column.mapped_to && (
-          <button type="button" disabled={busy} data-testid="propose-again" onClick={() => onPropose(column.name)}>
+          <Button size="xs" variant="default" disabled={busy} data-testid="propose-again"
+                  onClick={() => onPropose(column.name)}>
             Propose again
-          </button>
+          </Button>
         )}
-      </td>
-    </tr>
+      </Table.Td>
+    </Table.Tr>
   );
 }
 
@@ -204,8 +217,8 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       return decision === "approved" ? `Mapped to ${choice}.` : "Rejected: its candidates are not proposed again.";
     });
 
-  if (error && !page) return <p className="bad" role="alert">{error}</p>;
-  if (!page) return <p className="muted">Loading…</p>;
+  if (error && !page) return <Text className="bad" role="alert">{error}</Text>;
+  if (!page) return <Text className="muted">Loading…</Text>;
 
   const { feed, profile } = page;
   const specOnly = profile?.outcome === "spec_only_low_confidence";
@@ -213,98 +226,100 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
 
   return (
     <section data-testid="feed-view">
-      <p><a href="#/feeds">← Feed registry</a></p>
-      <h2>
-        <code>{feed.code}</code> {feed.name} <span className="muted">({feed.stage})</span>
-      </h2>
-      {done && <p className="ok" role="status" data-testid="feed-done">{done}</p>}
-      {error && <p className="bad" role="alert">{error}</p>}
+      <Anchor href="#/feeds" size="sm">← Feed registry</Anchor>
+      <Title order={2} mt="xs" mb="sm">
+        <code>{feed.code}</code> {feed.name} <Badge variant="default" ml="xs">{feed.stage}</Badge>
+      </Title>
+      {done && <Text className="ok" role="status" data-testid="feed-done">{done}</Text>}
+      {error && <Text className="bad" role="alert">{error}</Text>}
 
-      <div data-testid="section-source">
-      <h3>Source</h3>
-      {page.source ? (
-        <dl>
-          <dt>Provider</dt><dd>{page.source.name} — {page.source.provider}</dd>
-          <dt>Licence</dt><dd>{page.source.conditions.licence}</dd>
-          <dt>Permitted use</dt><dd>{page.source.conditions.permitted_use}</dd>
-          <dt>Redistribution</dt><dd>{page.source.conditions.redistribution}</dd>
-        </dl>
-      ) : <p className="muted">No catalogue source.</p>}
-      </div>
+      <Section name="source" title="Source">
+        {page.source ? (
+          <dl>
+            <dt>Provider</dt><dd>{page.source.name} — {page.source.provider}</dd>
+            <dt>Licence</dt><dd>{page.source.conditions.licence}</dd>
+            <dt>Permitted use</dt><dd>{page.source.conditions.permitted_use}</dd>
+            <dt>Redistribution</dt><dd>{page.source.conditions.redistribution}</dd>
+          </dl>
+        ) : <Text className="muted">No catalogue source.</Text>}
+      </Section>
 
-      <div data-testid="section-requirements">
-      <h3>Requirements that select it</h3>
-      {page.requirements.length === 0 ? <p className="muted">None now.</p> : (
-        <div className="table-wrap">
-          <table data-testid="feed-requirements">
-            <thead><tr><th>Requirement</th><th>Status</th><th>How chosen</th><th>Conditions the requester accepted</th></tr></thead>
-            <tbody>
-              {page.requirements.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.title}</td>
-                  <td>{r.status}</td>
-                  <td>{r.basis === "known_source" ? "Known source" : "Requester's pick"}</td>
-                  <td>
-                    {r.accepted_conditions ? (
-                      <>
-                        {r.accepted_conditions.licence}; {r.accepted_conditions.permitted_use}
-                        {r.accepted_conditions.external_approvals.map((a) => <div key={a} className="muted">Holds: {a}</div>)}
-                      </>
-                    ) : <span className="muted">Known source: Amaze holds the agreement</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      </div>
+      <Section name="requirements" title="Requirements that select it">
+        {page.requirements.length === 0 ? <Text className="muted">None now.</Text> : (
+          <Table.ScrollContainer minWidth={720}>
+            <Table data-testid="feed-requirements" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr><Table.Th>Requirement</Table.Th><Table.Th>Status</Table.Th><Table.Th>How chosen</Table.Th>
+                  <Table.Th>Conditions the requester accepted</Table.Th></Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {page.requirements.map((r) => (
+                  <Table.Tr key={r.id}>
+                    <Table.Td>{r.title}</Table.Td>
+                    <Table.Td>{r.status}</Table.Td>
+                    <Table.Td>{r.basis === "known_source" ? "Known source" : "Requester's pick"}</Table.Td>
+                    <Table.Td>
+                      {r.accepted_conditions ? (
+                        <>
+                          {r.accepted_conditions.licence}; {r.accepted_conditions.permitted_use}
+                          {r.accepted_conditions.external_approvals.map((a) => <div key={a} className="muted">Holds: {a}</div>)}
+                        </>
+                      ) : <span className="muted">Known source: Amaze holds the agreement</span>}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+      </Section>
 
-      <div data-testid="section-file">
-      <h3>Latest file</h3>
-      {page.last_file ? (
-        <p>
-          {page.last_file.outcome === "fetched" ? <code>{page.last_file.blob_ref}</code> : <span className="bad">{page.last_file.detail}</span>}
-          {" "}<span className="muted">{new Date(page.last_file.created_at).toLocaleString()}</span>
-        </p>
-      ) : <p className="muted">No file yet.</p>}
-      {canAct && feed.stage === "candidate" && page.last_file && (
-        <button type="button" disabled={busy} data-testid="profile"
-                onClick={() => act("profile", {}, (r) => `Profile written: ${r.result?.outcome.replaceAll("_", " ")}.`)}>
-          Profile the latest file
-        </button>
-      )}
-      </div>
+      <Section name="file" title="Latest file">
+        {page.last_file ? (
+          <Text>
+            {page.last_file.outcome === "fetched" ? <code>{page.last_file.blob_ref}</code> : <span className="bad">{page.last_file.detail}</span>}
+            {" "}<span className="muted">{new Date(page.last_file.created_at).toLocaleString()}</span>
+          </Text>
+        ) : <Text className="muted">No file yet.</Text>}
+        {canAct && feed.stage === "candidate" && page.last_file && (
+          <Button mt="sm" disabled={busy} data-testid="profile"
+                  onClick={() => act("profile", {}, (r) => `Profile written: ${r.result?.outcome.replaceAll("_", " ")}.`)}>
+            Profile the latest file
+          </Button>
+        )}
+      </Section>
 
       {profile && (
-        <div data-testid="section-profile">
-          <h3>Profile {profile.version}</h3>
+        <Section name="profile" title={`Profile ${profile.version}`}>
           {specOnly && (
-            <p className="bad" role="note" data-testid="spec-only">
+            <Text className="bad" role="note" data-testid="spec-only">
               Low confidence: spec only. {profile.detail} Only what the source declares is known.
-            </p>
+            </Text>
           )}
-          <p className="muted">{profile.row_count ?? 0} rows · {profile.engine} · by {profile.profiled_by}</p>
+          <Text className="muted">{profile.row_count ?? 0} rows · {profile.engine} · by {profile.profiled_by}</Text>
           {profile.columns.length > 0 && (
-            <div className="table-wrap">
-              <table data-testid="profile-columns">
-                <thead><tr><th>Column</th><th>Type</th><th>Null rate</th><th>Distinct</th><th>Declared as</th></tr></thead>
-                <tbody>
+            <Table.ScrollContainer minWidth={600}>
+              <Table data-testid="profile-columns" verticalSpacing={4}>
+                <Table.Thead>
+                  <Table.Tr><Table.Th>Column</Table.Th><Table.Th>Type</Table.Th><Table.Th>Null rate</Table.Th>
+                    <Table.Th>Distinct</Table.Th><Table.Th>Declared as</Table.Th></Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
                   {profile.columns.map((c) => (
-                    <tr key={c.name}>
-                      <td><code>{c.name}</code></td>
-                      <td>{c.type}</td>
-                      <td>{pct(c.null_rate)}</td>
-                      <td>{c.distinct_count}</td>
-                      <td>{profile.spec.columns[c.name] ?? <span className="muted">not declared</span>}</td>
-                    </tr>
+                    <Table.Tr key={c.name}>
+                      <Table.Td><code>{c.name}</code></Table.Td>
+                      <Table.Td>{c.type}</Table.Td>
+                      <Table.Td>{pct(c.null_rate)}</Table.Td>
+                      <Table.Td>{c.distinct_count}</Table.Td>
+                      <Table.Td>{profile.spec.columns[c.name] ?? <span className="muted">not declared</span>}</Table.Td>
+                    </Table.Tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
           )}
-          {page.undeclared_columns.length > 0 && <p>Not declared by the source: {page.undeclared_columns.join(", ")}</p>}
-          {page.missing_columns.length > 0 && <p className="bad">Declared but not in the file: {page.missing_columns.join(", ")}</p>}
+          {page.undeclared_columns.length > 0 && <Text mt="xs">Not declared by the source: {page.undeclared_columns.join(", ")}</Text>}
+          {page.missing_columns.length > 0 && <Text mt="xs" className="bad">Declared but not in the file: {page.missing_columns.join(", ")}</Text>}
           {profile.coverage.map((c) => (
             <div key={c.requirement_id} className="detail">
               <strong>{page.requirements.find((r) => r.id === c.requirement_id)?.title ?? "A requirement"}</strong>
@@ -320,12 +335,11 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               </ul>
             </div>
           ))}
-        </div>
+        </Section>
       )}
 
       {profile && (
-        <div data-testid="section-summary">
-          <h3>Summary</h3>
+        <Section name="summary" title="Summary">
           {page.summary ? (
             <div className="detail" data-testid="summary">
               <div className="muted">ProfilerAgent's proposal ({page.summary_status}); it decides nothing</div>
@@ -334,81 +348,72 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               {page.summary.gaps.length > 0 && <ul>{page.summary.gaps.map((g) => <li key={g}>Gap: {g}</li>)}</ul>}
               {page.summary.reasons.length > 0 && <ul>{page.summary.reasons.map((g) => <li key={g}>Reason: {g}</li>)}</ul>}
             </div>
-          ) : <p className="muted">Not summarised yet.</p>}
+          ) : <Text className="muted">Not summarised yet.</Text>}
           {canAct && page.next_action === "summarise" && (
-            <button type="button" disabled={busy} data-testid="summarise"
+            <Button mt="sm" disabled={busy} data-testid="summarise"
                     onClick={() => act("profile/summary", {}, () => "Summary ready to sign off.")}>
               Summarise
-            </button>
+            </Button>
           )}
-        </div>
+        </Section>
       )}
 
       {canAct && page.next_action === "sign_off" && page.summary && (
-        <div data-testid="section-signoff">
-        <form className="detail" data-testid="signoff-form" onSubmit={(e) => {
-          e.preventDefault();
-          if (!outcome) return;
-          act("signoff", { outcome, [items]: outcome === "meets" ? [] : lines(text) },
-              (r) => `Signed off: ${r.result?.outcome.replaceAll("_", " ")}.`);
-        }}>
-          <h3>Sign off profile {profile?.version}</h3>
-          <div role="radiogroup" aria-label="Outcome">
-            {OUTCOMES.map((o) => (
-              <label key={o.value} style={{ marginRight: 16 }}>
-                <input type="radio" name="outcome" value={o.value} checked={outcome === o.value}
-                       disabled={o.value === "meets" && specOnly} data-testid={`outcome-${o.value}`}
-                       onChange={() => setOutcome(o.value)} /> {o.label}
-              </label>
-            ))}
-          </div>
-          {specOnly && <p className="muted">Meets is not offered: no data rows were profiled.</p>}
-          {outcome && outcome !== "meets" && (
-            <p>
-              <label htmlFor="signoff-text">{outcome === "rejected" ? "Reasons" : "Gaps"}, one per line</label><br />
-              <textarea id="signoff-text" rows={3} cols={60} value={text} onChange={(e) => setText(e.target.value)} />
-            </p>
-          )}
-          <p className="muted" data-testid="shown-to-requester">Gaps and reasons are shown to the requester.</p>
-          <button type="submit" disabled={busy || !outcome || (outcome !== "meets" && lines(text).length === 0)}
-                  data-testid="signoff">
-            Sign off
-          </button>
-        </form>
-        </div>
+        <Section name="signoff" title={`Sign off profile ${profile?.version}`}>
+          <form className="detail" data-testid="signoff-form" onSubmit={(e) => {
+            e.preventDefault();
+            if (!outcome) return;
+            act("signoff", { outcome, [items]: outcome === "meets" ? [] : lines(text) },
+                (r) => `Signed off: ${r.result?.outcome.replaceAll("_", " ")}.`);
+          }}>
+            <Radio.Group value={outcome} onChange={(v) => setOutcome(v as SignoffOutcome)} aria-label="Outcome">
+              <Group gap="lg">
+                {OUTCOMES.map((o) => (
+                  <Radio key={o.value} name="outcome" value={o.value} label={o.label}
+                         disabled={o.value === "meets" && specOnly} data-testid={`outcome-${o.value}`} />
+                ))}
+              </Group>
+            </Radio.Group>
+            {specOnly && <Text className="muted" mt="xs">Meets is not offered: no data rows were profiled.</Text>}
+            {outcome && outcome !== "meets" && (
+              <Textarea id="signoff-text" mt="sm" autosize minRows={3} maw={640}
+                        label={`${outcome === "rejected" ? "Reasons" : "Gaps"}, one per line`} value={text}
+                        onChange={(e) => setText(e.currentTarget.value)} />
+            )}
+            <Text className="muted" mt="sm" data-testid="shown-to-requester">Gaps and reasons are shown to the requester.</Text>
+            <Button type="submit" mt="sm" disabled={busy || !outcome || (outcome !== "meets" && lines(text).length === 0)}
+                    data-testid="signoff">
+              Sign off
+            </Button>
+          </form>
+        </Section>
       )}
 
       {canAct && page.next_action === "register" && (
-        <div data-testid="section-register">
-        <form className="detail" data-testid="register-form" onSubmit={(e) => {
-          e.preventDefault();
-          act("register", { owner_id: owner || null, visibility }, (r) =>
-            r.result?.outcome === "registered" ? "Registered." : "Not registered: name a data owner.");
-        }}>
-          <h3>Register</h3>
-          <p>
-            <label htmlFor="owner">Owner</label>{" "}
-            <select id="owner" value={owner} onChange={(e) => setOwner(e.target.value)} data-testid="owner">
-              <option value="">— choose a data owner —</option>
-              {owners.map((o) => <option key={o.id} value={o.id}>{o.display_name}</option>)}
-            </select>
-          </p>
-          <p role="radiogroup" aria-label="Who may see it">
-            {(["open", "restricted"] as const).map((v) => (
-              <label key={v} style={{ marginRight: 16 }}>
-                <input type="radio" name="visibility" checked={visibility === v} onChange={() => setVisibility(v)} /> {v}
-              </label>
-            ))}
-          </p>
-          {page.source && <p className="muted">Licence, copied from the catalogue: {page.source.conditions.licence}</p>}
-          <button type="submit" disabled={busy} data-testid="register">Register</button>
-        </form>
-        </div>
+        <Section name="register" title="Register">
+          <form className="detail" data-testid="register-form" onSubmit={(e) => {
+            e.preventDefault();
+            act("register", { owner_id: owner || null, visibility }, (r) =>
+              r.result?.outcome === "registered" ? "Registered." : "Not registered: name a data owner.");
+          }}>
+            <NativeSelect id="owner" label="Owner" maw={320} value={owner} data-testid="owner"
+                          onChange={(e) => setOwner(e.currentTarget.value)}
+                          data={[{ value: "", label: "— choose a data owner —" },
+                                 ...owners.map((o) => ({ value: o.id, label: o.display_name }))]} />
+            <Radio.Group mt="sm" label="Who may see it" value={visibility}
+                         onChange={(v) => setVisibility(v as "open" | "restricted")}>
+              <Group gap="lg" mt={4}>
+                {(["open", "restricted"] as const).map((v) => <Radio key={v} name="visibility" value={v} label={v} />)}
+              </Group>
+            </Radio.Group>
+            {page.source && <Text className="muted" mt="sm">Licence, copied from the catalogue: {page.source.conditions.licence}</Text>}
+            <Button type="submit" mt="sm" disabled={busy} data-testid="register">Register</Button>
+          </form>
+        </Section>
       )}
 
       {page.registration && (
-        <div data-testid="section-registration">
-          <h3>Registration</h3>
+        <Section name="registration" title="Registration">
           <dl data-testid="registration">
             <dt>Owner</dt><dd>{page.registration.owner_id}</dd>
             <dt>Who may see it</dt><dd>{page.registration.visibility}</dd>
@@ -417,77 +422,76 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
             <dt>Redistribution</dt><dd>{page.registration.redistribution}</dd>
             <dt>Registered by</dt><dd>{page.registration.registered_by}</dd>
           </dl>
-        </div>
+        </Section>
       )}
 
       {feed.stage === "registered" && (
         <>
-          <div data-testid="section-glossary-builder">
-          <h3>Glossary builder</h3>
-          {page.glossary_run ? (
-            <div className="detail" data-testid="glossary-run">
-              <div>
-                Last run: <strong>{page.glossary_run.status}</strong>{" "}
-                <span className="muted">
-                  ({words(page.glossary_run.reason)}, attempt {page.glossary_run.attempt},{" "}
-                  {new Date(page.glossary_run.finished_at ?? page.glossary_run.created_at).toLocaleString()})
-                </span>
+          <Section name="glossary-builder" title="Glossary builder">
+            {page.glossary_run ? (
+              <div className="detail" data-testid="glossary-run">
+                <div>
+                  Last run: <strong>{page.glossary_run.status}</strong>{" "}
+                  <span className="muted">
+                    ({words(page.glossary_run.reason)}, attempt {page.glossary_run.attempt},{" "}
+                    {new Date(page.glossary_run.finished_at ?? page.glossary_run.created_at).toLocaleString()})
+                  </span>
+                </div>
+                {page.glossary_run.error && <div className="bad">Failed: {page.glossary_run.error}</div>}
+                {page.glossary_run.results && Object.keys(page.glossary_run.results).length > 0 ? (
+                  <ul>
+                    {Object.entries(page.glossary_run.results).map(([c, outcome]) => (
+                      <li key={c}><code>{c}</code>: {words(outcome)}</li>
+                    ))}
+                  </ul>
+                ) : page.glossary_run.status === "done" ? <div className="muted">No new column to ask about.</div>
+                  : <div className="muted">Columns: {page.glossary_run.columns.join(", ") || "every new one"}</div>}
               </div>
-              {page.glossary_run.error && <div className="bad">Failed: {page.glossary_run.error}</div>}
-              {page.glossary_run.results && Object.keys(page.glossary_run.results).length > 0 ? (
-                <ul>
-                  {Object.entries(page.glossary_run.results).map(([c, outcome]) => (
-                    <li key={c}><code>{c}</code>: {words(outcome)}</li>
+            ) : <Text className="muted">No run yet.</Text>}
+            {canRun && (
+              <Button mt="sm" variant="default" disabled={busy} data-testid="run-glossary-builder" onClick={runBuilder}>
+                Run the glossary builder
+              </Button>
+            )}
+          </Section>
+
+          <Section name="mapping" title="Mapping">
+            <Table.ScrollContainer minWidth={900}>
+              <Table data-testid="mapping-table" verticalSpacing="xs">
+                <Table.Thead>
+                  <Table.Tr><Table.Th>Column</Table.Th><Table.Th>Type</Table.Th><Table.Th>The source says</Table.Th>
+                    <Table.Th>Mapped to</Table.Th><Table.Th /></Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {page.columns.map((c) => (
+                    <MappingRow key={c.name} column={c} canMap={canMap} busy={busy} onPropose={proposeMappings}
+                                onDecide={decideMapping} />
                   ))}
-                </ul>
-              ) : page.glossary_run.status === "done" ? <div className="muted">No new column to ask about.</div>
-                : <div className="muted">Columns: {page.glossary_run.columns.join(", ") || "every new one"}</div>}
-            </div>
-          ) : <p className="muted">No run yet.</p>}
-          {canRun && (
-            <button type="button" disabled={busy} data-testid="run-glossary-builder" onClick={runBuilder}>
-              Run the glossary builder
-            </button>
-          )}
-          </div>
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+            {canMap ? (
+              <Group gap="sm" mt="sm">
+                <Button disabled={busy} data-testid="propose-mappings" onClick={() => proposeMappings()}>
+                  Propose mappings
+                </Button>
+                <span className="muted">for every column with no mapping and no pending proposal</span>
+              </Group>
+            ) : <Text className="muted" mt="sm">Only the data steward proposes and decides mappings.</Text>}
 
-          <div data-testid="section-mapping">
-          <h3>Mapping</h3>
-          <div className="table-wrap">
-            <table data-testid="mapping-table">
-              <thead>
-                <tr><th>Column</th><th>Type</th><th>The source says</th><th>Mapped to</th><th></th></tr>
-              </thead>
-              <tbody>
-                {page.columns.map((c) => (
-                  <MappingRow key={c.name} column={c} canMap={canMap} busy={busy} onPropose={proposeMappings}
-                              onDecide={decideMapping} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {canMap ? (
-            <p>
-              <button type="button" disabled={busy} data-testid="propose-mappings" onClick={() => proposeMappings()}>
-                Propose mappings
-              </button>{" "}
-              <span className="muted">for every column with no mapping and no pending proposal</span>
-            </p>
-          ) : <p className="muted">Only the data steward proposes and decides mappings.</p>}
-
-          {page.product && (
-            <p data-testid="product">
-              Product: <code>{page.product.code}</code> {page.product.name}, {page.product.visibility}, owned by{" "}
-              {page.product.owner_id}, created {new Date(page.product.created_at).toLocaleString()}.
-            </p>
-          )}
-          {page.parked_columns.length > 0 && (
-            <p className="bad" data-testid="parked-columns">
-              Parked, not loaded until mapped and a new go-live is approved:{" "}
-              {page.parked_columns.map((c) => <code key={c}>{c} </code>)}
-            </p>
-          )}
-          </div>
+            {page.product && (
+              <Text mt="md" data-testid="product">
+                Product: <code>{page.product.code}</code> {page.product.name}, {page.product.visibility}, owned by{" "}
+                {page.product.owner_id}, created {new Date(page.product.created_at).toLocaleString()}.
+              </Text>
+            )}
+            {page.parked_columns.length > 0 && (
+              <Text mt="xs" className="bad" data-testid="parked-columns">
+                Parked, not loaded until mapped and a new go-live is approved:{" "}
+                {page.parked_columns.map((c) => <code key={c}>{c} </code>)}
+              </Text>
+            )}
+          </Section>
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} onMessage={setDone}
                         onError={setError} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []}
@@ -498,8 +502,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       )}
 
       {(page.profiles.length > 0 || page.signoffs.length > 0) && (
-        <div data-testid="section-history">
-          <h3>History</h3>
+        <Section name="history" title="History">
           <ul data-testid="history">
             {page.profiles.map((p) => (
               <li key={`p${p.version}`}>Profile {p.version}: {p.outcome.replaceAll("_", " ")} <span className="muted">{new Date(p.at).toLocaleString()}</span></li>
@@ -511,7 +514,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               </li>
             ))}
           </ul>
-        </div>
+        </Section>
       )}
     </section>
   );

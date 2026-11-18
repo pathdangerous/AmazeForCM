@@ -1,3 +1,4 @@
+import { Button, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { useState } from "react";
 import {
   apiPost, describeError, words, type Backtest, type FeedPage, type PendingRule, type RefusedRule, type ReturnedRule,
@@ -38,27 +39,27 @@ function PendingRuleRow({ rule, roles, busy, onDecide }: {
   const role = rule.required_approver_roles[step - 1];
   const mine = rule.status === "pending" && roles.includes(role);
   return (
-    <tr data-testid="pending-rule" data-rule={rule.payload.rule_key}>
-      <td><code>{rule.payload.rule_key}</code><div className="muted">{rule.payload.description}</div></td>
-      <td><code>{rule.payload.sql}</code></td>
-      <td>{share(rule.payload.backtest)}<BacktestDetail back={rule.payload.backtest} /></td>
-      <td data-testid="rule-step">
+    <Table.Tr data-testid="pending-rule" data-rule={rule.payload.rule_key}>
+      <Table.Td><code>{rule.payload.rule_key}</code><div className="muted">{rule.payload.description}</div></Table.Td>
+      <Table.Td><code>{rule.payload.sql}</code></Table.Td>
+      <Table.Td>{share(rule.payload.backtest)}<BacktestDetail back={rule.payload.backtest} /></Table.Td>
+      <Table.Td data-testid="rule-step">
         {rule.status === "pending" ? <>Waits for the {words(role)} (step {step} of {rule.required_approver_roles.length})</> : rule.status}
         {rule.decisions.map((d) => <div key={d.id} className="muted">{words(d.role)} {d.decision}{d.note ? `: ${d.note}` : ""}</div>)}
-      </td>
-      <td>
+      </Table.Td>
+      <Table.Td>
         {mine && (
-          <div className="toolbar" style={{ marginBottom: 0 }}>
-            <button type="button" disabled={busy} data-testid="approve-rule"
-                    onClick={() => onDecide(rule.id, "approved", "")}>Approve</button>
-            <input aria-label={`Note for ${rule.payload.rule_key}`} placeholder="Note (needed to reject)" value={note}
-                   maxLength={500} size={16} onChange={(e) => setNote(e.target.value)} />
-            <button type="button" disabled={busy || !note.trim()} data-testid="reject-rule"
-                    onClick={() => onDecide(rule.id, "rejected", note)}>Reject</button>
-          </div>
+          <Group gap="xs" wrap="nowrap">
+            <Button size="xs" disabled={busy} data-testid="approve-rule"
+                    onClick={() => onDecide(rule.id, "approved", "")}>Approve</Button>
+            <TextInput size="xs" w={170} aria-label={`Note for ${rule.payload.rule_key}`} placeholder="Note (needed to reject)"
+                       value={note} maxLength={500} onChange={(e) => setNote(e.currentTarget.value)} />
+            <Button size="xs" variant="default" disabled={busy || !note.trim()} data-testid="reject-rule"
+                    onClick={() => onDecide(rule.id, "rejected", note)}>Reject</Button>
+          </Group>
         )}
-      </td>
-    </tr>
+      </Table.Td>
+    </Table.Tr>
   );
 }
 
@@ -105,36 +106,42 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
 
   return (
     <div data-testid="section-rules">
-      <h3>Rules</h3>
-      {rules.current.length === 0 ? <p className="muted">No rule yet.</p> : (
-        <div className="table-wrap">
-          <table data-testid="rules-table">
-            <thead><tr><th>Rule</th><th>SQL over curated</th><th>Back-test</th><th>Version</th></tr></thead>
-            <tbody>
+      <Title order={3} mt="xl" mb="xs">Rules</Title>
+      {rules.current.length === 0 ? <Text className="muted">No rule yet.</Text> : (
+        <Table.ScrollContainer minWidth={800}>
+          <Table data-testid="rules-table" verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr><Table.Th>Rule</Table.Th><Table.Th>SQL over curated</Table.Th><Table.Th>Back-test</Table.Th>
+                <Table.Th>Version</Table.Th></Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {rules.current.map((r) => (
-                <tr key={r.id} data-testid="rule-row" data-rule={r.rule_key}>
-                  <td><code>{r.rule_key}</code><div className="muted">{r.description}</div></td>
-                  <td><code>{r.sql}</code></td>
-                  <td>{share(r.backtest)}<BacktestDetail back={r.backtest} /></td>
-                  <td>{r.version}</td>
-                </tr>
+                <Table.Tr key={r.id} data-testid="rule-row" data-rule={r.rule_key}>
+                  <Table.Td><code>{r.rule_key}</code><div className="muted">{r.description}</div></Table.Td>
+                  <Table.Td><code>{r.sql}</code></Table.Td>
+                  <Table.Td>{share(r.backtest)}<BacktestDetail back={r.backtest} /></Table.Td>
+                  <Table.Td>{r.version}</Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
 
       {rules.pending.length > 0 && (
         <>
-          <h4>Waiting for a decision</h4>
-          <div className="table-wrap">
-            <table data-testid="pending-rules">
-              <thead><tr><th>Rule</th><th>SQL over curated</th><th>Back-test</th><th>Status</th><th></th></tr></thead>
-              <tbody>
+          <Title order={4} mt="md" mb="xs">Waiting for a decision</Title>
+          <Table.ScrollContainer minWidth={900}>
+            <Table data-testid="pending-rules" verticalSpacing="xs">
+              <Table.Thead>
+                <Table.Tr><Table.Th>Rule</Table.Th><Table.Th>SQL over curated</Table.Th><Table.Th>Back-test</Table.Th>
+                  <Table.Th>Status</Table.Th><Table.Th /></Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
                 {rules.pending.map((r) => <PendingRuleRow key={r.id} rule={r} roles={roles} busy={busy} onDecide={decide} />)}
-              </tbody>
-            </table>
-          </div>
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         </>
       )}
 
@@ -156,15 +163,15 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
         </div>
       )}
       {rules.rejected_keys.length > 0 && (
-        <p className="muted" data-testid="rejected-keys">Rejected, not proposed again: {rules.rejected_keys.join(", ")}.</p>
+        <Text className="muted" mt="xs" data-testid="rejected-keys">Rejected, not proposed again: {rules.rejected_keys.join(", ")}.</Text>
       )}
 
       {canPropose ? (
-        <p>
-          <button type="button" disabled={busy} data-testid="propose-rules" onClick={propose}>Propose rules</button>{" "}
+        <Group gap="sm" mt="sm">
+          <Button disabled={busy} data-testid="propose-rules" onClick={propose}>Propose rules</Button>
           <span className="muted">the agent's answer is back-tested before you see it</span>
-        </p>
-      ) : <p className="muted">Only the data steward proposes rules; the steward and then the checker decide them.</p>}
+        </Group>
+      ) : <Text className="muted" mt="sm">Only the data steward proposes rules; the steward and then the checker decide them.</Text>}
     </div>
   );
 }
