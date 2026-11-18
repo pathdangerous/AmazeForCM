@@ -1,9 +1,11 @@
+import { Badge, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, type Health } from "../api";
 
+// Phase 7.5: a value as a success or danger badge; its words stay the API's own.
 function Status({ good, text }: { good: boolean | null; text: string }) {
-  if (good === null) return <span>checking...</span>;
-  return <span className={good ? "ok" : "bad"}>{text}</span>;
+  if (good === null) return <Text span className="muted">checking...</Text>;
+  return <Badge tt="none" color={good ? "var(--amz-success)" : "var(--amz-danger)"}>{text}</Badge>;
 }
 
 export default function StatusView() {
@@ -21,7 +23,7 @@ export default function StatusView() {
 
   return (
     <section>
-      <h2>Status</h2>
+      <Title order={2} mb="md">Status</Title>
       <dl>
         <dt>API</dt>
         <dd data-testid="api-status">

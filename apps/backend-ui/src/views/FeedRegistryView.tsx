@@ -1,6 +1,6 @@
 import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
-import { apiGet, describeError, type Feed } from "../api";
+import { apiGet, describeError, type Feed, type FeedRow } from "../api";
 
 const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "", label: "All" },
@@ -9,17 +9,18 @@ const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "rejected", label: "Rejected" },
 ];
 
-// Converted to the phase 7.5 look (task 4); its polish lines P3 to P5 are task 13.
-export default function FeedRegistryView({ devUser }: { devUser: string }) {
+// Converted to the phase 7.5 look (task 4). P3: the owner by name; P4: the source by its catalogue name, the raw
+// reference beside it; P5: an empty state in the backend team's words.
+export default function FeedRegistryView({ devUser, people }: { devUser: string; people: Record<string, string> }) {
   const [stage, setStage] = useState<"" | Feed["stage"]>("");
-  const [feeds, setFeeds] = useState<Feed[] | null>(null);
+  const [feeds, setFeeds] = useState<FeedRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!devUser) return;
     let current = true;
     const query = stage ? `?stage=${stage}` : "";
-    apiGet<Feed[]>(`/api/amaze/feeds${query}`, devUser)
+    apiGet<FeedRow[]>(`/api/amaze/feeds${query}`, devUser)
       .then((list) => {
         if (!current) return;
         setFeeds(list);
@@ -50,7 +51,7 @@ export default function FeedRegistryView({ devUser }: { devUser: string }) {
       {feeds !== null && feeds.length === 0 && (
         <div className="empty" data-testid="feeds-empty">
           {stage ? `No ${stage} feeds.` : "No feeds yet."}
-          <div className="muted">Feeds appear here when the custom data product finds a source (phase 3).</div>
+          <div className="muted">Feeds appear here when a requester's source is selected.</div>
         </div>
       )}
 
@@ -75,8 +76,15 @@ export default function FeedRegistryView({ devUser }: { devUser: string }) {
                   </Table.Td>
                   <Table.Td>{f.name}</Table.Td>
                   <Table.Td>{f.stage}</Table.Td>
-                  <Table.Td>{f.owner_id ?? <span className="muted">none</span>}</Table.Td>
-                  <Table.Td>{f.source_ref ?? <span className="muted">none</span>}</Table.Td>
+                  <Table.Td>{f.owner_id ? (people[f.owner_id] ?? f.owner_id) : <span className="muted">none</span>}</Table.Td>
+                  <Table.Td>
+                    {f.source_name ? (
+                      <>
+                        <span data-testid="source-name">{f.source_name}</span>
+                        {f.source_ref && <div className="muted" data-testid="source-ref">{f.source_ref}</div>}
+                      </>
+                    ) : f.source_ref ?? <span className="muted">none</span>}
+                  </Table.Td>
                   <Table.Td>{new Date(f.created_at).toLocaleString()}</Table.Td>
                 </Table.Tr>
               ))}

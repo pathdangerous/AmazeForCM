@@ -132,7 +132,7 @@ export default function App() {
                         changed={changed} onChange={onChange} />
         )}
         {view === "notifications" && <NotificationsView devUser={me ? selected : ""} />}
-        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} />}
+        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} people={people} />}
         {view === "feeds" && feedId && (
           <FeedView feedId={feedId} devUser={me ? selected : ""} me={me} people={people}
                     canAct={!!me && me.roles.includes("backend_team")}
