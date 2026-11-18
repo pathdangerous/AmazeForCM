@@ -1,7 +1,7 @@
 # Phase 7.5 plan — UI polish
 
-**Decisions:** none yet (task 0 records them: the library, the look, and any vetoed assumption).
-**Status:** draft for approval.
+**Decisions (task 0):** Mantine 9.7.4; the Hexaware look of assumption 2 (R1's type scale, radius 6, 4 px grid); dark mode kept with derived tokens; every other assumption approved as written (section 17).
+**Status:** approved 2026-11-18 with the decisions above.
 **Date:** 2026-11-18. **Branch:** `phase-7.5`, created from `main` at `a9abed5`. **Scope:** phase 7.5 of `BUILD_PLAN.md` (work through `docs/ui-polish.md`; decide a component library and a visual reference, then apply them to both UIs); phase 7 plan section 16 note 1. Local only; nothing is pushed.
 
 **Lean mode.** Two checkpoints: (1) after the library is installed and one screen is converted (task 4: you see that screen before the rest), (2) at the end (task 17). No step logic, guard, agent or migration changes (section 4, assumptions 15, 16, 24 are the edges). Every task names its behaviour, its test (a component check, a Playwright check or a pytest), its files and what is out of scope.
@@ -28,51 +28,48 @@
 | Data | `notifications.link` exists and is never filled; `GET /api/notifications` returns it; `Identity.list_users()` exists; `GET /api/amaze/proposals?status=` takes `approved`/`rejected` |
 
 ## 3. What you asked, and where this plan answers it
-Library and look: section 10.1, 10.2 (task 0). Triage: below (lines numbered P1 to P30 in `docs/ui-polish.md` order). Backend changes: section 9, assumptions 12 to 17. Selectors: section 10.3, tasks 1 and 2. Screenshots: section 8. No step logic change, pytest ceiling: assumptions 15, 16, 24, 29.
-
-Fate: **7.5** this phase; **8** the real model's wording (phase 8); **out** out of the PoC (or out of 7.5 by the brief's rules, said why). API: **none**, or the field (section 9).
+Library, look: 10.1, 10.2, assumption 2. Backend: section 9, assumptions 12-17. Selectors: 10.3. Screenshots: section 8. Lines P1-P30 in `docs/ui-polish.md` order. Fate: **7.5**; **8** the real model's wording; **out** of the PoC or of 7.5 (why given). API: **none** or the field. (Condensed at task 0 to stay within 250 lines: rows of one task and fate merged.)
 
 | # | Screen: issue (short) | Fate | API | Task |
 |---|---|---|---|---|
 | P1 | consumer Requirement: glossary keys, not names | 7.5 | `element_names` | 5, 15 |
-| P2 | consumer Requirement: empty source list after the catalogue lost them | 7.5 | none (assumption 26) | 15 |
-| P3 | Registry: Owner is a user id | 7.5 | `GET /api/amaze/people` | 5, 13 |
-| P4 | Registry: Source is the raw reference | 7.5 | `source_name` | 5, 13 |
-| P5 | Registry: empty state says "(phase 3)" | 7.5 | none | 13 |
-| P6 | Feed: Profile stays offered after the file is profiled | 7.5 | none (`profile.fetch_id`, `last_file.id`) | 9 |
-| P7 | Feed: same-title requirements look identical | 7.5 | `raised_at`, people | 5, 9 |
-| P8 | Feed: registration owner is a user id | 7.5 | people | 9 |
-| P9 | Feed: result line at the top, next form below | 7.5 | none (assumption 19) | 9 |
+| P2, P29 | consumer Requirement: empty source list after the catalogue lost them (assumption 26); states are one muted line | 7.5 | none (`progress.state`) | 15 |
+| P3, P4, P5 | Registry: Owner is a user id; Source is the raw reference; empty state says "(phase 3)" | 7.5 | `GET /api/amaze/people`; `source_name`; none | 5, 13 |
+| P6, P9, P21 | Feed: Profile stays offered after profiling (`profile.fetch_id`, `last_file.id`); result line at the top (assumption 19); role buttons a second late (`me` from App) | 7.5 | none | 9 |
+| P7, P8 | Feed: same-title requirements look identical; registration owner is a user id | 7.5 | `raised_at`, people | 5, 9 |
 | P10 | Feed: ProfilerAgent mock "1 of 1 … are" | 8, mock fixed now (one line) | none | 7 |
 | P11 | Feed: coverage card reads "A requirement" | 7.5 | `coverage_titles` | 5, 9 |
 | P12 | Mapping: covered column says "with the glossary builder" | 7.5 | `why_none` value (assumption 15) | 5, 10 |
-| P13 | Glossary: mock definition wording; editable draft | 8 (wording); editing out (0016 guard) | — | — |
-| P14 | Glossary: alias says "Clashes with" | 7.5 | none | 12 |
-| P15 | Glossary: mock conflict reason | 8 (not one line, assumption 23) | — | — |
-| P16 | Glossary: no "Decided" filter | 7.5 | none (existing `status=` filter) | 12 |
-| P17 | Glossary builder: `sent_back` run lists every column | 7.5 | none | 10 |
-| P18 | Mapping: Propose mappings offered when nothing is left | 7.5 | none | 10 |
-| P19 | Mapping: result line far from the table | 7.5 | none (assumption 19) | 10 |
-| P20 | Mapping: glossary-rejected column goes to step 06 again | out of 7.5: a step 06 change (assumption 24) | — | — |
-| P21 | Feed: role buttons appear a second late | 7.5 | none (`me` from App) | 9 |
-| P22 | Rules: returned and refused lists are lost | 7.5 | none (assumption 17) | 11 |
-| P23 | Rules: result line far from the section | 7.5 | none (assumption 19) | 11 |
-| P24 | Go-live: Prepare disabled with no word | 7.5 | none | 11 |
+| P14, P16 | Glossary: alias says "Clashes with"; no "Decided" filter (existing `status=` filter) | 7.5 | none | 12 |
+| P17, P18, P19 | Builder: `sent_back` run lists every column; Propose mappings offered when nothing is left; result line far from the table (assumption 19) | 7.5 | none | 10 |
+| P22, P23, P24 | Rules: returned and refused lists lost (assumption 17); result line far; Go-live: Prepare disabled with no word | 7.5 | none | 11 |
+| P27, P28 | Notifications: read once, no count (assumption 18); no link (assumption 16) | 7.5 | none; `link` filled | 6, 14 |
+| P13, P15, P26 | Glossary: mock definition wording, editable draft; mock conflict reason; Go-live: mock "column(s)", "rule(s)" | 8 (not one line, assumption 23); P13's editing out (0016 guard) | — | — |
+| P20, P30 | Mapping: glossary-rejected column goes to step 06 again (a step 06 change, assumption 24); no request-access button | out | — | — |
 | P25 | Loads: legend, purposes | done in phase 7 (task 12); restyled only | — | 8 |
-| P26 | Go-live: mock "column(s)", "rule(s)" | 8 (two lines, assumption 23) | — | — |
-| P27 | Notifications: read once, no count | 7.5 | none (assumption 18) | 14 |
-| P28 | Notifications: no link | 7.5 | `link` filled (assumption 16) | 6, 14 |
-| P29 | consumer Requirement: states are one muted line | 7.5 | none (`progress.state`) | 15 |
-| P30 | consumer Requirement: no request-access button | out (no access-request workflow) | — | — |
 
 ## 4. Assumptions — veto any by number
 
 **Library, look, tests**
 
 1. **Library: Mantine `@mantine/core` and `@mantine/hooks` `9.7.4`** (exact; 2026-10-25), in both UIs (section 10.1; you decide at task 0). Full `@mantine/core/styles.css`; no other Mantine package.
-2. **Look: reference R1, "quiet enterprise data tool"** (section 10.2; you decide at task 0).
-3. **One look, enforced:** `apps/backend-ui/src/theme.ts` and `apps/consumer-ui/src/theme.ts` are byte-identical (the tokens of section 10.2 as a Mantine theme); both `package.json` pin the same exact versions. `tests/test_ui_shared_look.py` checks both (pytest, under 0.1 s).
-4. **Light and dark stay:** `defaultColorScheme="auto"`, as today's `prefers-color-scheme`; screenshots are light (`colorScheme: "light"`).
+2. **Look (decided at task 0): the Hexaware palette below, with R1's type scale (12/14/16/20/24, 400/600, line height 1.45), radius 6, 4 px grid.** Dark values are derived (decision 3, section 17), outside the palette and marked so in `theme.ts`.
+
+| Token | Light | Dark (derived) | Use |
+|---|---|---|---|
+| page / panel / subtle fill | `#F8F8F9` / `#FFFFFF` / `#EEEFF2` | `#0B1030` / `#131A3D` / `#1D2550` | backgrounds; content sits on panels |
+| lines / strong lines and muted text | `#CBD0E5` / `#535983` | `#323C70` / `#A9AECF` | borders; secondary text |
+| body text / headings | `#040D43` / `#07125E` | `#E6E8F5` / `#FFFFFF` | text |
+| header bar | `#07125E`, white text | the same | both apps' header |
+| primary | `#3C2CDA`, white text on it; also link text | fill the same; link text `#ABA3FF` | buttons, links, selected |
+| focus ring and icons | `#1D86FF` | the same | never text |
+| danger | `#DA2D2C` (text on panels only; white on it) | text `#FF8F8E`; fill the same | errors |
+| warning / info / current-state marker | `#EA9D00` / `#14CBDE` / `#F4CB4E` | the same | fills with `#040D43` text only, never text on white |
+| disabled | `#8088A7` | the same | disabled controls only: border and fill, never text (their text is muted on subtle) |
+| success | `#1A7F37` (outside the Hexaware palette, marked) | text `#5CC97B` | done lines, released |
+
+3. **One look, enforced:** `apps/backend-ui/src/theme.ts` and `apps/consumer-ui/src/theme.ts` are byte-identical (assumption 2 as a Mantine theme, plus `CONTRAST_PAIRS`: every text/background pair it uses, light and dark); both `package.json` pin the same exact versions; both `main.tsx` import `./theme`. `tests/test_ui_shared_look.py` checks all three and that every pair is at least 4.5:1 (pytest, under 0.1 s).
+4. **Light and dark stay:** `defaultColorScheme="auto"`, as today's `prefers-color-scheme`, with assumption 2's dark values; screenshots are light (`colorScheme: "light"`).
 5. **No other runtime package:** no icon set, router or web font; the system font stack (Segoe UI on Windows). No icons: tested text stays plain.
 6. **Native controls stay native:** every `<select>` is `NativeSelect` (or a plain `<select>`), checkboxes and radios are Mantine `Checkbox`/`Radio` (native inputs), buttons are `Button` with the `disabled` prop only. Never `Select`, `Combobox`, `MultiSelect`, `aria-disabled`. Checked by rendering (section 10.3).
 7. **The story spec and `e2e/playwright.config.ts` are not edited** in phase 7.5.
@@ -205,7 +202,7 @@ Method for every task (by hand, `CLAUDE.md`): unstated assumptions listed first;
 | 3 | Component checks in both UIs (assumption 9) | RED: `App.test.tsx` (the dev-user select lists the stubbed users) fails to run; GREEN `npm test` | both apps' `package.json`, lock, `vitest.config.ts`, `src/test/fixtures.ts`, `src/App.test.tsx` | other checks |
 | 4 | Mantine and R1 (or your choice) in both UIs; `theme.ts`; the shell in both apps; the Feed registry converted. **CHECKPOINT 1:** before/after of S1, S7 and both shells; sizes; stop | RED: `test_ui_shared_look.py`; component check: registry renders a stubbed list with `feed-link-*`; story | `package.json`, lock, `index.html`, `main.tsx`, `App.tsx`, `theme.ts` (both); `FeedRegistryView.tsx`; the pytest | the registry's polish (task 13) |
 | 5 | Read fields: people, `source_name`, `raised_at`, `coverage_titles`, `element_names`, P12's `why_none` | RED: one pytest each in `test_api_amaze.py`, `test_api_amaze_onboarding.py`, `test_api_amaze_mapping.py` (a covered column while the run is active), `test_api_consumer_sourcing.py` | `routers/amaze.py`, `feed_page.py`, `requirement_page.py`, both `api.ts` (types) | UI |
-| 6 | Notification links (assumption 16) | RED: `link` asserted in `test_s12_arrival.py` (held), `test_s15_certify.py`, `test_s20_create_product.py` (Ready), `test_jobs.py` (a load report) | the five sites | earlier phases' notices |
+| 6 | Notification links (assumption 16) | RED: `link` asserted in `test_s12_arrival.py` (held), `test_s15_certify.py`, `test_s20_create_product.py` (Ready), `test_jobs.py` (a load report); and one test that the notify calls of steps 12, 15, 20 and `jobs.py` differ from `main` only by `link=` (decision 4) | the five sites | earlier phases' notices |
 | 7 | P10 mock wording | RED: `test_mock_rules.py` asserts "1 of 1 requested items is" and "1 of 2 … is"/"2 of 2 … are" | `mock_rules.py:128` | P15, P26 |
 | 8 | Feed page converted (all sections, P25 restyled), no behaviour change | component check: a registered feed page renders every `section-*` and `mapping-row[data-column]`; story | `FeedView.tsx`, `RulesSection.tsx`, `GoLiveSection.tsx`, `LoadsSection.tsx` | polish |
 | 9 | P6, P7, P8, P9, P11, P21 | RED component checks: Profile hidden when profiled; "raised … by Riley Requester"; owner name; `feed-done` inside the next section; coverage title "no longer selects this feed"; FeedView takes `me` from App (no `/api/me` call) | `App.tsx`, `FeedView.tsx` | |
@@ -244,3 +241,4 @@ Method for every task (by hand, `CLAUDE.md`): unstated assumptions listed first;
 **Phase 8:** 1. P13, P15, P26 (the real model's wording); 2. P20 (step 06 skips a column the owner rejected) if wanted; 3. P22 stored verdicts if wanted; 4. links on phases 3 to 6's notices. **Later:** 5. P30, a request-access workflow.
 
 ## 17. Results and deviations (recorded during implementation)
+**Task 0, decisions (2026-11-18):** 1. Mantine 9.7.4 (assumption 1). 2. The look is assumption 2's palette (it replaces R1's colours; R1's type scale, radius 6, 4 px grid kept); a pytest checks every `theme.ts` text/background pair at 4.5:1 and that both apps import the one theme. 3. Dark mode kept (assumption 4) with derived dark values, marked outside the palette, every dark pair in the same test. 4. All other assumptions approved as written (7, 9, 12, 15, 16, 21, 24 and `sessionStorage` for P22 included); A15: every test expectation the `why_none` change alters is pasted here old → new; A16: a test shows the notify calls differ only by `link=`. 5. Section 3 condensed (rows of one task merged) to stay within 250 lines.
