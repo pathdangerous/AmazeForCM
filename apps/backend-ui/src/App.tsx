@@ -128,7 +128,7 @@ export default function App() {
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "status" && <StatusView />}
         {view === "glossary" && (
-          <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")}
+          <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")} people={people}
                         changed={changed} onChange={onChange} />
         )}
         {view === "notifications" && <NotificationsView devUser={me ? selected : ""} />}
