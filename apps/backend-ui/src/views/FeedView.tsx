@@ -220,6 +220,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       {done && <p className="ok" role="status" data-testid="feed-done">{done}</p>}
       {error && <p className="bad" role="alert">{error}</p>}
 
+      <div data-testid="section-source">
       <h3>Source</h3>
       {page.source ? (
         <dl>
@@ -229,7 +230,9 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
           <dt>Redistribution</dt><dd>{page.source.conditions.redistribution}</dd>
         </dl>
       ) : <p className="muted">No catalogue source.</p>}
+      </div>
 
+      <div data-testid="section-requirements">
       <h3>Requirements that select it</h3>
       {page.requirements.length === 0 ? <p className="muted">None now.</p> : (
         <div className="table-wrap">
@@ -255,7 +258,9 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
           </table>
         </div>
       )}
+      </div>
 
+      <div data-testid="section-file">
       <h3>Latest file</h3>
       {page.last_file ? (
         <p>
@@ -269,9 +274,10 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
           Profile the latest file
         </button>
       )}
+      </div>
 
       {profile && (
-        <>
+        <div data-testid="section-profile">
           <h3>Profile {profile.version}</h3>
           {specOnly && (
             <p className="bad" role="note" data-testid="spec-only">
@@ -314,11 +320,11 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               </ul>
             </div>
           ))}
-        </>
+        </div>
       )}
 
       {profile && (
-        <>
+        <div data-testid="section-summary">
           <h3>Summary</h3>
           {page.summary ? (
             <div className="detail" data-testid="summary">
@@ -335,10 +341,11 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               Summarise
             </button>
           )}
-        </>
+        </div>
       )}
 
       {canAct && page.next_action === "sign_off" && page.summary && (
+        <div data-testid="section-signoff">
         <form className="detail" data-testid="signoff-form" onSubmit={(e) => {
           e.preventDefault();
           if (!outcome) return;
@@ -368,9 +375,11 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
             Sign off
           </button>
         </form>
+        </div>
       )}
 
       {canAct && page.next_action === "register" && (
+        <div data-testid="section-register">
         <form className="detail" data-testid="register-form" onSubmit={(e) => {
           e.preventDefault();
           act("register", { owner_id: owner || null, visibility }, (r) =>
@@ -394,10 +403,11 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
           {page.source && <p className="muted">Licence, copied from the catalogue: {page.source.conditions.licence}</p>}
           <button type="submit" disabled={busy} data-testid="register">Register</button>
         </form>
+        </div>
       )}
 
       {page.registration && (
-        <>
+        <div data-testid="section-registration">
           <h3>Registration</h3>
           <dl data-testid="registration">
             <dt>Owner</dt><dd>{page.registration.owner_id}</dd>
@@ -407,11 +417,12 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
             <dt>Redistribution</dt><dd>{page.registration.redistribution}</dd>
             <dt>Registered by</dt><dd>{page.registration.registered_by}</dd>
           </dl>
-        </>
+        </div>
       )}
 
       {feed.stage === "registered" && (
         <>
+          <div data-testid="section-glossary-builder">
           <h3>Glossary builder</h3>
           {page.glossary_run ? (
             <div className="detail" data-testid="glossary-run">
@@ -438,7 +449,9 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               Run the glossary builder
             </button>
           )}
+          </div>
 
+          <div data-testid="section-mapping">
           <h3>Mapping</h3>
           <div className="table-wrap">
             <table data-testid="mapping-table">
@@ -474,6 +487,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               {page.parked_columns.map((c) => <code key={c}>{c} </code>)}
             </p>
           )}
+          </div>
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} onMessage={setDone}
                         onError={setError} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []}
@@ -484,7 +498,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       )}
 
       {(page.profiles.length > 0 || page.signoffs.length > 0) && (
-        <>
+        <div data-testid="section-history">
           <h3>History</h3>
           <ul data-testid="history">
             {page.profiles.map((p) => (
@@ -497,7 +511,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
     </section>
   );

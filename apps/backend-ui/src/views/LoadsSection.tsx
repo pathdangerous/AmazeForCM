@@ -62,7 +62,7 @@ export default function LoadsSection({ page, devUser, roles, onChange, onMessage
   }
 
   return (
-    <>
+    <div data-testid="section-loads">
       <h3>Loads</h3>
       {page.loads.length === 0 ? <p className="muted">No load yet.</p> : (
         <div className="table-wrap">
@@ -100,6 +100,6 @@ export default function LoadsSection({ page, devUser, roles, onChange, onMessage
         </p>
       ) : roles.includes("operations") ? <p className="muted">Load now needs a go-live first.</p>
         : <p className="muted">Only operations loads a feed by hand.</p>}
-    </>
+    </div>
   );
 }

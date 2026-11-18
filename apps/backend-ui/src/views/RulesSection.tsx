@@ -104,7 +104,7 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
   });
 
   return (
-    <>
+    <div data-testid="section-rules">
       <h3>Rules</h3>
       {rules.current.length === 0 ? <p className="muted">No rule yet.</p> : (
         <div className="table-wrap">
@@ -165,6 +165,6 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
           <span className="muted">the agent's answer is back-tested before you see it</span>
         </p>
       ) : <p className="muted">Only the data steward proposes rules; the steward and then the checker decide them.</p>}
-    </>
+    </div>
   );
 }

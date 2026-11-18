@@ -63,7 +63,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
   });
 
   return (
-    <>
+    <div data-testid="section-go-live">
       <h3>Go-live</h3>
       {live.latest ? (
         <p data-testid="go-live-latest">
@@ -119,6 +119,6 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
           <span className="muted">a test load of the latest file, then the agent's summary for the owner</span>
         </p>
       ) : <p className="muted">Only the backend team prepares a go-live.</p>}
-    </>
+    </div>
   );
 }
