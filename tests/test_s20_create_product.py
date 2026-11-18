@@ -77,6 +77,8 @@ def test_the_first_release_creates_the_product_and_makes_the_requester_ready(wor
     assert ProductRepository(world.session).elements_of(product.id) == ["instrument_id", "price_date", "volume"]
     assert status_of(world, waiting) == "ready"
     assert [s for s, _ in messages(world, "dev-requester")] == ["Ready: Daily volume"]
+    ready = world.session.scalar(select(NotificationRow.link).where(NotificationRow.subject == "Ready: Daily volume"))
+    assert ready == f"#/requirement/{waiting.id}"  # phase 7.5, P28 (plan, assumption 16)
 
 
 def test_a_restricted_registration_gives_access_restricted_with_the_route(world, db_session, glossary, tmp_path):
@@ -99,6 +101,8 @@ def test_a_requirement_the_product_does_not_cover_stays_onboarding(world):
     assert status_of(world, waiting) == "onboarding"
     assert messages(world, "dev-requester") == []
     assert [s for s, _ in messages(world, "dev-backend-team")] == ["Requirement not covered: Needs more"]
+    told = world.session.scalar(select(NotificationRow.link).where(NotificationRow.recipient == "dev-backend-team"))
+    assert told == f"#/feed/{world.feed}"  # phase 7.5, P28 (plan, assumption 16)
 
 
 def test_an_outstanding_ticked_term_is_data_not_in_domains(world):

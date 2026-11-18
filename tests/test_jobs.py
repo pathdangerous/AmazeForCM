@@ -523,6 +523,12 @@ def test_under_hypercare_every_load_is_reported(db_session, daily, live):
     job.run()
     assert subjects(db_session, "dev-data-owner") == ["Load loaded: syn_exchange_volumes"]
     assert subjects(db_session, "dev-operations") == ["Load loaded: syn_exchange_volumes"]
+    from sqlalchemy import select
+
+    from ports.notify.inapp import NotificationRow
+
+    links = db_session.scalars(select(NotificationRow.link).where(NotificationRow.subject.like("Load loaded%")))
+    assert set(links) == {f"#/feed/{feed.id}"}  # phase 7.5, P28 (plan, assumption 16)
 
 
 def test_after_hypercare_a_good_load_is_not_reported(db_session, daily, live):
@@ -726,3 +732,52 @@ async def test_the_worker_is_kicked_at_every_start_up():
         worker = NoGlossaryRuns()
         async with running_app(glossary_runs=worker):
             assert app.state.glossary_runs is worker and worker.kicked.wait(5)
+
+
+# ---------------------------------------------------------------- phase 7.5: notification links only
+
+
+# Per module: (the number of notify, _tell and _tell_backend calls; sha256 of their AST dumps with any `link`
+# keyword removed), computed by notify_calls() on main at a9abed5 (phase 7 merged), before phase 7.5.
+NOTIFY_CALLS_AT_MAIN = {
+    "core/steps/s12_arrival.py": (6, "92e4edd3134eb3da617bb5faed034f087473051d95ae1f0adf594618cda2fed7"),
+    "core/steps/s15_certify.py": (1, "0640a8dd9b4a873c48d1e73ec597729a434a852b56550764955fb1e6134220fe"),
+    "core/steps/s20_create_product.py": (3, "7b3b530e61a52f41ed6980190e1bd7adab8d3f7d648b9e96c459c27ccf4e3696"),
+    "apps/api/jobs.py": (2, "384ee2bb51501862651136b7567819a3d9b588bbace4836cf8c7eaef6a6af16b"),
+}
+# Per module, the calls that pass `link` (phase 7.5 plan, assumption 16): s12's _tell (5 calls and its notify),
+# s15's held notice, s20's Ready / Access restricted notice and _tell_backend (the call and its notify), jobs.py's
+# load report (the catalogue notice keeps none).
+LINKED_CALLS = {"core/steps/s12_arrival.py": 6, "core/steps/s15_certify.py": 1, "core/steps/s20_create_product.py": 3,
+                "apps/api/jobs.py": 1}
+
+
+def notify_calls(source: str) -> tuple[list[str], int]:
+    """(the sorted AST dumps of every notify, _tell and _tell_backend call without its `link` keyword, how many
+    of those calls pass `link`)."""
+    import ast
+    import copy
+
+    dumps, linked = [], 0
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None)
+            if name in {"notify", "_tell", "_tell_backend"}:
+                stripped = copy.deepcopy(node)
+                stripped.keywords = [k for k in node.keywords if k.arg != "link"]
+                linked += len(stripped.keywords) != len(node.keywords)
+                dumps.append(ast.dump(stripped))
+    return sorted(dumps), linked
+
+
+def test_the_notify_calls_differ_from_main_only_by_the_link_argument():
+    """Phase 7.5, task 0 decision 4 (A16): steps 12, 15, 20 and jobs.py send the same notices as on main, to the
+    same people with the same subject and body; the one change is `link=` at the five sites."""
+    import hashlib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for path, (count, digest) in NOTIFY_CALLS_AT_MAIN.items():
+        dumps, linked = notify_calls((root / path).read_text(encoding="utf-8"))
+        assert (len(dumps), hashlib.sha256("\n".join(dumps).encode()).hexdigest()) == (count, digest), path
+        assert linked == LINKED_CALLS[path], path

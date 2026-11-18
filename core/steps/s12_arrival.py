@@ -145,7 +145,8 @@ def record_late_alert(session: Session, *, feed_id: UUID, detail: str, notifier:
     feed = FeedRepository(session).get(feed_id)
     registration = FeedRegistrationRepository(session).current(feed_id)
     _tell(notifier, [*operations, *([registration.owner_id] if registration else [])], f"Delivery late: {feed.code}",
-          f"No delivery of {feed.code} arrived today: {detail} The feed's last released data stays available.")
+          f"No delivery of {feed.code} arrived today: {detail} The feed's last released data stays available.",
+          link=f"#/feed/{feed.id}")
     return LateAlert(feed_id=feed_id, detail=detail)
 
 
@@ -169,7 +170,8 @@ def clear_stale_load(session: Session, *, feed_id: UUID, stale_minutes: int, not
                                           "did not finish; abandoned before the next load.")
     _tell(notifier, operations, f"Load abandoned: {feed.code}",
           f"The {current.purpose} load of {feed.code} received at {current.received_at:%Y-%m-%d %H:%M} UTC was "
-          f"still received after {stale_minutes} minutes, so it was abandoned and the feed may load again.")
+          f"still received after {stale_minutes} minutes, so it was abandoned and the feed may load again.",
+          link=f"#/feed/{feed.id}")
     return abandoned
 
 
@@ -300,23 +302,24 @@ def _result(session: Session, check: ArrivalCheck, code: str, profile_id: UUID |
     if check.kind == "resent_quarantined":
         _tell(notifier, [*recipients.operations, *owner], f"Delivery resent: {code}",
               f"The delivery of {code} is byte for byte the same as an earlier one, so it was set aside and not "
-              f"loaded. The earlier delivery was load {check.same_as}.")
+              f"loaded. The earlier delivery was load {check.same_as}.", link=f"#/feed/{plan.feed_id}")
         return ResentQuarantined(load_id=plan.load_id, same_as=check.same_as)
     if check.kind == "breaking_held":
         _tell(notifier, [*recipients.backend_team, *recipients.operations, *owner, *consumers_of(session, plan.feed_id)],
               f"Delivery held: {code}", f"The delivery of {code} was held and not loaded. {check.reason} "
-                                        "The data released earlier stays available.")
+                                        "The data released earlier stays available.", link=f"#/feed/{plan.feed_id}")
         return BreakingHeld(load_id=plan.load_id, missing=check.missing, reason=check.reason)
     if check.kind == "additive_parked":
         _tell(notifier, [*recipients.glossary_owners, *recipients.stewards, *recipients.backend_team],
               f"New column in {code}: {', '.join(check.added)}",
               f"The delivery of {code} has {len(check.added)} column(s) the feed did not have: "
               f"{', '.join(check.added)}. They are parked, not loaded; the glossary builder was asked about them. "
-              "They load only once mapped and a new go-live is approved.")
+              "They load only once mapped and a new go-live is approved.", link=f"#/feed/{plan.feed_id}")
         return AdditiveParked(load_id=plan.load_id, added=check.added, profile_id=profile_id, run_id=run.id)
     return OnTimeComplete(load_id=plan.load_id)
 
 
-def _tell(notifier: Notifier, people: Sequence[str], subject: str, body: str) -> None:
+def _tell(notifier: Notifier, people: Sequence[str], subject: str, body: str, *, link: str) -> None:
+    """link (phase 7.5, P28): the feed's page in backend-ui, #/feed/<id>."""
     for person in dict.fromkeys(p for p in people if p):
-        notifier.notify(recipient=person, subject=subject, body=body)
+        notifier.notify(recipient=person, subject=subject, body=body, link=link)

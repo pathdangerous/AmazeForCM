@@ -98,5 +98,5 @@ def _certify(session: Session, load: Load, threshold: Decimal, notifier: Notifie
         notifier.notify(recipient=person, subject=f"Load held: {feed.code}",
                         body=f"The scheduled load of {feed.code} scored {score} (threshold {threshold}): "
                              f"{flagged} of {rows} rows were flagged by a rule. It was held, not released; the data "
-                             "released earlier stays available.")
+                             "released earlier stays available.", link=f"#/feed/{feed.id}")  # phase 7.5, P28
     return HeldConsumersWarned(**shared, warned=warned)

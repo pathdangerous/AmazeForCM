@@ -193,6 +193,8 @@ def test_a_missing_template_column_holds_the_delivery_and_warns_consumers(world)
     assert (after.status, after.arrival_outcome) == ("held", "breaking_held")
     assert after.arrival_detail["missing"] == ["px"] and LoadRepository(world.session).stages(load.id) == []
     assert told(world, "Delivery held") == {*TEAM, *OPERATIONS, "dev-data-owner", "dev-requester"}
+    links = world.session.scalars(select(NotificationRow.link).where(NotificationRow.subject.like("Delivery held%")))
+    assert set(links) == {f"#/feed/{world.feed}"}  # phase 7.5, P28 (plan, assumption 16)
 
 
 def test_a_file_that_is_not_a_csv_table_is_held_too(world):
