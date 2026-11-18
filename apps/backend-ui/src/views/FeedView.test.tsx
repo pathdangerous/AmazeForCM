@@ -144,6 +144,43 @@ test("P18: Propose mappings is disabled with a word when nothing is left to map"
   expect((await screen.findByTestId("propose-mappings")).hasAttribute("disabled")).toBe(false);
 });
 
+const SUMMARY = {
+  id: "summary-2", status: "pending" as const, created_at: "2026-11-18T09:00:00Z", required_approver_roles: ["data_owner"],
+  decisions: [], payload: { summary: "Ready to load.", highlights: [], risks: [], unmapped_columns: [], rejected_glossary: [] },
+};
+const STEWARD = { ...USERS[1], roles: ["data_steward"] };
+
+test("P22 and P23: the last Propose rules answer survives a remount (this tab only); its line is in Rules", async () => {
+  sessionStorage.clear();
+  const answer = { [`POST /api/amaze/feeds/${FEED_ID}/rules/propose`]: { result: {
+    outcome: "rules_proposed", proposal_ids: ["r1"], refused: [{ rule_key: "bad_sql", sql: "DROP", reason: "Not a SELECT." }],
+    returned: [{ rule_key: "too_wide", sql: "SELECT _row FROM curated", description: "d", share: 0.8, flagged_rows: 8,
+                 total_rows: 10 }] } } };
+  show(feedPage(), {}, STEWARD, answer);
+  fireEvent.click(await screen.findByTestId("propose-rules"));
+  const done = await screen.findByTestId("feed-done");
+  expect(screen.getByTestId("section-rules").contains(done)).toBe(true);
+  expect((await screen.findByTestId("returned-rules")).textContent).toContain("too_wide");
+  cleanup();
+  show(feedPage(), {}, STEWARD);
+  const rules = await screen.findByTestId("section-rules");
+  expect(within(rules).getByTestId("returned-rules").textContent).toContain("too_wide");
+  expect(within(rules).getByTestId("refused-rules").textContent).toContain("bad_sql");
+  expect(within(rules).getByTestId("rules-kept-note").textContent).toMatch(
+    /^From the last Propose rules in this browser tab, .+; not stored\.$/);
+});
+
+test("P24 and P8: Prepare says why it is disabled; the go-live names people", async () => {
+  show(feedPage({ go_live: { latest: { id: "g", created_at: "2026-11-18T09:00:00Z", feed_id: FEED_ID, version: 1,
+                                       proposal_id: "p", approved_by: "dev-data-owner", mapping_ids: [], rule_ids: [],
+                                       test_load_id: "l", hypercare_until: "2026-11-28" },
+                             hypercare_active: true, pending_summary: SUMMARY } }), {}, USERS[0]);
+  expect((await screen.findByTestId("prepare-go-live")).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByTestId("prepare-why").textContent).toBe("A summary already waits for the owner.");
+  expect(screen.getByTestId("go-live-latest").textContent).toContain("Version 1 approved by Devon Owner");
+  expect(screen.getByTestId("go-live-summary").textContent).toContain("The owner is Devon Owner");
+});
+
 test("P19: the result of Propose mappings shows above the mapping table", async () => {
   show(feedPage({ columns: [feedPage().columns[0], unmapped] }), {}, USERS[1], {
     [`POST /api/amaze/feeds/${FEED_ID}/mappings/propose`]: { result: {

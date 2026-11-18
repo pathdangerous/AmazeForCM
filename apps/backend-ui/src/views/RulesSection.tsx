@@ -7,7 +7,29 @@ import {
 // Step 09 on a registered feed (phase 6 plan, section 10): the rules it has, the rules waiting for the data steward
 // and then the checker, and Propose rules for the steward. A rule is SQL over the table `curated` that returns the
 // rows that break it; the RuleRecommenderAgent proposes it, code back-tests it on the synthetic history, two people
-// decide it. Returned and refused rules are listed with why; they are not stored (they exist only in the answer).
+// decide it. Returned and refused rules are listed with why; they are not stored (they exist only in the answer,
+// which this tab keeps: P22).
+
+// Phase 7.5, P22 (plan, assumption 17): the last Propose rules answer is kept for the feed in this browser tab's
+// sessionStorage, and said to be so; it is not stored anywhere else. Storage may be blocked: then it is not kept.
+type Kept = { returned: ReturnedRule[]; refused: RefusedRule[]; at: string };
+
+function readKept(feedId: string): Kept | null {
+  try {
+    const raw = sessionStorage.getItem(`amaze.rules.${feedId}`);
+    return raw ? (JSON.parse(raw) as Kept) : null;
+  } catch {
+    return null;
+  }
+}
+
+function keep(feedId: string, kept: Kept): void {
+  try {
+    sessionStorage.setItem(`amaze.rules.${feedId}`, JSON.stringify(kept));
+  } catch {
+    // storage blocked: the answer shows until the page is left
+  }
+}
 
 function share(back: Backtest | null): string {
   if (!back || back.status !== "ran" || back.share === null) return "not back-tested";
@@ -68,9 +90,10 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
   onError: (m: string | null) => void; notice?: ReactNode; // phase 7.5: the page's result line, when it is ours
 }) {
   const [busy, setBusy] = useState(false);
-  const [returned, setReturned] = useState<ReturnedRule[]>([]);
-  const [refused, setRefused] = useState<RefusedRule[]>([]);
   const { rules, feed } = page;
+  const [kept, setKept] = useState<Kept | null>(() => readKept(feed.id));
+  const returned = kept?.returned ?? [];
+  const refused = kept?.refused ?? [];
   const canPropose = roles.includes("data_steward");
 
   async function run(work: () => Promise<string>) {
@@ -90,8 +113,9 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
   const propose = () => run(async () => {
     const r = await apiPost<{ result: { outcome: string; proposal_ids?: string[]; returned: ReturnedRule[];
                                         refused: RefusedRule[] } }>(`/api/amaze/feeds/${feed.id}/rules/propose`, {}, devUser);
-    setReturned(r.result.returned);
-    setRefused(r.result.refused);
+    const answer = { returned: r.result.returned, refused: r.result.refused, at: new Date().toISOString() };
+    setKept(answer);
+    keep(feed.id, answer);
     const made = r.result.proposal_ids?.length ?? 0;
     return r.result.outcome === "flags_most_history_returned"
       ? "Every answered rule flags most of the history: none was proposed."
@@ -146,6 +170,11 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
         </>
       )}
 
+      {kept && (returned.length > 0 || refused.length > 0) && (
+        <Text className="muted" size="xs" mt="sm" data-testid="rules-kept-note">
+          From the last Propose rules in this browser tab, {new Date(kept.at).toLocaleString()}; not stored.
+        </Text>
+      )}
       {returned.length > 0 && (
         <div className="detail" data-testid="returned-rules">
           <strong>Returned, not proposed</strong>

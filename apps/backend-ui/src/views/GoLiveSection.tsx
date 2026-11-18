@@ -13,11 +13,12 @@ const STEPS = [
   { value: "09", label: "09 Rules" },
 ] as const;
 
-export default function GoLiveSection({ page, devUser, userId, roles, onChange, onMessage, onError, notice }: {
-  page: FeedPage; devUser: string; userId: string; roles: string[]; onChange: () => void;
-  onMessage: (m: string) => void; onError: (m: string | null) => void;
+export default function GoLiveSection({ page, devUser, userId, roles, people, onChange, onMessage, onError, notice }: {
+  page: FeedPage; devUser: string; userId: string; roles: string[]; people: Record<string, string>;
+  onChange: () => void; onMessage: (m: string) => void; onError: (m: string | null) => void;
   notice?: ReactNode; // phase 7.5: the page's result line, when it is ours
 }) {
+  const name = (id: string) => people[id] ?? id; // phase 7.5, assumption 12
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [step, setStep] = useState<"05" | "06" | "09" | "">("");
@@ -70,7 +71,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
       {notice}
       {live.latest ? (
         <Text data-testid="go-live-latest">
-          Version {live.latest.version} approved by {live.latest.approved_by}; the daily job loads this feed.{" "}
+          Version {live.latest.version} approved by {name(live.latest.approved_by)}; the daily job loads this feed.{" "}
           <span className={live.hypercare_active ? "ok" : "muted"}>
             Hypercare {live.hypercare_active ? "until" : "ended"} {live.latest.hypercare_until}.
           </span>
@@ -80,7 +81,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
 
       {summary && (
         <div className="detail" data-testid="go-live-summary">
-          <div className="muted">ReviewSummariserAgent's draft; it decides nothing. The owner is {owner ?? "not named"}.</div>
+          <div className="muted">ReviewSummariserAgent's draft; it decides nothing. The owner is {owner ? name(owner) : "not named"}.</div>
           <p>{summary.payload.summary}</p>
           {summary.payload.highlights.length > 0 && <ul>{summary.payload.highlights.map((h) => <li key={h}>{h}</li>)}</ul>}
           {summary.payload.risks.length > 0 && (
@@ -107,7 +108,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
                       onClick={reject}>Reject</Button>
             </Group>
           ) : (
-            <Text className="muted">Only {owner ?? "the named owner"} decides this go-live.</Text>
+            <Text className="muted">Only {owner ? name(owner) : "the named owner"} decides this go-live.</Text>
           )}
         </div>
       )}
@@ -117,7 +118,8 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
           <Button disabled={busy || !!summary} data-testid="prepare-go-live" onClick={prepare}>
             Prepare go-live
           </Button>
-          <span className="muted">a test load of the latest file, then the agent's summary for the owner</span>
+          {summary ? <span className="muted" data-testid="prepare-why">A summary already waits for the owner.</span>
+            : <span className="muted">a test load of the latest file, then the agent's summary for the owner</span>}
         </Group>
       ) : <Text className="muted" mt="sm">Only the backend team prepares a go-live.</Text>}
     </div>

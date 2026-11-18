@@ -556,7 +556,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
             )}
           </Section>
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("rules")} />
-          <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []}
+          <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []} people={people}
                          onChange={onChange} {...reporter("go-live")} />
           <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("loads")} />
         </>
