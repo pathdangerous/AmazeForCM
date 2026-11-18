@@ -75,6 +75,16 @@ def test_both_apps_use_one_content_width():
     assert widths == {"backend-ui": {"1200"}, "consumer-ui": {"1200"}}
 
 
+def test_every_date_goes_through_the_one_formatter():
+    """Checkpoint 2, item 3: one date format in both apps, from formatWhen() in the shared theme.ts; no view
+    formats a date itself (toLocaleString, toLocaleDateString, toLocaleTimeString)."""
+    assert "export function formatWhen(" in _theme(UIS[0])
+    found = [f"{path.relative_to(APPS)}:{n}" for ui in UIS for path in (APPS / ui / "src").rglob("*.tsx")
+             if not path.name.endswith(".test.tsx")
+             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if "toLocale" in line]
+    assert found == []
+
+
 def test_every_listed_pair_meets_4_5_to_1():
     text = _theme(UIS[0])
     pairs = PAIR.findall(_block(text, "CONTRAST_PAIRS"))

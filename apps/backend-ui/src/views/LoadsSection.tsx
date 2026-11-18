@@ -1,6 +1,7 @@
 import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
 import { useState, type ReactNode } from "react";
 import { apiPost, describeError, words, type FeedPage, type LoadOnPage } from "../api";
+import { formatWhen } from "../theme";
 
 // Step 13 on a registered feed (phase 6 plan, section 10): the latest loads with their four stages and counts, and
 // Load now for operations (the job's own fetch and load of this one feed; it needs a go-live).
@@ -84,7 +85,7 @@ export default function LoadsSection({ page, devUser, roles, onChange, onMessage
               <Table.Tbody>
                 {page.loads.map((l) => (
                   <Table.Tr key={l.id} data-testid="load-row" data-purpose={l.purpose}>
-                    <Table.Td>{new Date(l.received_at).toLocaleString()}</Table.Td>
+                    <Table.Td>{formatWhen(l.received_at)}</Table.Td>
                     <Table.Td>{PURPOSE[l.purpose] ?? words(l.purpose)}</Table.Td>
                     <Table.Td><Arrival load={l} /></Table.Td>
                     <Table.Td>

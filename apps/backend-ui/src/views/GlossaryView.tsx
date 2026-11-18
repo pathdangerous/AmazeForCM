@@ -4,6 +4,7 @@ import {
   apiGet, decideProposal, describeError, words, type ConfigProposal, type DomainCount, type ElementDetail,
   type ElementOption, type GlossaryElement,
 } from "../api";
+import { formatWhen } from "../theme";
 
 function domainLabel(domains: DomainCount[], domain: string): string {
   return domains.find((d) => d.domain === domain)?.label ?? domain;
@@ -108,7 +109,7 @@ function DecidedRow({ proposal, name }: { proposal: ConfigProposal; name: (id: s
           {proposal.status === "approved" ? "Approved" : "Rejected"}
         </span>
         {last && <> by {name(last.decided_by)}{last.note ? `: ${last.note}` : ""}</>}
-        {proposal.decided_at && <span className="muted"> · {new Date(proposal.decided_at).toLocaleString()}</span>}
+        {proposal.decided_at && <span className="muted"> · {formatWhen(proposal.decided_at)}</span>}
       </div>
     </div>
   );
@@ -315,7 +316,7 @@ export default function GlossaryView({ devUser, canDecide, changed, people, onCh
               {detail.history.map((v) => (
                 <Table.Tr key={v.id}>
                   <Table.Td>{v.version}</Table.Td>
-                  <Table.Td>{new Date(v.created_at).toLocaleString()}</Table.Td>
+                  <Table.Td>{formatWhen(v.created_at)}</Table.Td>
                   <Table.Td>{name(v.created_by)}</Table.Td>
                   <Table.Td className="muted">{v.proposal_id ?? "seed"}</Table.Td>
                 </Table.Tr>

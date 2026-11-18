@@ -1,6 +1,7 @@
 import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type Feed, type FeedRow } from "../api";
+import { formatWhen } from "../theme";
 
 const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "", label: "All" },
@@ -85,7 +86,7 @@ export default function FeedRegistryView({ devUser, people }: { devUser: string;
                       </>
                     ) : f.source_ref ?? <span className="muted">none</span>}
                   </Table.Td>
-                  <Table.Td>{new Date(f.created_at).toLocaleString()}</Table.Td>
+                  <Table.Td>{formatWhen(f.created_at)}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>

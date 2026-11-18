@@ -1,6 +1,7 @@
 import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, describeError, type FindSourceResponse, type RequestSummary } from "../api";
+import { formatWhen } from "../theme";
 
 const OUTCOMES: Record<RequestSummary["outcome"], string> = {
   reuse: "Reuse",
@@ -58,7 +59,7 @@ export default function RequestsView({ devUser }: { devUser: string }) {
             <Table.Tbody>
               {requests.map((r) => (
                 <Table.Tr key={r.id}>
-                  <Table.Td>{new Date(r.created_at).toLocaleString()}</Table.Td>
+                  <Table.Td>{formatWhen(r.created_at)}</Table.Td>
                   <Table.Td>{r.query}</Table.Td>
                   <Table.Td data-testid="outcome">{OUTCOMES[r.outcome]}</Table.Td>
                   <Table.Td>{r.product_codes.join(", ") || "-"}</Table.Td>

@@ -183,3 +183,19 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
   light: scheme(LIGHT),
   dark: scheme(DARK),
 });
+
+// One date format for both UIs (checkpoint 2, item 3): "18 Nov 2026, 12:44" in the viewer's time zone, and
+// "18 Nov 2026" where no time is shown (time: false, or a YYYY-MM-DD day, read as that day wherever the viewer is).
+// Built by hand: Intl's en-GB month names vary by ICU version ("Sep" or "Sept").
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function formatWhen(value: string | Date, options: { time?: boolean } = {}): string {
+  const day = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const at = day ? new Date(Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10)))
+    : new Date(value);
+  if (Number.isNaN(at.getTime())) return String(value);
+  const date = `${at.getDate()} ${MONTHS[at.getMonth()]} ${at.getFullYear()}`;
+  if (day || options.time === false) return date;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date}, ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}

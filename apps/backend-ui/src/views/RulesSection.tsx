@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import {
   apiPost, describeError, words, type Backtest, type FeedPage, type PendingRule, type RefusedRule, type ReturnedRule,
 } from "../api";
+import { formatWhen } from "../theme";
 
 // Step 09 on a registered feed (phase 6 plan, section 10): the rules it has, the rules waiting for the data steward
 // and then the checker, and Propose rules for the steward. A rule is SQL over the table `curated` that returns the
@@ -172,7 +173,7 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
 
       {kept && (returned.length > 0 || refused.length > 0) && (
         <Text className="muted" size="xs" mt="sm" data-testid="rules-kept-note">
-          From the last Propose rules in this browser tab, {new Date(kept.at).toLocaleString()}; not stored.
+          From the last Propose rules in this browser tab, {formatWhen(kept.at)}; not stored.
         </Text>
       )}
       {returned.length > 0 && (

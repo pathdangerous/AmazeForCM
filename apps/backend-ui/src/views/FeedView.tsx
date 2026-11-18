@@ -4,6 +4,7 @@ import {
   apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type GlossaryRun,
   type Owner, type SignoffOutcome, type User,
 } from "../api";
+import { formatWhen } from "../theme";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
 import RulesSection from "./RulesSection";
@@ -89,7 +90,7 @@ function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
               <ul data-testid="mapping-versions">
                 {column.versions.map((v) => (
                   <li key={v.id}>Version {v.version}: <code>{v.element_key}</code>{" "}
-                    <span className="muted">{new Date(v.created_at).toLocaleString()}</span></li>
+                    <span className="muted">{formatWhen(v.created_at)}</span></li>
                 ))}
               </ul>
             )}
@@ -314,7 +315,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
                   <Table.Tr key={r.id}>
                     <Table.Td>
                       {r.title}
-                      <div className="muted">raised {new Date(r.raised_at).toLocaleDateString()} by {name(r.requester_id)}</div>
+                      <div className="muted">raised {formatWhen(r.raised_at, { time: false })} by {name(r.requester_id)}</div>
                     </Table.Td>
                     <Table.Td>{r.status}</Table.Td>
                     <Table.Td>{r.basis === "known_source" ? "Known source" : "Requester's pick"}</Table.Td>
@@ -338,7 +339,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
         {page.last_file ? (
           <Text>
             {page.last_file.outcome === "fetched" ? <code>{page.last_file.blob_ref}</code> : <span className="bad">{page.last_file.detail}</span>}
-            {" "}<span className="muted">{new Date(page.last_file.created_at).toLocaleString()}</span>
+            {" "}<span className="muted">{formatWhen(page.last_file.created_at)}</span>
           </Text>
         ) : <Text className="muted">No file yet.</Text>}
         {ofLatestFile && <Text className="muted" mt="xs">Profile {profile.version} is of this file.</Text>}
@@ -498,7 +499,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
                   Last run: <strong>{page.glossary_run.status}</strong>{" "}
                   <span className="muted">
                     ({words(page.glossary_run.reason)}, attempt {page.glossary_run.attempt},{" "}
-                    {new Date(page.glossary_run.finished_at ?? page.glossary_run.created_at).toLocaleString()})
+                    {formatWhen(page.glossary_run.finished_at ?? page.glossary_run.created_at)})
                   </span>
                 </div>
                 {page.glossary_run.error && <div className="bad">Failed: {page.glossary_run.error}</div>}
@@ -545,7 +546,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
             {page.product && (
               <Text mt="md" data-testid="product">
                 Product: <code>{page.product.code}</code> {page.product.name}, {page.product.visibility}, owned by{" "}
-                {name(page.product.owner_id)}, created {new Date(page.product.created_at).toLocaleString()}.
+                {name(page.product.owner_id)}, created {formatWhen(page.product.created_at)}.
               </Text>
             )}
             {page.parked_columns.length > 0 && (
@@ -566,7 +567,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
         <Section name="history" title="History" result={result}>
           <ul data-testid="history">
             {page.profiles.map((p) => (
-              <li key={`p${p.version}`}>Profile {p.version}: {p.outcome.replaceAll("_", " ")} <span className="muted">{new Date(p.at).toLocaleString()}</span></li>
+              <li key={`p${p.version}`}>Profile {p.version}: {p.outcome.replaceAll("_", " ")} <span className="muted">{formatWhen(p.at)}</span></li>
             ))}
             {page.signoffs.map((s) => (
               <li key={`s${s.version}`}>

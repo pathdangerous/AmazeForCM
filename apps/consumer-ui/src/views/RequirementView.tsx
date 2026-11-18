@@ -10,6 +10,7 @@ import {
   type SourceConditions,
   type StepResponse,
 } from "../api";
+import { formatWhen } from "../theme";
 
 // Phase 7.5, P29 (plan, assumption 25): where the data is, as five steps with the current one marked. A held
 // delivery or a missing part marks the fourth step in the warning colour. The progress sentence stays as it is.
@@ -144,7 +145,7 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
                 <dt>Last fetch</dt>
                 <dd data-testid="last-fetch" className={page.last_fetch.outcome === "fetched" ? "ok" : "warn"}>
                   {page.last_fetch.outcome === "fetched" ? "File received" : "Source did not answer"},{" "}
-                  {new Date(page.last_fetch.at).toLocaleString()}
+                  {formatWhen(page.last_fetch.at)}
                 </dd>
               </>
             )}
@@ -235,7 +236,7 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
                     {c.reason === "requester_asked" && " (you asked)"}
                     {c.reason === "source_down_n_days" && " (it did not answer)"}
                     {c.reason === "candidate_rejected" && " (rejected by the backend team)"}
-                    , {new Date(c.at).toLocaleString()}
+                    , {formatWhen(c.at)}
                   </li>
                 ))}
               </ol>

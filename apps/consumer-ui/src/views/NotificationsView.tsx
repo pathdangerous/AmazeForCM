@@ -1,6 +1,7 @@
 import { Anchor, Button, Group, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, describeError, type Notification } from "../api";
+import { formatWhen } from "../theme";
 
 // The signed-in user's own notifications, newest 50 (phase 7 plan, assumption 37). Read only: no read state.
 // "Ready: ..." and "Access restricted: ..." arrive here, and so does a delivery that was held.
@@ -85,7 +86,7 @@ export default function NotificationsView({ rows, error, onRefresh }: {
               {n.link?.startsWith(LINKS)
                 ? <Anchor href={n.link} fw={600}>{n.subject}</Anchor>
                 : <strong>{n.subject}</strong>}{" "}
-              <span className="muted">{new Date(n.created_at).toLocaleString()}</span>
+              <span className="muted">{formatWhen(n.created_at)}</span>
               <div>{n.body}</div>
             </li>
           ))}

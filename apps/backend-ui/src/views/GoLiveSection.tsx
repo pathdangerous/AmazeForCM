@@ -1,6 +1,7 @@
 import { Button, Group, NativeSelect, Text, TextInput, Title } from "@mantine/core";
 import { useState, type ReactNode } from "react";
 import { apiPost, describeError, type FeedPage } from "../api";
+import { formatWhen } from "../theme";
 
 // Step 11 on a registered feed (phase 6 plan, section 10). Prepare (backend team): a test load of the latest file,
 // then the ReviewSummariserAgent's draft. The draft is the agent's: it decides nothing. The feed's named owner, and
@@ -56,7 +57,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, people, on
   const approve = () => run(async () => {
     const r = await apiPost<{ result: { hypercare_until: string; daily_run_utc: string } }>(
       `/api/amaze/proposals/${summary!.id}/decision`, { decision: "approved" }, devUser);
-    return `Approved: the daily job loads this feed at ${r.result.daily_run_utc} UTC; hypercare until ${r.result.hypercare_until}.`;
+    return `Approved: the daily job loads this feed at ${r.result.daily_run_utc} UTC; hypercare until ${formatWhen(r.result.hypercare_until)}.`;
   });
   const reject = () => run(async () => {
     await apiPost(`/api/amaze/proposals/${summary!.id}/decision`, { decision: "rejected", note, back_to_step: step }, devUser);
@@ -73,7 +74,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, people, on
         <Text data-testid="go-live-latest">
           Version {live.latest.version} approved by {name(live.latest.approved_by)}; the daily job loads this feed.{" "}
           <span className={live.hypercare_active ? "ok" : "muted"}>
-            Hypercare {live.hypercare_active ? "until" : "ended"} {live.latest.hypercare_until}.
+            Hypercare {live.hypercare_active ? "until" : "ended"} {formatWhen(live.latest.hypercare_until)}.
           </span>
         </Text>
       ) : <Text className="muted" data-testid="go-live-none">Not live: the owner has not approved it for loading.</Text>}
