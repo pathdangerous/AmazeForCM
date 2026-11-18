@@ -36,6 +36,7 @@
       .bad { color: var(--amz-danger-text); }
       .muted { color: var(--amz-muted); font-size: 13px; }
       select, input, textarea, button { font: inherit; color: inherit; }
+      input[type="checkbox"], input[type="radio"] { accent-color: var(--amz-primary); }
       :where(select, input:not([type="radio"], [type="checkbox"]), textarea):not([class*="mantine"]) {
         padding: 4px 8px; background: var(--amz-panel); border: 1px solid var(--amz-line); border-radius: 6px; }
       :where(button):not([class*="mantine"]) { padding: 4px 12px; background: var(--amz-panel); border: 1px solid var(--amz-line);
