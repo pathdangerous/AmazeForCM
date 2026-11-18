@@ -144,6 +144,11 @@ test("the phase 7.5 screens, S1 to S25", async ({ browser }) => {
     await decidedFilter.click();
     await expect(backend.getByTestId("glossary-decided-row").first()).toBeVisible();
   }
+  // checkpoint 2, item 2: with the longest dev-user label (Glenn Glossary (glossary_owner)) the header is one line
+  const header = (await backend.locator(".app-header-inner").boundingBox())!;
+  expect(header.height, "the backend header stays on one line at 1280 px").toBeLessThanOrEqual(60);
+  const label = (await backend.locator('label[for="dev-user"]').boundingBox())!;
+  expect(label.height, "the Dev user label stays on one line").toBeLessThanOrEqual(24);
   await shot(backend, "S13-glossary-decided");
 
   // ---- E5 Sam: Propose mappings (shot), then the three approvals

@@ -114,10 +114,10 @@ export default function App() {
           </nav>
           <div className="who">
             <label htmlFor="dev-user">Dev user</label>
-            <NativeSelect id="dev-user" data-testid="dev-user" value={selected}
+            <NativeSelect id="dev-user" data-testid="dev-user" value={selected} w={240} style={{ flex: "none" }}
                           onChange={(e) => setSelected(e.currentTarget.value)}
                           data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
-            <span data-testid="signed-in-as">
+            <span data-testid="signed-in-as" className="who-name" title={me ? `Signed in as ${me.display_name}` : undefined}>
               {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}
             </span>
           </div>
