@@ -36,11 +36,24 @@ function proposedText(r: Proposed): string {
   return `Mappings proposed: ${parts.join(", ")}.`;
 }
 
-// One part of the feed page: a section-<name> element with its heading.
-function Section({ name, title, children }: { name: string; title: ReactNode; children: ReactNode }) {
+// Phase 7.5, P9, P19, P23 (plan, assumption 19): the one result line of the page, under the heading of the section
+// that holds the next action, or of the section acted on; `at` names that section.
+type Result = { ok: boolean; text: string; at: string };
+
+function ResultLine({ result }: { result: Result }) {
+  return result.ok
+    ? <Text className="ok" role="status" data-testid="feed-done" mb="xs">{result.text}</Text>
+    : <Text className="bad" role="alert" mb="xs">{result.text}</Text>;
+}
+
+// One part of the feed page: a section-<name> element with its heading, and the result line when it is here.
+function Section({ name, title, result, children }: {
+  name: string; title: ReactNode; result: Result | null; children: ReactNode;
+}) {
   return (
     <div data-testid={`section-${name}`}>
       <Title order={3} mt="xl" mb="xs">{title}</Title>
+      {result?.at === name && <ResultLine result={result} />}
       {children}
     </div>
   );
@@ -139,90 +152,111 @@ function lines(text: string): string[] {
   return text.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
-export default function FeedView({ feedId, devUser, canAct, canRun, canMap, changed, onChange }: {
-  feedId: string; devUser: string; canAct: boolean; canRun: boolean; canMap: boolean; changed: number;
-  onChange: () => void;
+// Where an action's result line goes (assumption 19): the section of the next action, else the one acted on.
+function resultAt(action: string, page: FeedPage, canAct: boolean): string {
+  if (action === "profile") return "summary";
+  if (action === "profile/summary") return canAct && page.next_action === "sign_off" ? "signoff" : "summary";
+  if (action === "signoff") return canAct && page.next_action === "register" ? "register" : "summary";
+  return page.registration ? "registration" : "register"; // register
+}
+const ACTED_ON: Record<string, string> = { profile: "file", "profile/summary": "summary", signoff: "signoff",
+                                           register: "register" };
+
+export default function FeedView({ feedId, devUser, me, people, canAct, canRun, canMap, changed, onChange }: {
+  feedId: string; devUser: string; me: User | null; people: Record<string, string>; canAct: boolean;
+  canRun: boolean; canMap: boolean; changed: number; onChange: () => void;
 }) {
   const [page, setPage] = useState<FeedPage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
   const [owners, setOwners] = useState<Owner[]>([]);
   const [outcome, setOutcome] = useState<SignoffOutcome | "">("");
   const [text, setText] = useState("");
   const [owner, setOwner] = useState("");
   const [visibility, setVisibility] = useState<"open" | "restricted">("open");
-  const [me, setMe] = useState<User | null>(null); // phase 6: the rules, go-live and loads sections need every role
+  const name = (userId: string) => people[userId] ?? userId; // P8: a person by name; an unknown id as itself
 
   useEffect(() => {
     if (!devUser) return;
     let current = true;
-    apiGet<User>("/api/me", devUser).then((u) => current && setMe(u)).catch(() => current && setMe(null));
     apiGet<FeedPage>(`/api/amaze/feeds/${feedId}`, devUser)
-      .then((p) => current && (setPage(p), setError(null)))
-      .catch((err: unknown) => current && setError(describeError(err)));
+      .then((p) => current && (setPage(p), setLoadError(null)))
+      .catch((err: unknown) => current && setLoadError(describeError(err)));
     apiGet<Owner[]>("/api/amaze/owners", devUser).then((o) => current && setOwners(o)).catch(() => undefined);
     return () => {
       current = false;
     };
   }, [feedId, devUser, changed]);
 
+  // P9: the section holding the result line comes into view
+  useEffect(() => {
+    if (!result) return;
+    document.querySelector(`[data-testid="section-${result.at}"]`)?.scrollIntoView?.({ block: "start" });
+  }, [result]);
+
   async function act(action: string, body: unknown, describe: (r: { result?: { outcome: string } }) => string) {
     setBusy(true);
-    setDone(null);
+    setResult(null);
     try {
       const response = await apiPost<{ feed: FeedPage; result?: { outcome: string } }>(
         `/api/amaze/feeds/${feedId}/${action}`, body, devUser);
       setPage(response.feed);
-      setError(null);
-      setDone(describe(response));
+      setResult({ ok: true, text: describe(response), at: resultAt(action, response.feed, canAct) });
       setOutcome("");
       setText("");
       if (action === "register") onChange(); // the run it queued shows in the banner
     } catch (err: unknown) {
-      setError(describeError(err));
+      setResult({ ok: false, text: describeError(err), at: ACTED_ON[action] });
     } finally {
       setBusy(false);
     }
   }
 
   // phase 5: the three actions whose response is not the feed page; the page is read again (onChange)
-  async function step(work: () => Promise<string>) {
+  async function step(at: string, work: () => Promise<string>) {
     setBusy(true);
-    setDone(null);
+    setResult(null);
     try {
       const message = await work();
-      setError(null);
-      setDone(message);
+      setResult({ ok: true, text: message, at });
       onChange();
     } catch (err: unknown) {
-      setError(describeError(err));
+      setResult({ ok: false, text: describeError(err), at });
     } finally {
       setBusy(false);
     }
   }
 
-  const runBuilder = () => step(async () => {
+  // The rules, go-live and loads sections report through these; their line shows under their own heading.
+  const reporter = (at: string) => ({
+    onMessage: (text: string) => setResult({ ok: true, text, at }),
+    onError: (text: string | null) => (text === null ? undefined : setResult({ ok: false, text, at })),
+    notice: result?.at === at ? <ResultLine result={result} /> : null,
+  });
+
+  const runBuilder = () => step("glossary-builder", async () => {
     const r = await apiPost<{ created: boolean }>(`/api/amaze/feeds/${feedId}/glossary/run`, {}, devUser);
     return r.created ? "The glossary builder is queued for this feed." : "The glossary builder already has a run for this feed.";
   });
-  const proposeMappings = (column?: string) => step(async () => {
+  const proposeMappings = (column?: string) => step("mapping", async () => {
     const r = await apiPost<{ result: Proposed }>(`/api/amaze/feeds/${feedId}/mappings/propose`,
                                                   column ? { column } : {}, devUser);
     return proposedText(r.result);
   });
   const decideMapping = (id: string, decision: "approved" | "rejected", choice: string | null, note: string) =>
-    step(async () => {
+    step("mapping", async () => {
       await decideProposal(id, decision, choice, note, devUser);
       return decision === "approved" ? `Mapped to ${choice}.` : "Rejected: its candidates are not proposed again.";
     });
 
-  if (error && !page) return <Text className="bad" role="alert">{error}</Text>;
+  if (loadError && !page) return <Text className="bad" role="alert">{loadError}</Text>;
   if (!page) return <Text className="muted">Loading…</Text>;
 
   const { feed, profile } = page;
   const specOnly = profile?.outcome === "spec_only_low_confidence";
   const items = outcome === "rejected" ? "reasons" : "gaps";
+  const ofLatestFile = profile !== null && page.last_file !== null && profile.fetch_id === page.last_file.id; // P6
 
   return (
     <section data-testid="feed-view">
@@ -230,10 +264,9 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       <Title order={2} mt="xs" mb="sm">
         <code>{feed.code}</code> {feed.name} <Badge variant="default" ml="xs">{feed.stage}</Badge>
       </Title>
-      {done && <Text className="ok" role="status" data-testid="feed-done">{done}</Text>}
-      {error && <Text className="bad" role="alert">{error}</Text>}
+      {loadError && <Text className="bad" role="alert">{loadError}</Text>}
 
-      <Section name="source" title="Source">
+      <Section name="source" title="Source" result={result}>
         {page.source ? (
           <dl>
             <dt>Provider</dt><dd>{page.source.name} — {page.source.provider}</dd>
@@ -244,7 +277,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
         ) : <Text className="muted">No catalogue source.</Text>}
       </Section>
 
-      <Section name="requirements" title="Requirements that select it">
+      <Section name="requirements" title="Requirements that select it" result={result}>
         {page.requirements.length === 0 ? <Text className="muted">None now.</Text> : (
           <Table.ScrollContainer minWidth={720}>
             <Table data-testid="feed-requirements" verticalSpacing="xs">
@@ -255,7 +288,10 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               <Table.Tbody>
                 {page.requirements.map((r) => (
                   <Table.Tr key={r.id}>
-                    <Table.Td>{r.title}</Table.Td>
+                    <Table.Td>
+                      {r.title}
+                      <div className="muted">raised {new Date(r.raised_at).toLocaleDateString()} by {name(r.requester_id)}</div>
+                    </Table.Td>
                     <Table.Td>{r.status}</Table.Td>
                     <Table.Td>{r.basis === "known_source" ? "Known source" : "Requester's pick"}</Table.Td>
                     <Table.Td>
@@ -274,14 +310,15 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
         )}
       </Section>
 
-      <Section name="file" title="Latest file">
+      <Section name="file" title="Latest file" result={result}>
         {page.last_file ? (
           <Text>
             {page.last_file.outcome === "fetched" ? <code>{page.last_file.blob_ref}</code> : <span className="bad">{page.last_file.detail}</span>}
             {" "}<span className="muted">{new Date(page.last_file.created_at).toLocaleString()}</span>
           </Text>
         ) : <Text className="muted">No file yet.</Text>}
-        {canAct && feed.stage === "candidate" && page.last_file && (
+        {ofLatestFile && <Text className="muted" mt="xs">Profile {profile.version} is of this file.</Text>}
+        {canAct && feed.stage === "candidate" && page.last_file && !ofLatestFile && (
           <Button mt="sm" disabled={busy} data-testid="profile"
                   onClick={() => act("profile", {}, (r) => `Profile written: ${r.result?.outcome.replaceAll("_", " ")}.`)}>
             Profile the latest file
@@ -290,13 +327,13 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       </Section>
 
       {profile && (
-        <Section name="profile" title={`Profile ${profile.version}`}>
+        <Section name="profile" title={`Profile ${profile.version}`} result={result}>
           {specOnly && (
             <Text className="bad" role="note" data-testid="spec-only">
               Low confidence: spec only. {profile.detail} Only what the source declares is known.
             </Text>
           )}
-          <Text className="muted">{profile.row_count ?? 0} rows · {profile.engine} · by {profile.profiled_by}</Text>
+          <Text className="muted">{profile.row_count ?? 0} rows · {profile.engine} · by {name(profile.profiled_by)}</Text>
           {profile.columns.length > 0 && (
             <Table.ScrollContainer minWidth={600}>
               <Table data-testid="profile-columns" verticalSpacing={4}>
@@ -322,7 +359,10 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
           {page.missing_columns.length > 0 && <Text mt="xs" className="bad">Declared but not in the file: {page.missing_columns.join(", ")}</Text>}
           {profile.coverage.map((c) => (
             <div key={c.requirement_id} className="detail">
-              <strong>{page.requirements.find((r) => r.id === c.requirement_id)?.title ?? "A requirement"}</strong>
+              <strong>{page.coverage_titles[c.requirement_id] ?? "A requirement"}</strong>
+              {!page.requirements.some((r) => r.id === c.requirement_id) && (
+                <span className="muted"> — no longer selects this feed</span>
+              )}
               <ul>
                 {c.items.map((i) => (
                   <li key={i.item}>
@@ -339,7 +379,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       )}
 
       {profile && (
-        <Section name="summary" title="Summary">
+        <Section name="summary" title="Summary" result={result}>
           {page.summary ? (
             <div className="detail" data-testid="summary">
               <div className="muted">ProfilerAgent's proposal ({page.summary_status}); it decides nothing</div>
@@ -359,7 +399,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       )}
 
       {canAct && page.next_action === "sign_off" && page.summary && (
-        <Section name="signoff" title={`Sign off profile ${profile?.version}`}>
+        <Section name="signoff" title={`Sign off profile ${profile?.version}`} result={result}>
           <form className="detail" data-testid="signoff-form" onSubmit={(e) => {
             e.preventDefault();
             if (!outcome) return;
@@ -390,7 +430,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       )}
 
       {canAct && page.next_action === "register" && (
-        <Section name="register" title="Register">
+        <Section name="register" title="Register" result={result}>
           <form className="detail" data-testid="register-form" onSubmit={(e) => {
             e.preventDefault();
             act("register", { owner_id: owner || null, visibility }, (r) =>
@@ -413,21 +453,21 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
       )}
 
       {page.registration && (
-        <Section name="registration" title="Registration">
+        <Section name="registration" title="Registration" result={result}>
           <dl data-testid="registration">
-            <dt>Owner</dt><dd>{page.registration.owner_id}</dd>
+            <dt>Owner</dt><dd>{name(page.registration.owner_id)}</dd>
             <dt>Who may see it</dt><dd>{page.registration.visibility}</dd>
             <dt>Licence</dt><dd>{page.registration.licence}</dd>
             <dt>Permitted use</dt><dd>{page.registration.permitted_use}</dd>
             <dt>Redistribution</dt><dd>{page.registration.redistribution}</dd>
-            <dt>Registered by</dt><dd>{page.registration.registered_by}</dd>
+            <dt>Registered by</dt><dd>{name(page.registration.registered_by)}</dd>
           </dl>
         </Section>
       )}
 
       {feed.stage === "registered" && (
         <>
-          <Section name="glossary-builder" title="Glossary builder">
+          <Section name="glossary-builder" title="Glossary builder" result={result}>
             {page.glossary_run ? (
               <div className="detail" data-testid="glossary-run">
                 <div>
@@ -455,7 +495,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
             )}
           </Section>
 
-          <Section name="mapping" title="Mapping">
+          <Section name="mapping" title="Mapping" result={result}>
             <Table.ScrollContainer minWidth={900}>
               <Table data-testid="mapping-table" verticalSpacing="xs">
                 <Table.Thead>
@@ -482,7 +522,7 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
             {page.product && (
               <Text mt="md" data-testid="product">
                 Product: <code>{page.product.code}</code> {page.product.name}, {page.product.visibility}, owned by{" "}
-                {page.product.owner_id}, created {new Date(page.product.created_at).toLocaleString()}.
+                {name(page.product.owner_id)}, created {new Date(page.product.created_at).toLocaleString()}.
               </Text>
             )}
             {page.parked_columns.length > 0 && (
@@ -492,24 +532,22 @@ export default function FeedView({ feedId, devUser, canAct, canRun, canMap, chan
               </Text>
             )}
           </Section>
-          <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} onMessage={setDone}
-                        onError={setError} />
+          <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("rules")} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []}
-                         onChange={onChange} onMessage={setDone} onError={setError} />
-          <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange}
-                        onMessage={setDone} onError={setError} />
+                         onChange={onChange} {...reporter("go-live")} />
+          <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("loads")} />
         </>
       )}
 
       {(page.profiles.length > 0 || page.signoffs.length > 0) && (
-        <Section name="history" title="History">
+        <Section name="history" title="History" result={result}>
           <ul data-testid="history">
             {page.profiles.map((p) => (
               <li key={`p${p.version}`}>Profile {p.version}: {p.outcome.replaceAll("_", " ")} <span className="muted">{new Date(p.at).toLocaleString()}</span></li>
             ))}
             {page.signoffs.map((s) => (
               <li key={`s${s.version}`}>
-                Sign-off {s.version}: {s.outcome.replaceAll("_", " ")} by {s.signed_off_by}
+                Sign-off {s.version}: {s.outcome.replaceAll("_", " ")} by {name(s.signed_off_by)}
                 {[...s.gaps, ...s.reasons].length > 0 && <> — {[...s.gaps, ...s.reasons].join("; ")}</>}
               </li>
             ))}

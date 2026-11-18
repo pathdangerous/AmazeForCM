@@ -1,5 +1,5 @@
 import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { apiPost, describeError, words, type FeedPage, type LoadOnPage } from "../api";
 
 // Step 13 on a registered feed (phase 6 plan, section 10): the latest loads with their four stages and counts, and
@@ -47,9 +47,9 @@ function Certification({ load }: { load: LoadOnPage }) {
   );
 }
 
-export default function LoadsSection({ page, devUser, roles, onChange, onMessage, onError }: {
+export default function LoadsSection({ page, devUser, roles, onChange, onMessage, onError, notice }: {
   page: FeedPage; devUser: string; roles: string[]; onChange: () => void; onMessage: (m: string) => void;
-  onError: (m: string | null) => void;
+  onError: (m: string | null) => void; notice?: ReactNode; // phase 7.5: the page's result line, when it is ours
 }) {
   const [busy, setBusy] = useState(false);
   const canLoad = roles.includes("operations") && page.go_live.latest !== null;
@@ -72,6 +72,7 @@ export default function LoadsSection({ page, devUser, roles, onChange, onMessage
   return (
     <div data-testid="section-loads">
       <Title order={3} mt="xl" mb="xs">Loads</Title>
+      {notice}
       {page.loads.length === 0 ? <Text className="muted">No load yet.</Text> : (
         <>
           <Table.ScrollContainer minWidth={900}>

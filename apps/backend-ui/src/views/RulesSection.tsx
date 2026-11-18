@@ -1,5 +1,5 @@
 import { Button, Group, Table, Text, TextInput, Title } from "@mantine/core";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   apiPost, describeError, words, type Backtest, type FeedPage, type PendingRule, type RefusedRule, type ReturnedRule,
 } from "../api";
@@ -63,9 +63,9 @@ function PendingRuleRow({ rule, roles, busy, onDecide }: {
   );
 }
 
-export default function RulesSection({ page, devUser, roles, onChange, onMessage, onError }: {
+export default function RulesSection({ page, devUser, roles, onChange, onMessage, onError, notice }: {
   page: FeedPage; devUser: string; roles: string[]; onChange: () => void; onMessage: (m: string) => void;
-  onError: (m: string | null) => void;
+  onError: (m: string | null) => void; notice?: ReactNode; // phase 7.5: the page's result line, when it is ours
 }) {
   const [busy, setBusy] = useState(false);
   const [returned, setReturned] = useState<ReturnedRule[]>([]);
@@ -107,6 +107,7 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
   return (
     <div data-testid="section-rules">
       <Title order={3} mt="xl" mb="xs">Rules</Title>
+      {notice}
       {rules.current.length === 0 ? <Text className="muted">No rule yet.</Text> : (
         <Table.ScrollContainer minWidth={800}>
           <Table data-testid="rules-table" verticalSpacing="xs">

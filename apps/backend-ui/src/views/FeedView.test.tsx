@@ -1,7 +1,12 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { FEED_ID, feedPage, feedRoutes, renderWithTheme, scheduledLoad, stubFetch, USERS } from "../test/fixtures";
+import { fireEvent } from "@testing-library/react";
+import {
+  FEED_ID, feedPage, feedRoutes, PEOPLE, renderWithTheme, REQUIREMENT_ID, scheduledLoad, stubFetch, USERS,
+} from "../test/fixtures";
 import FeedView from "./FeedView";
+
+const NAMES = Object.fromEntries(PEOPLE.map((p) => [p.id, p.display_name]));
 
 afterEach(() => {
   cleanup();
@@ -11,12 +16,18 @@ afterEach(() => {
 const SECTIONS = ["source", "requirements", "file", "profile", "summary", "registration", "glossary-builder", "mapping",
                   "rules", "go-live", "loads", "history"];
 
-function show(page = feedPage(), props: Partial<Parameters<typeof FeedView>[0]> = {}, user = USERS[1]) {
-  stubFetch(feedRoutes(page, user));
-  return renderWithTheme(
-    <FeedView feedId={FEED_ID} devUser={user.id} canAct={false} canRun={false} canMap={true} changed={0}
-              onChange={() => undefined} {...props} />);
+function show(page = feedPage(), props: Partial<Parameters<typeof FeedView>[0]> = {}, user = USERS[1],
+              extra: Record<string, unknown> = {}) {
+  const fetchStub = stubFetch({ ...feedRoutes(page, user), ...extra });
+  renderWithTheme(
+    <FeedView feedId={FEED_ID} devUser={user.id} me={user} people={NAMES} canAct={false} canRun={false}
+              canMap={true} changed={0} onChange={() => undefined} {...props} />);
+  return fetchStub;
 }
+
+const candidate = (over: Partial<ReturnType<typeof feedPage>> = {}) => feedPage({
+  feed: { ...feedPage().feed, stage: "candidate" }, registration: null, signoffs: [], summary: null,
+  summary_status: null, next_action: "summarise", columns: [], ...over });
 
 test("task 8: a registered feed page renders every section with a converted heading, rows keep data-column", async () => {
   show(feedPage({ loads: [scheduledLoad()] }));
@@ -47,3 +58,58 @@ test("task 8: the sign-off and register forms keep native radios, a native selec
     show({ ...candidate, next_action: "register" }, { canAct: true, canMap: false }, USERS[0]);
     expect((await screen.findByTestId("owner")).tagName).toBe("SELECT");
   });
+
+test("P6: Profile is offered only while the latest file has no profile", async () => {
+  show(candidate(), { canAct: true }, USERS[0]); // the fixture's profile is of the latest file
+  const file = await screen.findByTestId("section-file");
+  expect(within(file).queryByTestId("profile")).toBeNull();
+  expect(file.textContent).toContain("Profile 1 is of this file.");
+  cleanup();
+  show(candidate({ last_file: { ...feedPage().last_file!, id: "fetch-2" } }), { canAct: true }, USERS[0]);
+  expect(await screen.findByTestId("profile")).toBeTruthy();
+});
+
+test("P7 and P8: each requirement says when and by whom it was raised; people show by name", async () => {
+  show(feedPage({ product: { code: "syn_test_feed", name: "Test feed", visibility: "open", owner_id: "dev-data-owner",
+                             created_at: "2026-11-18T09:00:00Z" } }));
+  const requirements = await screen.findByTestId("feed-requirements");
+  expect(requirements.textContent).toMatch(/raised .+ by Riley Requester/);
+  const registration = screen.getByTestId("registration");
+  expect(registration.textContent).toContain("Devon Owner");
+  expect(registration.textContent).toContain("Blake Backend");
+  expect(registration.textContent).not.toContain("dev-data-owner");
+  expect(screen.getByTestId("product").textContent).toContain("owned by Devon Owner");
+});
+
+test("P9: the result line shows under the heading of the next section, and only once", async () => {
+  const before = candidate({ profile: null, profiles: [], next_action: "profile" });
+  const after = candidate();
+  show(before, { canAct: true }, USERS[0], {
+    [`POST /api/amaze/feeds/${FEED_ID}/profile`]: { result: { outcome: "profiled" }, feed: after } });
+  fireEvent.click(await screen.findByTestId("profile"));
+  const done = await screen.findByTestId("feed-done");
+  expect(screen.getByTestId("section-summary").contains(done)).toBe(true);
+  expect(screen.getAllByTestId("feed-done")).toHaveLength(1);
+  expect(done.textContent).toBe("Profile written: profiled.");
+});
+
+test("P11: a coverage card of a requirement that no longer selects the feed keeps its title", async () => {
+  const gone = "00000000-0000-4000-8000-0000000000a2";
+  const page = feedPage();
+  show(feedPage({ profile: { ...page.profile!, coverage: [...page.profile!.coverage, {
+                    requirement_id: gone, missing: [], items: page.profile!.coverage[0].items }] },
+                  coverage_titles: { [REQUIREMENT_ID]: "Daily volume", [gone]: "Old volume" } }));
+  const profile = await screen.findByTestId("section-profile");
+  expect(profile.textContent).toContain("Old volume");
+  expect(profile.textContent).toContain("no longer selects this feed");
+  expect(profile.textContent).not.toContain("A requirement");
+});
+
+test("P21: FeedView takes the signed-in user from App: no /api/me call, role buttons at once", async () => {
+  const fetchStub = show(feedPage({ go_live: { ...feedPage().go_live, latest: {
+    id: "go-live-1", created_at: "2026-11-18T09:00:00Z", feed_id: FEED_ID, version: 1, proposal_id: "p",
+    approved_by: "dev-data-owner", mapping_ids: [], rule_ids: [], test_load_id: "l", hypercare_until: "2026-11-28" } } }),
+    {}, { ...USERS[0], id: "dev-operations", display_name: "Opal Operations", roles: ["operations"] });
+  expect(await screen.findByTestId("load-now")).toBeTruthy();
+  expect(fetchStub.mock.calls.map(([url]) => String(url))).not.toContain("/api/me");
+});

@@ -1,5 +1,5 @@
 import { Button, Group, NativeSelect, Text, TextInput, Title } from "@mantine/core";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { apiPost, describeError, type FeedPage } from "../api";
 
 // Step 11 on a registered feed (phase 6 plan, section 10). Prepare (backend team): a test load of the latest file,
@@ -13,9 +13,10 @@ const STEPS = [
   { value: "09", label: "09 Rules" },
 ] as const;
 
-export default function GoLiveSection({ page, devUser, userId, roles, onChange, onMessage, onError }: {
+export default function GoLiveSection({ page, devUser, userId, roles, onChange, onMessage, onError, notice }: {
   page: FeedPage; devUser: string; userId: string; roles: string[]; onChange: () => void;
   onMessage: (m: string) => void; onError: (m: string | null) => void;
+  notice?: ReactNode; // phase 7.5: the page's result line, when it is ours
 }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
@@ -66,6 +67,7 @@ export default function GoLiveSection({ page, devUser, userId, roles, onChange, 
   return (
     <div data-testid="section-go-live">
       <Title order={3} mt="xl" mb="xs">Go-live</Title>
+      {notice}
       {live.latest ? (
         <Text data-testid="go-live-latest">
           Version {live.latest.version} approved by {live.latest.approved_by}; the daily job loads this feed.{" "}

@@ -1,6 +1,6 @@
 import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, describeError, type User } from "./api";
+import { apiGet, describeError, type Person, type User } from "./api";
 import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
@@ -54,6 +54,7 @@ export default function App() {
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
+  const [people, setPeople] = useState<Record<string, string>>({}); // phase 7.5, P3 and P8: id -> display name
   // phase 5: bumped when an action or a finished glossary run changes what the banner and the views show
   const [changed, setChanged] = useState(0);
   const onChange = useCallback(() => setChanged((c) => c + 1), []);
@@ -91,6 +92,13 @@ export default function App() {
       });
   }, [selected]);
 
+  useEffect(() => {
+    if (!me) return;
+    apiGet<Person[]>("/api/amaze/people", me.id)
+      .then((list) => setPeople(Object.fromEntries(list.map((p) => [p.id, p.display_name]))))
+      .catch(() => setPeople({})); // ids then show as themselves
+  }, [me]);
+
   return (
     <>
       <header className="app-header">
@@ -126,7 +134,8 @@ export default function App() {
         {view === "notifications" && <NotificationsView devUser={me ? selected : ""} />}
         {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} />}
         {view === "feeds" && feedId && (
-          <FeedView feedId={feedId} devUser={me ? selected : ""} canAct={!!me && me.roles.includes("backend_team")}
+          <FeedView feedId={feedId} devUser={me ? selected : ""} me={me} people={people}
+                    canAct={!!me && me.roles.includes("backend_team")}
                     canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))}
                     canMap={!!me && me.roles.includes("data_steward")} changed={changed} onChange={onChange} />
         )}
