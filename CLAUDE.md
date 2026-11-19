@@ -22,6 +22,8 @@ The system is three platforms, in the order data moves:
 6. **Synthetic data only.** No client files, client names or real vendor data in this repository, tests or fixtures.
 7. **Configuration is versioned, never edited in place.** A change creates a new version.
 
+**Exception to rules 1/7 (phase 7.9):** a feed may be hard-deleted only through `amaze_delete_feed()`; its deletion is recorded in `feed_deletions`. Nothing else deletes from an append-only table (the guards allow a DELETE only while `amaze.deleting_feed` names the row's own feed). Glossary elements and their proposals are kept.
+
 ## Tech stack
 
 - Backend: Python 3.14 (3.14.5 on this laptop and the office laptop; `requires-python = ">=3.14,<3.15"`), FastAPI, Pydantic v2, SQLAlchemy 2, Alembic. Create the venv with `py -3.14`.
