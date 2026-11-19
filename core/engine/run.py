@@ -20,7 +20,8 @@ rule runs:
 
 Each stage's result is a typed StageCompleted or FailedRolledBack. A value that does not cast to its element's
 type holds the whole file (assumption 16); a rule flags rows and never fails the load, but a rule whose SQL errors
-or times out does (assumption 17). Mastering and transformations are the pass-through marked in passthrough.py.
+or times out does (assumption 17). Approved transformations (transform.py) and the feed's duplicate-key policy act in
+the curated stage (phase 7.8 task 4.2); mastering is the pass-through marked in passthrough.py.
 """
 
 from __future__ import annotations
@@ -32,24 +33,32 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
+import duckdb
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from core.domain.load import STAGES, Load, LoadStageDraft, Stage, StandardRecordDraft
+from core.domain.transformation import TransformStep
 from core.engine.curate import Found, curated_rows_sql, curated_sql, match_header, uncast_sql
-from core.engine.passthrough import PASS_THROUGH, json_value
+from core.engine.passthrough import PASS_THROUGH, PASS_THROUGH_APPLIED, json_value
 from core.engine.sandbox import FileUnreadable, RuleFailed, RuleRefused, Sandbox
+from core.engine.transform import label_of, quoted
 from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.errors import ArrivalNotChecked, FeedNotRegistered, LoadNotReceived
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
+from core.repositories.proposals import ProposalRepository
 from core.repositories.standard_records import StandardRecordRepository
+from core.repositories.transformations import KeyPolicyRepository, TransformationRepository
 from core.steps.result import StepResult
 from ports.storage.base import BlobNotFound, BlobStore
 
 FIRST_UNCAST = 5  # the values listed when a file is held for values that do not cast
+FIRST_DUPLICATES = 5  # the duplicated keys listed when a file is held for them
+MAX_DROPPED_LISTED = 1000  # the dropped row numbers kept in a stage's detail (the count is always exact)
+DUPLICATE_RULE_KEY = "duplicate_key"  # the flag of the `flag` policy, recorded like a rule's
 PASSING_ARRIVALS = ("on_time_complete", "additive_parked")  # step 12's outcomes after which a load goes on
 
 
@@ -89,6 +98,23 @@ class RuleToRun(BaseModel):
     sql: str
 
 
+class TransformationToRun(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    transformation_id: UUID
+    source_field: str
+    steps: list[TransformStep]
+
+
+class KeyPolicyToRun(BaseModel):
+    """What a load does with duplicated keys. key_columns are source field names, matched to the mapped columns."""
+
+    model_config = ConfigDict(frozen=True)
+
+    policy: Literal["hold", "keep_last", "flag"]
+    key_columns: list[str]
+
+
 class LoadPlan(BaseModel):
     """What one load needs, read in a transaction the caller then ends."""
 
@@ -98,6 +124,8 @@ class LoadPlan(BaseModel):
     columns: list[MappedColumn]
     rules: list[RuleToRun]
     configuration_changed: bool  # a scheduled load whose configuration is not the latest go-live's
+    transformations: list[TransformationToRun] = Field(default_factory=list)
+    key_policy: KeyPolicyToRun | None = None  # None: no key columns, so no duplicate check
 
 
 class LoadOutcome(BaseModel):
@@ -144,16 +172,32 @@ def plan_load(session: Session, load_id: UUID) -> LoadPlan:
     glossary = GlossaryRepository(session)
     mappings = MappingRepository(session).current_for_feed(feed.id)
     rules = RuleRepository(session).current_for_feed(feed.id)
+    transformations = TransformationRepository(session).current_for_feed(feed.id)
     changed = False
     if load.purpose == "scheduled":  # assumption 15: loaded only as the latest go-live approved it
         live = GoLiveRepository(session).latest(feed.id)
         changed = (live is None or set(live.mapping_ids) != {m.id for m in mappings}
-                   or set(live.rule_ids) != {r.id for r in rules})
+                   or set(live.rule_ids) != {r.id for r in rules}
+                   or set(live.transformation_ids) != {t.id for t in transformations})
     return LoadPlan(
         load=load, configuration_changed=changed,
         columns=[MappedColumn(source_field=m.source_field, element_key=m.element_key, mapping_id=m.id,
                               data_type=glossary.get_current(m.element_key).data_type) for m in mappings],
-        rules=[RuleToRun(rule_id=r.id, rule_key=r.rule_key, sql=r.sql) for r in rules])
+        rules=[RuleToRun(rule_id=r.id, rule_key=r.rule_key, sql=r.sql) for r in rules],
+        transformations=[TransformationToRun(transformation_id=t.id, source_field=t.source_field, steps=list(t.steps))
+                         for t in transformations],
+        key_policy=_key_policy(session, feed.id))
+
+
+def _key_policy(session: Session, feed_id: UUID) -> KeyPolicyToRun | None:
+    """The feed's latest key policy; none set: `flag` on the key columns of the latest approved profile summary
+    (its payload's `key_columns`, source field names; a summary without the key means none)."""
+    chosen = KeyPolicyRepository(session).current(feed_id)
+    if chosen is not None:
+        return KeyPolicyToRun(policy=chosen.policy, key_columns=list(chosen.key_columns))
+    approved = ProposalRepository(session).list_for_feed(feed_id, "profile_summary", "approved")
+    columns = [str(c) for c in (approved[-1].payload.get("key_columns") or [])] if approved else []
+    return KeyPolicyToRun(policy="flag", key_columns=columns) if columns else None
 
 
 # ---------------------------------------------------------------- execute (no session)
@@ -189,9 +233,11 @@ def _raw(plan: LoadPlan, blobs: BlobStore, box: Sandbox, path: Path, state: dict
     load = plan.load
     if plan.configuration_changed:
         return _failed("raw", "configuration_changed_since_go_live",
-                       "The mappings or rules are not the ones the latest go-live approved; a new go-live is needed.",
+                       "The mappings, rules or transformations are not the ones the latest go-live approved; "
+                       "a new go-live is needed.",
                        mapping_ids=sorted(str(c.mapping_id) for c in plan.columns),
-                       rule_ids=sorted(str(r.rule_id) for r in plan.rules))
+                       rule_ids=sorted(str(r.rule_id) for r in plan.rules),
+                       transformation_ids=sorted(str(t.transformation_id) for t in plan.transformations))
     try:
         content = blobs.get(load.file_ref)
     except BlobNotFound:
@@ -215,24 +261,87 @@ def _curated(plan: LoadPlan, box: Sandbox, state: dict) -> RunResult:
     if not plan.columns:
         return _failed("curated", "no_mapped_columns", "The feed has no current mapping, so nothing can be loaded.",
                        rows_in=rows)
-    found, missing, unmapped = match_header(plan.columns, state["header"])
+    steps_of = {t.source_field.lower(): tuple(t.steps) for t in plan.transformations}
+    found, missing, unmapped = match_header(plan.columns, state["header"], steps_of)
     if missing:
         return _failed("curated", "mapped_column_missing",
                        f"{len(missing)} mapped column(s) are not in the file: {', '.join(missing)}",
                        rows_in=rows, missing=missing)
-    box.execute(curated_sql(found))
-    uncast = _uncast(box, found)
+    try:
+        box.execute(curated_sql(found))
+        uncast = _uncast(box, found)
+    except duckdb.Error as exc:  # a transformation the data cannot take (a step applied to a type it cannot read)
+        return _failed("curated", "transformation_failed", f"An approved transformation could not run: {exc}",
+                       rows_in=rows, error=str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
     if uncast:
         listed = uncast[:FIRST_UNCAST]
         return _failed("curated", "values_do_not_cast",
                        f"{len(uncast)} value(s) do not cast to their element's type; the file is held",
                        rows_in=rows, count=len(uncast),
                        first=[{"row": r, "column": c, "value": v} for r, c, v in listed])
+    detail: dict[str, Any] = {"mapped_columns": {f.source_field: f.element_key for f in found},
+                              "unmapped_columns": unmapped}
+    transformed = [f for f in found if f.steps]
+    if transformed:
+        detail["transformed_columns"] = [f.source_field for f in transformed]
+    duplicates = _duplicates(plan, box, found, rows, detail, state)
+    if isinstance(duplicates, FailedRolledBack):
+        return duplicates
     state["found"] = found
     state["curated"] = box.execute(curated_rows_sql(found))
-    return StageCompleted(stage="curated", rows_in=rows, rows_out=rows,
-                          detail={"mapped_columns": {f.source_field: f.element_key for f in found},
-                                  "unmapped_columns": unmapped})
+    state["transformed"] = bool(transformed)
+    state["labels"] = {f.element_key: label for f in found if (label := label_of(f.steps))}
+    return StageCompleted(stage="curated", rows_in=rows, rows_out=state["rows"], detail=detail)
+
+
+def _duplicates(plan: LoadPlan, box: Sandbox, found: list[Found], rows: int, detail: dict[str, Any],
+                state: dict) -> FailedRolledBack | None:
+    """The feed's duplicate-key policy, after the cast and before the rules. Rows with an empty key column have no
+    key and are not duplicates. hold: the load fails. keep_last: the row with the highest `_row` of each duplicated
+    key stays, the others are deleted from `curated`, and `state["rows"]` becomes the rows that remain. flag: the
+    rows are remembered, and the validated stage flags each as `duplicate_key`. Key columns that are not mapped
+    columns of the file are ignored and named in the detail."""
+    policy = plan.key_policy
+    if policy is None:
+        return None
+    by_name = {name.lower(): f for f in found for name in (f.source_field, f.header)}
+    keys = [by_name[c.lower()] for c in policy.key_columns if c.lower() in by_name]
+    ignored = [c for c in policy.key_columns if c.lower() not in by_name]
+    if ignored:
+        detail["key_columns_ignored"] = ignored
+    if not keys:
+        return None
+    columns = ", ".join(quoted(k.element_key) for k in keys)
+    present = " AND ".join(f"{quoted(k.element_key)} IS NOT NULL" for k in keys)
+    shared = box.execute(
+        f"SELECT _row, {columns}, max(_row) OVER (PARTITION BY {columns}) AS last_row FROM "
+        f"(SELECT *, count(*) OVER (PARTITION BY {columns}) AS n FROM curated WHERE {present}) WHERE n > 1 "
+        "ORDER BY _row")
+    if not shared:
+        return None
+    groups: dict[tuple, int] = {}
+    for _, *rest in shared:
+        groups.setdefault(tuple(rest[:-1]), 0)
+    if policy.policy == "hold":
+        listed = list(groups)[:FIRST_DUPLICATES]
+        first = [{k.element_key: json_value(v) for k, v in zip(keys, key, strict=True)} for key in listed]
+        text = "; ".join(" / ".join(str(v) for v in item.values()) for item in first)
+        return _failed("curated", "duplicate_keys",
+                       f"{len(groups)} key(s) appear more than once ({len(shared)} rows); the file is held. "
+                       f"First: {text}", rows_in=rows, count=len(groups), rows=len(shared), first=first)
+    if policy.policy == "keep_last":
+        dropped = [int(row) for row, *rest in shared if int(row) != int(rest[-1])]
+        box.execute(
+            f"DELETE FROM curated WHERE _row IN (SELECT _row FROM (SELECT _row, max(_row) OVER "
+            f"(PARTITION BY {columns}) AS last_row FROM curated WHERE {present}) WHERE _row <> last_row)")
+        state["rows"] = rows - len(dropped)
+        listed_rows = {"count": len(dropped), "rows": dropped[:MAX_DROPPED_LISTED]}
+        if len(dropped) > MAX_DROPPED_LISTED:
+            listed_rows["truncated"] = True
+        detail["duplicates_dropped"] = listed_rows
+    else:  # flag
+        state["duplicate_rows"] = sorted(int(row) for row, *_ in shared)
+    return None
 
 
 def _uncast(box: Sandbox, found: list[Found]) -> list[tuple[int, str, str]]:
@@ -256,8 +365,15 @@ def _validated(plan: LoadPlan, box: Sandbox, state: dict) -> RunResult:
         counts[rule.rule_key] = len(flagged)
         for row in flagged:
             flags.setdefault(row, []).append(rule.rule_key)
+    detail: dict[str, Any] = {"rules": counts}
+    duplicates = state.get("duplicate_rows", [])
+    if duplicates:  # the `flag` policy: recorded exactly as a rule's flagged rows are (and counted in the score)
+        counts[DUPLICATE_RULE_KEY] = len(duplicates)
+        for row in duplicates:
+            flags.setdefault(row, []).append(DUPLICATE_RULE_KEY)
+        detail["duplicates_flagged"] = len(duplicates)
     state["flags"] = flags
-    return StageCompleted(stage="validated", rows_in=rows, rows_out=rows, detail={"rules": counts})
+    return StageCompleted(stage="validated", rows_in=rows, rows_out=rows, detail=detail)
 
 
 def _standard(state: dict, records: list[StandardRecordDraft]) -> RunResult:
@@ -265,8 +381,11 @@ def _standard(state: dict, records: list[StandardRecordDraft]) -> RunResult:
     for row in state["curated"]:
         records.append(StandardRecordDraft(
             row_number=int(row[0]), values={k: json_value(v) for k, v in zip(keys, row[1:], strict=True)},
-            flags=sorted(state["flags"].get(int(row[0]), []))))
-    return StageCompleted(stage="standard", rows_in=state["rows"], rows_out=len(records), detail=dict(PASS_THROUGH))
+            flags=sorted(set(state["flags"].get(int(row[0]), [])))))
+    detail = dict(PASS_THROUGH_APPLIED if state["transformed"] else PASS_THROUGH)
+    if state["labels"]:  # a rename: the product shows the label; the record keeps the element key
+        detail["labels"] = dict(state["labels"])
+    return StageCompleted(stage="standard", rows_in=state["rows"], rows_out=len(records), detail=detail)
 
 
 # ---------------------------------------------------------------- record

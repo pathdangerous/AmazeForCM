@@ -8,8 +8,10 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from apps.api.deps import get_app_settings, get_db_engine
+from core.repositories.settings import FourEyesRepository
 from ports.config import Settings
 from ports.db import database_is_reachable
 from ports.identity import get_identity
@@ -27,10 +29,23 @@ class Health(BaseModel):
     database: Literal["ok", "unreachable", "not_configured"]
     adapters: dict[str, str]
     unavailable: list[str]
+    four_eyes: bool  # REQUIRE_FOUR_EYES as the database says it (phase 7.8); true when the database cannot say
+
+
+def four_eyes_now(engine: Engine | None, database: str) -> bool:
+    """The database's answer; fail safe (on) when there is no reachable database or no migration 0020 yet."""
+    if engine is None or database != "ok":
+        return True
+    try:
+        with Session(bind=engine) as session:
+            return FourEyesRepository(session).current()
+    except Exception:
+        return True
 
 
 def unavailable_adapters(settings: Settings) -> list[str]:
-    """Names of the selected adapters that are still stubs, in a fixed order."""
+    """Names of the selected adapters that cannot work yet, in a fixed order: a stub, or a real adapter that reports
+    available = False (not configured). Nothing here calls a model or a service."""
     selected = {
         "llm": get_llm_provider(settings),
         "storage": get_blob_store(settings),
@@ -39,7 +54,8 @@ def unavailable_adapters(settings: Settings) -> list[str]:
         "secrets": get_secrets(settings),
         "notify": get_notifier(settings),
     }
-    return [name for name, adapter in selected.items() if getattr(adapter, "is_stub", False)]
+    return [name for name, adapter in selected.items()
+            if getattr(adapter, "is_stub", False) or getattr(adapter, "available", True) is False]
 
 
 @router.get("/api/health", response_model=Health)
@@ -68,4 +84,5 @@ def health(
             "notify": settings.notify_provider,
         },
         unavailable=unavailable,
+        four_eyes=four_eyes_now(engine, database),
     )

@@ -389,10 +389,17 @@ async def test_a_failed_model_call_writes_nothing_and_keeps_the_status(client, d
     from apps.api.deps import get_llm_provider_port
     from apps.api.main import app
     from core.repositories.tables import ProposalLogEntry
-    from ports.llm.azure_openai import AzureOpenAIProvider
+    from ports.config import AZURE_NOT_IMPLEMENTED
+
+    class NotImplementedProvider:  # AzureOpenAIProvider was this stub until phase 7.8 task 1.2
+        name = "azure_openai"
+        is_stub = True
+
+        def complete(self, **kwargs):
+            raise NotImplementedError(AZURE_NOT_IMPLEMENTED)
 
     requirement_id = await raise_requirement(client, "open price", ["open_price"])
-    app.dependency_overrides[get_llm_provider_port] = lambda: AzureOpenAIProvider()
+    app.dependency_overrides[get_llm_provider_port] = lambda: NotImplementedProvider()
     response = await client.post(f"/api/consumer/requirements/{requirement_id}/find-source", headers=RILEY)
     assert response.status_code == 503
     assert (await page(client, requirement_id))["status"] == "defined"

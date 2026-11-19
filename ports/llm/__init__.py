@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from ports.config import Settings, get_settings
-from ports.llm.base import LLMProvider, LLMResult, Message
+from ports.llm.base import LLMProvider, LLMRefused, LLMResult, LLMUnavailable, Message
 
-__all__ = ["LLMProvider", "LLMResult", "Message", "get_llm_provider"]
+__all__ = ["LLMProvider", "LLMRefused", "LLMResult", "LLMUnavailable", "Message", "get_llm_provider"]
 
 
 def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
@@ -13,7 +13,9 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
     if settings.llm_provider == "azure_openai":
         from ports.llm.azure_openai import AzureOpenAIProvider
 
-        return AzureOpenAIProvider()
+        from ports.storage import get_blob_store
+
+        return AzureOpenAIProvider(blob_store=get_blob_store(settings), settings=settings)
     from ports.llm.mock import MockProvider
 
     return MockProvider()

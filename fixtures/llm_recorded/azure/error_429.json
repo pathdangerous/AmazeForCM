@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "429",
+    "message": "SYNTHETIC-RATE-TEXT Requests to the deployment have exceeded the rate limit."
+  }
+}

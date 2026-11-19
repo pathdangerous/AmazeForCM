@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-synthetic-0003",
+  "object": "chat.completion",
+  "created": 1790000002,
+  "model": "gpt-4o-2026-08-06",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {"role": "assistant", "content": null, "refusal": "SYNTHETIC-REFUSAL-TEXT I cannot help with that."}
+    }
+  ],
+  "usage": {"prompt_tokens": 210, "completion_tokens": 9, "total_tokens": 219}
+}

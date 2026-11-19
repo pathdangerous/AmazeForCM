@@ -25,7 +25,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from core.domain.profiling import FeedProfile, FileProfile, ProfilerInput
+from core.domain.profiling import DuplicateKey, FeedProfile, FileProfile, ProfilerInput, ProfilerOutput
 from core.domain.requirement import Requirement
 from core.repositories.errors import (
     FeedHasNoFile,
@@ -40,9 +40,11 @@ from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
-from core.steps.profiling import ENGINE, NotATable, coverage_of, profile_csv, spec_of
+from core.steps.profiling import ENGINE, NotATable, coverage_of, duplicate_key_found, profile_csv, spec_of
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
+from core.steps.samples import samples_for_model
+from ports.config import Settings
 from ports.connectors.catalogue import SourceCatalogue, SourceEntry
 from ports.storage.base import BlobNotFound, BlobStore
 
@@ -153,6 +155,11 @@ class ProfileSummary(BaseModel):
     recommended_outcome: str
     gaps: list[str]
     reasons: list[str]
+    key_columns: list[str] = []  # proposed by the agent, checked by code
+    key_reason: str | None = None
+    confidence: float | None = None
+    duplicate_key: DuplicateKey | None = None  # counted by code; None: no key, or no repeated key
+    unknown_key_columns: list[str] = []
 
 
 def summary_of(session: Session, *, feed_id: UUID, profile_id: UUID):
@@ -162,9 +169,10 @@ def summary_of(session: Session, *, feed_id: UUID, profile_id: UUID):
     return found[-1] if found else None
 
 
-def summary_input(session: Session, *, feed_id: UUID) -> ProfilerInput:
+def summary_input(session: Session, *, feed_id: UUID, settings: Settings | None = None) -> ProfilerInput:
     """Read only: the agent's input for the feed's latest profile. The caller then ends the transaction, so
-    no connection is held while the model answers."""
+    no connection is held while the model answers. settings decides whether sample values go to the model
+    (SEND_SAMPLE_VALUES, D3); none given means they do not."""
     feed = FeedRepository(session).get(feed_id)
     if feed.stage != "candidate":
         raise FeedNotACandidate(f"Feed {feed.code!r} is {feed.stage}; only a candidate feed is summarised")
@@ -174,11 +182,26 @@ def summary_input(session: Session, *, feed_id: UUID) -> ProfilerInput:
     if summary_of(session, feed_id=feed_id, profile_id=profile.id) is not None:
         raise ProfileAlreadySummarised(f"Profile {profile.version} of feed {feed.code!r} already has its summary")
     requirements = RequirementRepository(session)
+    fetch = next((f for f in SourceFetchRepository(session).list_for_feed(feed.id) if f.id == profile.fetch_id), None)
     return ProfilerInput(
         feed_id=feed.id, feed_code=feed.code, profile_id=profile.id, outcome=profile.outcome,
-        row_count=profile.row_count, columns=profile.columns, detail=profile.detail, spec=profile.spec,
+        row_count=profile.row_count, detail=profile.detail, spec=profile.spec,
+        # the samples stay with the profile; the model sees them only in `samples`, and only when D3's setting is true
+        columns=[c.model_copy(update={"samples": []}) for c in profile.columns],
+        samples=samples_for_model(profile.columns, settings or Settings(_env_file=None, send_sample_values=False)),
+        issues=profile.issues, file_ref=fetch.blob_ref if fetch else None,
         coverage=profile.coverage,
         requirement_titles={c.requirement_id: requirements.get(c.requirement_id).title for c in profile.coverage})
+
+
+def key_facts(output: ProfilerOutput, *, columns: list[str], file: Path | None) -> ProfilerOutput:
+    """after_answer: keep the proposed key columns that exist in the profile (the others are listed in
+    unknown_key_columns), and count the duplicates of the key by DuckDB over the file. No file, no key, or a
+    unique key: duplicate_key is None."""
+    known = [k for k in output.key_columns if k in columns]
+    unknown = [k for k in output.key_columns if k not in columns]
+    duplicate = duplicate_key_found(file, known) if file is not None and known else None
+    return output.model_copy(update={"key_columns": known, "unknown_key_columns": unknown, "duplicate_key": duplicate})
 
 
 def _still_the_latest(session: Session, agent_input: ProfilerInput) -> None:
@@ -193,14 +216,39 @@ def _still_the_latest(session: Session, agent_input: ProfilerInput) -> None:
         raise ProfileAlreadySummarised(f"The profile of feed {feed.code!r} was summarised meanwhile")
 
 
-def record_summary(session: Session, *, agent: RunsAgent, agent_input: ProfilerInput) -> ProfileSummary:
-    """The model call (its call row committed at once by Agent.run()), then, with the feed locked and checked
-    again, the one profile_summary proposal. A change during the call: a discard row and nothing else."""
-    run = agent.run(session, agent_input, before_write=lambda s: _still_the_latest(s, agent_input))
+def record_summary(session: Session, *, agent: RunsAgent, agent_input: ProfilerInput,
+                   blob_store: BlobStore | None = None) -> ProfileSummary:
+    """The model call (its call row committed at once by Agent.run()), then the key check (after_answer: code
+    drops unknown key columns and counts duplicates over the stored file, no connection held), then, with the
+    feed locked and checked again, the one profile_summary proposal. A change during the call: a discard row and
+    nothing else. Without a blob_store the duplicates are not counted."""
+
+    def after_answer(output: ProfilerOutput) -> ProfilerOutput:
+        names = [c.name for c in agent_input.columns]
+        if blob_store is None or agent_input.file_ref is None or not any(k in names for k in output.key_columns):
+            return key_facts(output, columns=names, file=None)
+        try:
+            content = blob_store.get(agent_input.file_ref)
+        except BlobNotFound:
+            return key_facts(output, columns=names, file=None)
+        with tempfile.TemporaryDirectory(prefix="amaze-key-") as folder:
+            path = Path(folder) / "file.csv"
+            path.write_bytes(content)
+            return key_facts(output, columns=names, file=path)
+
+    run = agent.run(session, agent_input, before_write=lambda s: _still_the_latest(s, agent_input),
+                    after_answer=after_answer)
     if len(run.proposals) != 1 or run.proposals[0].kind != "profile_summary":
         raise ValueError("step 02 expects exactly one profile_summary proposal from the agent")
     proposal = run.proposals[0]
     p = proposal.payload
     return ProfileSummary(proposal_id=proposal.id, log_id=run.log_id, profile_id=agent_input.profile_id,
                           summary=p["summary"], recommended_outcome=p["recommended_outcome"], gaps=p["gaps"],
-                          reasons=p["reasons"])
+                          reasons=p["reasons"], **_key_part(p))
+
+
+def _key_part(payload: dict) -> dict:
+    """The key fields of a summary payload (older payloads have none)."""
+    return {"key_columns": payload.get("key_columns", []), "key_reason": payload.get("key_reason"),
+            "confidence": payload.get("confidence"), "duplicate_key": payload.get("duplicate_key"),
+            "unknown_key_columns": payload.get("unknown_key_columns", [])}

@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "description": "Gold set for the review_summariser prompt (step 11 go-live summary): six invented feeds. The summary names every unmapped column and every rejected glossary proposal, and flags what the facts show as a risk. The input has no visibility: the owner chooses it at go-live.",
+  "cases": [
+    {
+      "id": "unmapped_columns_named",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000701", "feed_code": "syn_gold_review_a", "source_name": "Gold review feed A",
+        "owner_id": "dev-data-owner", "licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed",
+        "mapped": [
+          {"source_field": "ISIN", "element_key": "isin", "element_version": 1, "data_type": "string"},
+          {"source_field": "CLOSE", "element_key": "close_price", "element_version": 1, "data_type": "decimal"}
+        ],
+        "unmapped_columns": ["venue_note", "internal_flag"], "rejected_glossary": [],
+        "rules": [{"rule_key": "close_price_not_negative", "version": 1, "description": "Close price is not negative.", "flagged_rows": 0, "total_rows": 100}],
+        "test_load": {"load_id": "00000000-0000-4000-8000-000000000711", "rows": 100,
+                      "stages": [{"stage": "curated", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100},
+                                 {"stage": "mastered", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100},
+                                 {"stage": "transformed", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100},
+                                 {"stage": "validated", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100}],
+                      "flags": {"close_price_not_negative": 0}},
+        "pending": {"glossary": 0, "mapping": 0, "rule": 0},
+        "mapping_ids": ["00000000-0000-4000-8000-000000000721"], "rule_ids": ["00000000-0000-4000-8000-000000000722"],
+        "test_load_id": "00000000-0000-4000-8000-000000000711"
+      },
+      "checks": [
+        {"check": "contains", "path": "summary", "value": "venue_note"},
+        {"check": "contains", "path": "summary", "value": "internal_flag"},
+        {"check": "nonempty", "path": "highlights"}
+      ]
+    },
+    {
+      "id": "rejected_glossary_proposal_named",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000702", "feed_code": "syn_gold_review_b", "source_name": "Gold review feed B",
+        "owner_id": "dev-data-owner", "licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed",
+        "mapped": [{"source_field": "ISIN", "element_key": "isin", "element_version": 1, "data_type": "string"}],
+        "unmapped_columns": ["beta_factor"],
+        "rejected_glossary": [{"source_field": "beta_factor", "note": "Not a measure the firm uses."}],
+        "rules": [],
+        "test_load": {"load_id": "00000000-0000-4000-8000-000000000712", "rows": 50,
+                      "stages": [{"stage": "curated", "outcome": "stage_completed", "rows_in": 50, "rows_out": 50},
+                                 {"stage": "mastered", "outcome": "stage_completed", "rows_in": 50, "rows_out": 50},
+                                 {"stage": "transformed", "outcome": "stage_completed", "rows_in": 50, "rows_out": 50},
+                                 {"stage": "validated", "outcome": "stage_completed", "rows_in": 50, "rows_out": 50}],
+                      "flags": {}},
+        "pending": {"glossary": 0, "mapping": 0, "rule": 0},
+        "mapping_ids": ["00000000-0000-4000-8000-000000000723"], "rule_ids": [],
+        "test_load_id": "00000000-0000-4000-8000-000000000712"
+      },
+      "checks": [
+        {"check": "contains", "path": "summary", "value": "beta_factor"},
+        {"check": "nonempty", "path": "summary"}
+      ]
+    },
+    {
+      "id": "clean_feed_has_highlights",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000703", "feed_code": "syn_gold_review_c", "source_name": "Gold review feed C",
+        "owner_id": "dev-data-owner", "licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed",
+        "mapped": [
+          {"source_field": "ISIN", "element_key": "isin", "element_version": 1, "data_type": "string"},
+          {"source_field": "PRICE_DATE", "element_key": "price_date", "element_version": 1, "data_type": "date"},
+          {"source_field": "CLOSE", "element_key": "close_price", "element_version": 1, "data_type": "decimal"}
+        ],
+        "unmapped_columns": [], "rejected_glossary": [],
+        "rules": [{"rule_key": "close_price_not_negative", "version": 1, "description": "Close price is not negative.", "flagged_rows": 0, "total_rows": 200}],
+        "test_load": {"load_id": "00000000-0000-4000-8000-000000000713", "rows": 200,
+                      "stages": [{"stage": "curated", "outcome": "stage_completed", "rows_in": 200, "rows_out": 200},
+                                 {"stage": "mastered", "outcome": "stage_completed", "rows_in": 200, "rows_out": 200},
+                                 {"stage": "transformed", "outcome": "stage_completed", "rows_in": 200, "rows_out": 200},
+                                 {"stage": "validated", "outcome": "stage_completed", "rows_in": 200, "rows_out": 200}],
+                      "flags": {"close_price_not_negative": 0}},
+        "pending": {"glossary": 0, "mapping": 0, "rule": 0},
+        "mapping_ids": ["00000000-0000-4000-8000-000000000724"], "rule_ids": ["00000000-0000-4000-8000-000000000725"],
+        "test_load_id": "00000000-0000-4000-8000-000000000713"
+      },
+      "checks": [
+        {"check": "nonempty", "path": "summary"},
+        {"check": "nonempty", "path": "highlights"}
+      ]
+    },
+    {
+      "id": "flagged_rows_are_a_risk",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000704", "feed_code": "syn_gold_review_d", "source_name": "Gold review feed D",
+        "owner_id": "dev-data-owner", "licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed",
+        "mapped": [{"source_field": "CLOSE", "element_key": "close_price", "element_version": 1, "data_type": "decimal"}],
+        "unmapped_columns": [], "rejected_glossary": [],
+        "rules": [{"rule_key": "close_price_not_negative", "version": 1, "description": "Close price is not negative.", "flagged_rows": 40, "total_rows": 100}],
+        "test_load": {"load_id": "00000000-0000-4000-8000-000000000714", "rows": 100,
+                      "stages": [{"stage": "curated", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100},
+                                 {"stage": "mastered", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100},
+                                 {"stage": "transformed", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100},
+                                 {"stage": "validated", "outcome": "stage_completed", "rows_in": 100, "rows_out": 100}],
+                      "flags": {"close_price_not_negative": 40}},
+        "pending": {"glossary": 0, "mapping": 0, "rule": 0},
+        "mapping_ids": ["00000000-0000-4000-8000-000000000726"], "rule_ids": ["00000000-0000-4000-8000-000000000727"],
+        "test_load_id": "00000000-0000-4000-8000-000000000714"
+      },
+      "checks": [
+        {"check": "nonempty", "path": "risks"},
+        {"check": "nonempty", "path": "summary"}
+      ]
+    },
+    {
+      "id": "waiting_proposals_are_a_risk",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000705", "feed_code": "syn_gold_review_e", "source_name": "Gold review feed E",
+        "owner_id": "dev-data-owner", "licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed",
+        "mapped": [{"source_field": "ISIN", "element_key": "isin", "element_version": 1, "data_type": "string"}],
+        "unmapped_columns": [], "rejected_glossary": [], "rules": [],
+        "test_load": {"load_id": "00000000-0000-4000-8000-000000000715", "rows": 30,
+                      "stages": [{"stage": "curated", "outcome": "stage_completed", "rows_in": 30, "rows_out": 30},
+                                 {"stage": "mastered", "outcome": "stage_completed", "rows_in": 30, "rows_out": 30},
+                                 {"stage": "transformed", "outcome": "stage_completed", "rows_in": 30, "rows_out": 30},
+                                 {"stage": "validated", "outcome": "stage_completed", "rows_in": 30, "rows_out": 30}],
+                      "flags": {}},
+        "pending": {"glossary": 2, "mapping": 1, "rule": 0},
+        "mapping_ids": ["00000000-0000-4000-8000-000000000728"], "rule_ids": [],
+        "test_load_id": "00000000-0000-4000-8000-000000000715"
+      },
+      "checks": [
+        {"check": "nonempty", "path": "risks"},
+        {"check": "nonempty", "path": "summary"}
+      ]
+    },
+    {
+      "id": "unmapped_and_rejected_together",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000706", "feed_code": "syn_gold_review_f", "source_name": "Gold review feed F",
+        "owner_id": "dev-data-owner", "licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed",
+        "mapped": [
+          {"source_field": "ISIN", "element_key": "isin", "element_version": 1, "data_type": "string"},
+          {"source_field": "CLOSE", "element_key": "close_price", "element_version": 1, "data_type": "decimal"}
+        ],
+        "unmapped_columns": ["desk_comment", "sentiment_score"],
+        "rejected_glossary": [{"source_field": "sentiment_score", "note": "No agreed definition."}],
+        "rules": [],
+        "test_load": {"load_id": "00000000-0000-4000-8000-000000000716", "rows": 60,
+                      "stages": [{"stage": "curated", "outcome": "stage_completed", "rows_in": 60, "rows_out": 60},
+                                 {"stage": "mastered", "outcome": "stage_completed", "rows_in": 60, "rows_out": 60},
+                                 {"stage": "transformed", "outcome": "stage_completed", "rows_in": 60, "rows_out": 60},
+                                 {"stage": "validated", "outcome": "stage_completed", "rows_in": 60, "rows_out": 60}],
+                      "flags": {}},
+        "pending": {"glossary": 0, "mapping": 0, "rule": 0},
+        "mapping_ids": ["00000000-0000-4000-8000-000000000729"], "rule_ids": [],
+        "test_load_id": "00000000-0000-4000-8000-000000000716"
+      },
+      "checks": [
+        {"check": "contains", "path": "summary", "value": "desk_comment"},
+        {"check": "contains", "path": "summary", "value": "sentiment_score"}
+      ]
+    }
+  ]
+}

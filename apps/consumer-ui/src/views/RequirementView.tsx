@@ -14,7 +14,7 @@ import { formatWhen } from "../theme";
 
 // Phase 7.5, P29 (plan, assumption 25): where the data is, as five steps with the current one marked. A held
 // delivery or a missing part marks the fourth step in the warning colour. The progress sentence stays as it is.
-const STEPS = ["Checking the first file", "Setting up", "Approved for loading", "First delivery", "Ready"];
+export const STEPS = ["Checking the first file", "Setting up", "Approved for loading", "First delivery", "Ready"];
 const STEP_OF: Record<string, number> = { checking_file: 0, setting_up: 1, approved: 2, delivery_held: 3,
                                           part_missing: 3 };
 

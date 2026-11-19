@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "description": "Gold set for the table_extractor prompt (direct file intake, scanned pages): three invented synthetic page images (black text on white, drawn with Pillow; page_hashes are the SHA-256 of the PNG bytes). Two tables to copy exactly, and one blank page that must give an empty table with confidence 0.",
+  "cases": [
+    {
+      "id": "three_column_table",
+      "input": {
+        "upload_id": "00000000-0000-4000-8000-000000000801",
+        "filename": "syn_gold_scan_a.pdf",
+        "pages": [1],
+        "page_images": ["iVBORw0KGgoAAAANSUhEUgAAAOoAAACIAQAAAADB00qyAAACpElEQVR42u2XsWsTURzHv5dEe63RHulSh5JDKNTFZhUKOVKQkqn/gJrRwUGcSkrJi9bi4FJwcHCIdRcnyZJwqQ5ONukUEGnTIsbBkOhBm/RyP4d7791BmptUis1b3rvfh997v/e73ze/nEIIGJUQAsf5xRVl2FCBEOLER47PfWFo//dZ6/GnJp/7Q7yNwM2n+Rz24UbX0A4AUHbz2xcDQE+b7awZArdW7977AQCw8zMZAFQ/PioVBK5ZN55WGQDEgAQAJao3s20AQAQA+wqFn0UJEaPtD63BrRFdXE2X3gDiGR7yAxF7W3ozgJhr7YmLm1WB56O7KwkGoCgCsDC9oQk89eTViykASh04XAagzGH8PT+N9gZqrcsXR2T++fd98R8VE8gcisbIPN8aC8I/yVC3AeCjqFe9kdQ8b4fufwYAs+UWJGGsXJc4TM7GFgOwX3PzT0ztRyVu81oHkwd2vSUmAl5jyOflDTXj4d1Bb813sfggrvqwOVgvuj9rLJS9wwBgnguQVl5bEuv7yvNZAEBMBDmemsNQjdHf1BhGGjvbuJLT1hsAsJ7nidQaVz2NXSkX37UYgDe8Zp1iPN+WWOnHF2smQEu67CNbp519IFdJXWK65S4VdiJ+kYneevIXjbd3jYlG/Gha4skC14wl2lDVifhVUuBOAhcUy4eJm6t8bzJsVRbT3s4C3fyUI8olX7rVYjur3R2pks6Cmo4xgLZdpcFWj8PLI42NNHYa7qxxjYkCI62b8zR2NONqjB5y7NRPRB+LAM3UpcWaP/P9qHXb62NVaz8wtMSSq7GJIZHznYvSajM/dvVGKYkv+/EHcSGJJ8UiAiSiA0c2dc/7uPy9NG8ASkn8y/z17LHXx64fLqdjDEBauMxdOO99TBl95J41/Btfj8Bj6nJSvQAAAABJRU5ErkJggg=="],
+        "page_hashes": ["384d160b7cf34bc7ade3c7021206a65066a4da708cde2cbb42e469fd9aa53cd4"]
+      },
+      "checks": [
+        {"check": "equals", "path": "header", "value": ["code", "units", "price"]},
+        {"check": "equals", "path": "rows", "value": [["A100", "10", "1.50"], ["B200", "25", "2.75"], ["C300", "8", "0.90"]]}
+      ]
+    },
+    {
+      "id": "two_column_table",
+      "input": {
+        "upload_id": "00000000-0000-4000-8000-000000000802",
+        "filename": "syn_gold_scan_b.pdf",
+        "pages": [1],
+        "page_images": ["iVBORw0KGgoAAAANSUhEUgAAALgAAACkAQAAAAAMXNmKAAACXElEQVR42u2XzWoTURTHf5kmdioRpu0DdBAq2UhXuijUDLXoTt+g5iVcSe0VEfoGLhQMcSdudFGqUI3QB0gVRDCYNCAKsXaUIEmamXExN51701uR+gH9mFXujzPnnjvnz//cpCKMj8Xh5ERlA5yIiGpR/1F/HaDzFvfgwSDzYl4wxafhfj11dwuAxqeX02eeXh+N49M38ssCgGb4+D3RM1fW09qw45cd2yuJlLtTpyeTunr9nT5f0/lwXS6qA+ctGusk28/bg/nL56/04+/0W5yDyVOCOnBQ+nuI9UmFyq/jv3fyjon72/PvEt6I5joLHkC7dTab8CY/wtXCbr05XByxDPu6UkaDfA3oiN28CmyL3z9vj1WI47NvWgnPtU+SiVeZUm6n77UoXPzz/v5rnRxB/4RIdn1jY0efmnC+3HvRTPi3wKNcBnhtB4o+w4XSjPTcRF4WjD73ZVWF5OOmAVy5S7j0SK0ncOX7gaPVOeRLeXYrev39ZctV+dYlR8rzc/thK9nXuj3bjRdP/Nmc/390dazP/XFNh7fqtbIp/uZwWcnTmJke/TjXAMIlNf9mcG158W0TSGn6XLdSdtp1gF6k5pEaBSy7oM13IWd7W9fntpCzPV0xn8vX9DmFiGc7druo8PGMnO3URzzF9x7kzf2d8szfc0yY+cSxPvfHvWCveOkur4JFo39WV9LqfA+8rw0AToeqf24GxbHYZi/Yav71rk+ctiX0fV15E8jq9QSuvHlaYsA/5c3Tw+yfQuNTJxx6AHwQQ4p/jg8Vzl0FYBLrsPhn6oj9T/xb/CfxFrKv1gkF6AAAAABJRU5ErkJggg=="],
+        "page_hashes": ["a816651795e61e52f92abf1d6c9f1f44201502d32134d5e16ac7fd4b931b98ef"]
+      },
+      "checks": [
+        {"check": "equals", "path": "header", "value": ["item", "amount"]},
+        {"check": "equals", "path": "rows", "value": [["alpha", "100"], ["beta", "250"], ["gamma", "75"], ["delta", "310"]]}
+      ]
+    },
+    {
+      "id": "blank_page_is_not_a_table",
+      "input": {
+        "upload_id": "00000000-0000-4000-8000-000000000803",
+        "filename": "syn_gold_scan_c.pdf",
+        "pages": [1],
+        "page_images": ["iVBORw0KGgoAAAANSUhEUgAAAJYAAABaAQAAAAByUJKAAAAAIElEQVR42mP8z4AO/jIxYIJRsVGxUbFRsVGxUbHhKAYAYOICsKrAfbgAAAAASUVORK5CYII="],
+        "page_hashes": ["a06dd171ff15006ed09bdf19bd36210de7ecd871c6744bad8870598e02b02af3"]
+      },
+      "checks": [
+        {"check": "equals", "path": "header", "value": []},
+        {"check": "equals", "path": "rows", "value": []},
+        {"check": "number_at_most", "path": "confidence", "value": 0.2}
+      ]
+    }
+  ]
+}

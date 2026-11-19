@@ -15,5 +15,7 @@ test("the dev-user select lists the stubbed users", async () => {
   expect(select.tagName).toBe("SELECT"); // a native select: the story's selectOption needs it (plan, 10.3)
   await within(select).findByText("Blake Backend (backend_team)");
   expect(within(select).getByText("Sam Steward (data_steward)")).toBeTruthy();
-  expect(await screen.findByTestId("signed-in-as")).toHaveProperty("textContent", "Signed in as Blake Backend");
+  const who = await screen.findByTestId("signed-in-as");
+  expect(who).toHaveProperty("textContent", "Blake Backend"); // the name only, no "Signed in as" text
+  expect(who.getAttribute("aria-label")).toBe("Signed in user");
 });

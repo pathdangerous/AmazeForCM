@@ -1,0 +1,9 @@
+{
+  "error": {
+    "message": "SYNTHETIC-FILTER-TEXT The prompt was filtered.",
+    "type": null,
+    "param": "prompt",
+    "code": "content_filter",
+    "status": 400
+  }
+}

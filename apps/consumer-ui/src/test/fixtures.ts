@@ -3,7 +3,7 @@ import { MantineProvider } from "@mantine/core";
 import { render } from "@testing-library/react";
 import { createElement, type ReactElement } from "react";
 import { vi } from "vitest";
-import type { RequirementPage, User } from "../api";
+import type { DomainGroup, ProductPage, ProductPreview, RequirementPage, User } from "../api";
 import { cssVariablesResolver, theme } from "../theme";
 
 // Renders inside the app's MantineProvider (main.tsx does the same). jsdom has no matchMedia, which Mantine reads
@@ -63,4 +63,40 @@ export function requirementPage(overrides: Partial<RequirementPage> = {}): Requi
     product: null, held_note: null, element_names: { coupon_rate: "Coupon rate" },
     ...overrides,
   };
+}
+
+// ---- phase 7.8, task 7.4: the catalogue and a product page (synthetic)
+export const FRESHNESS = { released_at: "2026-11-18T12:44:00", rows: 150 };
+
+export const CATALOGUE: DomainGroup[] = [
+  { domain: "reference", label: "Reference data", products: [
+    { code: "demo_bond_terms", name: "Bond terms", description: "Terms of bonds.", owner_id: "dev-owner",
+      owner_name: "Olly Owner", visibility: "internal", freshness: FRESHNESS, access: "entitled", route: null },
+  ] },
+  { domain: "market", label: "Market data", products: [
+    { code: "demo_prices", name: "Daily prices", description: "End of day prices.", owner_id: "dev-owner",
+      owner_name: "Olly Owner", visibility: "restricted", freshness: null, access: "not_entitled_visible",
+      route: "Ask Olly Owner for access to Daily prices" },
+  ] },
+];
+
+export function productPage(overrides: Partial<ProductPage> = {}): ProductPage {
+  return {
+    outcome: "product_page", code: "demo_bond_terms", name: "Bond terms", description: "Terms of bonds.",
+    domain: "reference", domain_label: "Reference data", owner: { id: "dev-owner", name: "Olly Owner" },
+    visibility: "internal", access: "entitled", route: null, freshness: FRESHNESS,
+    columns: ["coupon_rate", "maturity"],
+    dictionary: [
+      { element_key: "coupon_rate", name: "Coupon rate", definition: "Yearly interest rate.", data_type: "decimal",
+        unit: "percent", label: "Coupon" },
+      { element_key: "maturity", name: "Maturity date", definition: "Date the bond ends.", data_type: "date",
+        unit: null, label: "Maturity" },
+    ],
+    ...overrides,
+  };
+}
+
+export function previewRows(n: number): ProductPreview {
+  return { outcome: "preview", columns: ["Coupon", "Maturity"],
+           rows: Array.from({ length: n }, (_, i) => [`${i}.5`, "2030-01-01"]) };
 }

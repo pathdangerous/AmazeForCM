@@ -40,12 +40,14 @@ async def client(migrated_engine):
 async def test_health_ok(client):
     response = await client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ok", "adapters": LOCAL_ADAPTERS, "unavailable": []}
+    assert response.json() == {"status": "ok", "database": "ok", "adapters": LOCAL_ADAPTERS, "unavailable": [],
+                               "four_eyes": True}  # phase 7.8: no settings row means four-eyes on
 
 
 @pytest.mark.parametrize(("adapter", "selector", "value"), STUBS, ids=[s[0] for s in STUBS])
-async def test_stub_adapter_gives_503_never_500(monkeypatch, migrated_engine, adapter, selector, value):
-    """Start-up, health and /api/me with one Azure stub selected through the environment."""
+async def test_stub_adapter_gives_503_never_500(monkeypatch, migrated_engine, adapter, selector, value, azure_env_only):
+    """Start-up, health and /api/me with one Azure adapter selected through the environment (the LLM one is
+    unconfigured here, so it is unavailable; azure_env_only keeps this machine's .env out)."""
     for _, other, _ in STUBS:
         monkeypatch.delenv(other, raising=False)
     monkeypatch.setenv(selector, value)
@@ -94,13 +96,66 @@ async def test_health_shows_selected_adapters(client):
     assert (await client.get("/api/health")).json()["adapters"]["llm"] == "azure_openai"
 
 
+AZURE_KEYS = {
+    "AZURE_OPENAI_ENDPOINT": "https://fake-endpoint-xyz.example.invalid",
+    "AZURE_OPENAI_DEPLOYMENT": "main-deploy",
+    "AZURE_OPENAI_API_VERSION": "2026-01-01",
+    "AZURE_OPENAI_API_KEY": "fake-key-0123456789abcdef",
+}
+
+
+@pytest.fixture
+def azure_env_only(monkeypatch, tmp_path):
+    """The adapter reads only the process environment: never this machine's .env (phase 7.8, task 1.2)."""
+    import ports.llm.azure_openai as module
+
+    real = module.read_env
+    monkeypatch.setattr(module, "read_env", lambda keys=None, *, env_file=None, **kw: real(
+        keys, env_file=tmp_path / "no-such.env", **kw))
+    for key in ("AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_DEPLOYMENT_SMALL",
+                "AZURE_OPENAI_API_VERSION", "AZURE_OPENAI_AUTH", "AZURE_OPENAI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+
+
+async def test_health_azure_openai_configured_is_available_and_makes_no_model_call(client, monkeypatch, azure_env_only):
+    for key, value in AZURE_KEYS.items():
+        monkeypatch.setenv(key, value)
+    app.dependency_overrides[get_app_settings] = lambda: Settings(_env_file=None, llm_provider="azure_openai")
+    response = await client.get("/api/health")
+    assert (response.status_code, response.json()["unavailable"]) == (200, [])
+    assert response.json()["adapters"]["llm"] == "azure_openai"
+
+
+async def test_health_azure_openai_not_configured_is_unavailable(client, azure_env_only):
+    app.dependency_overrides[get_app_settings] = lambda: Settings(_env_file=None, llm_provider="azure_openai")
+    response = await client.get("/api/health")
+    assert (response.status_code, response.json()["unavailable"]) == (503, ["llm"])
+
+
+async def test_a_refused_model_call_gives_422_with_its_reason(client):
+    from apps.api.deps import get_llm_provider_port
+    from ports.llm.base import LLMRefused
+
+    class Refusing:
+        name = "mock"
+
+        def complete(self, **kwargs):
+            raise LLMRefused("content_filter", "synthetic")
+
+    app.dependency_overrides[get_llm_provider_port] = lambda: Refusing()
+    response = await client.post("/api/consumer/search/assist", headers={"X-Dev-User": "dev-requester"},
+                                 json={"q": "closing prices"})
+    assert response.status_code == 422, response.text
+    assert response.json() == {"detail": "The model refused to answer this input.", "reason": "content_filter"}
+
+
 async def test_dev_users(client):
     users = (await client.get("/api/dev/users")).json()
-    assert len(users) == 7
+    assert len(users) == 8  # phase 7.8: dev-operator
     assert {"id", "display_name", "email", "roles", "app"} <= set(users[0])
 
 
-@pytest.mark.parametrize(("app_name", "count"), [("backend", 6), ("consumer", 1)])
+@pytest.mark.parametrize(("app_name", "count"), [("backend", 7), ("consumer", 1)])
 async def test_dev_users_by_app(client, app_name, count):
     users = (await client.get("/api/dev/users", params={"app": app_name})).json()
     assert len(users) == count

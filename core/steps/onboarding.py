@@ -1,0 +1,1126 @@
+"""The onboarding workspace: the orchestration of one session (phase 7.8 plan, assumptions 31 to 39; task 5.3).
+
+A session walks one feed through nine steps. Nothing is copied from the steps: every workspace step calls the step
+functions that already exist (02 profile and its summary, 03 sign-off, 04 registration, 05 the glossary run, 06,
+10, 09, 11 and the first load), and every decision is the decision those functions already make, by the named person
+(CLAUDE.md rule 1). Rule 2 holds: the first load is the daily job's own fetch and load, with no model.
+
+- start_session(): the session, the event `entered profile`, the profile job queued.
+- enter_step(): the current step again (a failed or stale one); queues its job.
+- run_job(): the worker body. It claims one job (a lease), refuses it when the onboarding's model calls reached the
+  cap (`call_cap_reached`), runs the step's job with fresh sessions where the step functions need them (read, end the
+  read, call, lock, write: no connection is held during a model call), counts the model calls it made, writes the
+  events, and sets the step's state: needs_decision when a person must decide an item, else ready. An answer that
+  arrives after the job's lease was taken again is discarded (the agent's `before_write` checks the job; the call row
+  stays, with its discard row).
+- approve_and_next(): refused (DecisionNeeded) while an item needs a decision; else approves every pending item as
+  its step says, moves on and enters the next step. With four-eyes on, the rules wait for a second person.
+- back(): refused after go-live is approved; marks the later steps stale and runs the step again.
+- edit_item(): ProposalRepository.edit(), then the editor's acceptance.
+- timeline() and workspace(): what the audit trail and the screen read.
+
+Model calls are counted by a wrapper around each agent (the call is counted when it is made, so a call that failed
+is counted too). Chosen over counting proposal_log rows because a failed call writes no row and the cap is about calls.
+
+Confidence (assumption 35): confidence_of() gives each proposal a number or None. At or above
+AUTO_ACCEPT_CONFIDENCE the item is shown as pre-accepted (an event by `system`); a person still approves it with
+Approve & next. Below it, or None (a tie), the item needs a decision. An item the operator edits is accepted by the
+editor (a `pre_accepted` event with the editor as actor).
+
+Lock order of the calls that take locks here: the feed row, then the session row, then the proposal rows (the
+workers' finishing transaction takes only the session row, so no cycle). Agents arrive as arguments (StepAgents): this
+module never imports `agents` or `ports.llm`. Repositories flush; the caller commits (run_job commits its own).
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Any
+from uuid import UUID
+
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+
+from core.domain.mapping import GlossaryProposalPayload, MappingProposalPayload
+from core.domain.onboarding import (
+    ONBOARDING_STEPS,
+    AgentNote,
+    ApproveOptions,
+    InputFact,
+    JobRun,
+    OnboardingItem,
+    OnboardingSession,
+    StepAdvance,
+    StepInputs,
+    StepView,
+    TimelineEntry,
+    Workspace,
+)
+from core.domain.proposal import Proposal
+from core.domain.rules import RuleProposalPayload
+from core.domain.transformation import TransformationProposalPayload
+from core.engine.run import execute_load, plan_load, record_load
+from core.repositories.errors import (
+    BackNotAllowed,
+    DecisionNeeded,
+    JobSuperseded,
+    NotAnApprover,
+    NothingToMap,
+    NothingToTransform,
+    OwnerNotADataOwner,
+    ProposalEditRefused,
+    RunSuperseded,
+    SameApproverTwice,
+    StepJobActive,
+    StepNotEnterable,
+    StepNotReady,
+)
+from core.repositories.certifications import LoadCertificationRepository
+from core.repositories.configuration import MappingRepository, RuleRepository
+from core.repositories.feed_profiles import FeedProfileRepository
+from core.repositories.feed_registrations import FeedRegistrationRepository
+from core.repositories.feeds import FeedRepository
+from core.repositories.glossary import GlossaryRepository
+from core.repositories.glossary_runs import GlossaryRunRepository
+from core.repositories.go_lives import GoLiveRepository
+from core.repositories.loads import LoadRepository
+from core.repositories.onboarding import OnboardingJobRepository, OnboardingRepository
+from core.repositories.products import ProductRepository
+from core.repositories.proposals import ProposalRepository
+from core.repositories.standard_records import StandardRecordRepository
+from core.repositories.transformations import TransformationRepository
+from core.repositories.tables import ProposalLogEntry  # not core.proposal_log: that module imports ports.llm
+from core.repositories.upload_sources import UploadSourceRepository
+from core.steps.candidates import candidate_list
+from core.steps.s02_profile import profile_plan, record_profile, record_summary, run_profile, summary_input, summary_of
+from core.steps.s03_signoff import sign_off
+from core.steps.s04_register import NoOwner, register_feed, revise_visibility
+from core.steps.s05_glossary import builder_input, claim_run, decide_element, fail_run, record_run
+from core.steps.s06_map import decide_mapping, mapping_input, record_mappings
+from core.steps.s09_rules import RuleAwaitsChecker, backtest_for, decide_rule, record_rules, rules_input
+from core.steps.s10_transform import (
+    decide_transformation,
+    effective_key_policy,
+    propose_transformations,
+    transform_input,
+)
+from core.steps.s11_go_live import (
+    TestFailedHeld,
+    after_test_load,
+    begin_test_load,
+    decide_go_live,
+    go_live_plan,
+)
+from core.steps.s11_go_live import record_summary as record_go_live_summary
+from ports.config import Settings
+from ports.connectors import get_connector
+from ports.connectors.base import SourceConnector
+from ports.connectors.catalogue import SourceCatalogue, UnknownSource
+from ports.identity.base import Identity, User
+from ports.notify import get_notifier
+from ports.storage.base import BlobStore
+
+log = logging.getLogger(__name__)
+
+SessionFactory = Callable[[], AbstractContextManager[Session]]
+
+# the steps a person may go Back to (the profile registers the feed, which cannot be undone)
+BACKABLE: tuple[str, ...] = ("glossary", "mapping", "transformations", "rules", "go_live")
+AGENT_STEPS: tuple[str, ...] = ("profile", "glossary", "mapping", "transformations", "rules", "go_live")
+STEP_KINDS: dict[str, tuple[str, ...]] = {
+    "profile": ("profile_summary",), "glossary": ("glossary_element",), "mapping": ("mapping",),
+    "transformations": ("transformation",), "rules": ("rule",), "go_live": ("review_summary",)}
+STEP_OF_KIND = {kind: step for step, kinds in STEP_KINDS.items() for kind in kinds}
+AGENT_NAMES = {"profile": "ProfilerAgent", "glossary": "GlossaryBuilderAgent", "mapping": "MappingAgent",
+               "transformations": "TransformationAgent", "rules": "RuleRecommenderAgent",
+               "go_live": "ReviewSummariserAgent"}
+SECOND_PERSON = "a second person"
+RERUN_NOTE = "rerun after Back"
+MAX_GLOSSARY_RUNS = 20  # runs of other feeds that may sit in front of this feed's in the queue
+
+
+# ---------------------------------------------------------------- what the orchestration is given
+
+
+@dataclass(frozen=True)
+class StepAgents:
+    """The agents the steps call (anything with Agent.run()). Built by the API or the worker."""
+
+    profiler: Any
+    glossary_builder: Any
+    mapper: Any
+    transformer: Any
+    rule_recommender: Any
+    summariser: Any
+
+
+@dataclass(frozen=True)
+class OnboardingContext:
+    """Everything a call needs besides the database session. `load_now` is the daily job's fetch-and-load of one feed
+    (DailyFetch.fetch_and_load): core never imports apps."""
+
+    agents: StepAgents
+    blob_store: BlobStore
+    settings: Settings
+    identity: Identity
+    load_now: Callable[[UUID], dict[str, str | None]] | None = None
+    connector_factory: Callable[[str], SourceConnector] | None = None
+    daily_run_utc: str = "06:00"  # what the go-live notice says; the daily job's hour
+
+    def connector(self, name: str) -> SourceConnector:
+        return (self.connector_factory or (lambda n: get_connector(n, self.settings)))(name)
+
+
+# ---------------------------------------------------------------- small helpers
+
+
+def _catalogue(session: Session, settings: Settings) -> SourceCatalogue:
+    """The file catalogue and the uploaded sources (the same one the daily job reads)."""
+    return SourceCatalogue.load(settings.source_catalogue, settings.allowed_source_hosts()).with_uploads(
+        UploadSourceRepository(session).entries())
+
+
+def _person(ctx: OnboardingContext, user_id: str) -> User:
+    found = ctx.identity.get_user(user_id)
+    return found or User(id=user_id, display_name=user_id, email=f"{user_id}@example.test", roles=["backend_team"])
+
+
+def _with_role(ctx: OnboardingContext, role: str) -> list[str]:
+    return [u.id for u in ctx.identity.list_users() if role in u.roles]
+
+
+def _system(proposal: Proposal) -> User:
+    """The user that rejects a pending proposal when its step runs again: it holds the roles the proposal asks for."""
+    return User(id="system", display_name="System", email="system@example.test",
+                roles=list(proposal.required_approver_roles))
+
+
+def _next_step(step: str) -> str:
+    return ONBOARDING_STEPS[ONBOARDING_STEPS.index(step) + 1]
+
+
+def confidence_of(proposal: Proposal, scores: Mapping[str, Mapping[str, float]] | None = None) -> float | None:
+    """How sure the agent is (assumption 35); None means a person must look. The payload's own `confidence` wins;
+    a mapping is as sure as its chosen candidate's score (scores: column -> element -> score, from the agent's input),
+    and a tie is None (the model left several candidates, or the top two scores are equal); a glossary conflict is 0.5;
+    a profile summary that recommends rejecting the feed is None; anything else is certain (1.0)."""
+    payload = proposal.payload
+    if proposal.kind == "mapping":
+        chosen = payload.get("recommended")
+        column = (scores or {}).get(payload.get("source_field", ""))
+        if chosen is None or not column or chosen not in column:
+            return None
+        top = sorted(column.values(), reverse=True)
+        return None if len(top) > 1 and top[0] == top[1] else float(column[chosen])
+    if proposal.kind == "profile_summary" and payload.get("recommended_outcome") == "rejected":
+        return None
+    if proposal.kind == "rule":
+        # Task 5.3b: a rule is as sure as its back-test on the feed's own file says; a rule that flags rows of the file
+        # being onboarded needs a person (it may be wrong for this data, e.g. "not negative" on a percent change).
+        own = _current_file_delivery(payload)
+        if own is not None:
+            return 1.0 if own["flagged"] == 0 else round(1 - own["flagged"] / own["rows"], 2)
+    if isinstance(payload.get("confidence"), int | float):
+        return float(payload["confidence"])
+    if proposal.kind == "glossary_element" and payload.get("outcome") == "conflict_to_owner":
+        return 0.5
+    return 1.0
+
+
+def _current_file_delivery(payload: Mapping) -> dict | None:
+    """The rule's back-test delivery on the feed's own profiled file (step 09, task 5.3b), when it was read."""
+    for delivery in (payload.get("backtest") or {}).get("deliveries") or []:
+        if delivery.get("label") == "current file" and delivery.get("excluded") is None and delivery.get("rows", 0) > 0:
+            return delivery
+    return None
+
+
+def _built_reason(kind: str, p: Mapping[str, Any], confidence: float | None) -> str:
+    """Task 7.3a: a sentence for a payload that carries no reason of its own, made from the payload's facts only."""
+    field = p.get("source_field")
+    if kind == "profile_summary":
+        return " ".join(str(x) for x in (p.get("summary"), p.get("key_reason")) if x)
+    if kind == "mapping":
+        if p.get("recommended"):
+            score = "" if confidence is None else f" (score {confidence:.2f})"
+            return f"Name and type match {p['recommended']}{score}."
+        names = list(p.get("candidates", []))
+        count = "Two" if len(names) == 2 else str(len(names))
+        return f"{count} candidates score the same: {', '.join(names)}."
+    if kind == "glossary_element":
+        if p.get("outcome") == "conflict_to_owner":
+            return f"{field} clashes with {', '.join(p.get('clashes', []))}, so the glossary owner decides."
+        option = (p.get("options") or [{}])[p.get("recommended") or 0]
+        if option.get("kind") == "new_element":
+            return f"No glossary element covers {field}, so {option.get('key')} is proposed as a new element."
+        return f"{field} is another name for {option.get('key')}, so it is added as an alias."
+    if kind == "transformation":
+        ops = ", ".join(s.get("op", "?") for s in p.get("steps", [])) or "no steps"
+        return f"{field} is cleaned with {ops} so its values load as the glossary expects."
+    if kind == "rule":
+        return f"{p.get('rule_key')} checks that {str(p.get('description') or 'the rule holds').rstrip('.').lower()}."
+    return str(p.get("summary") or f"The agent made this {kind} proposal.")
+
+
+def _describe(proposal: Proposal, confidence: float | None = None) -> tuple[str | None, str, str]:
+    """(column or rule key, one line, the reason) for the workspace. The reason is the agent's own when the payload has
+    one (a profile summary's is its summary and its key reason), else a sentence built from the payload's facts."""
+    p, kind = proposal.payload, proposal.kind
+    own = p.get("reason") if isinstance(p.get("reason"), str) else None
+    reason = (own or "").strip() or _built_reason(kind, p, confidence)
+    if kind == "profile_summary":
+        reason = _built_reason(kind, p, confidence)
+    if kind == "mapping":
+        chosen = p.get("recommended")
+        return p.get("source_field"), (f"{p.get('source_field')} -> {chosen}" if chosen
+                                       else f"{p.get('source_field')}: tie between {', '.join(p.get('candidates', []))}"), reason
+    if kind == "glossary_element":
+        if p.get("outcome") == "conflict_to_owner":
+            return p.get("source_field"), f"{p.get('source_field')}: clashes with {', '.join(p.get('clashes', []))}", reason
+        option = (p.get("options") or [{}])[p["recommended"] or 0]
+        what = f"new element {option.get('key')}" if option.get("kind") == "new_element" \
+            else f"alias {option.get('alias')} of {option.get('key')}"
+        return p.get("source_field"), f"{p.get('source_field')}: {what}", reason
+    if kind == "transformation":
+        steps = ", ".join(s.get("op", "?") for s in p.get("steps", [])) or "no steps"
+        return p.get("source_field"), f"{p.get('source_field')}: {steps}", reason
+    if kind == "rule":
+        own = _current_file_delivery(p)
+        flags = f" (flags {own['flagged']} of {own['rows']} rows of this file)" if own and own["flagged"] else ""
+        return p.get("rule_key"), f"{p.get('rule_key')}: {p.get('description', '')}{flags}", reason
+    return None, str(p.get("summary") or kind), reason
+
+
+# ---------------------------------------------------------------- items, as the workspace and the decisions see them
+
+
+def _chain(session: Session, raw: str) -> list[Proposal]:
+    return ProposalRepository(session).lineage(UUID(raw))
+
+
+def _step_items(session: Session, sess: OnboardingSession, step: str) -> list[OnboardingItem]:
+    """The items of a step: the proposals its agent made in its latest answer (`agent_done`), each as its edit chain's
+    last proposal. needs_decision: pending, not accepted (by confidence or by an editor), and not waiting for a second
+    person."""
+    events = OnboardingRepository(session).events(sess.id)
+    answers = [e for e in events if e.step == step and e.event == "agent_done"]
+    if not answers:
+        return []
+    accepted = {e.proposal_id for e in events if e.event == "pre_accepted" and e.proposal_id is not None}
+    proposals = ProposalRepository(session)
+    items = []
+    for raw in answers[-1].detail.get("proposal_ids", []):
+        chain = _chain(session, raw)
+        tip = chain[-1]
+        approvals = proposals.approvals(tip.id)
+        waiting = SECOND_PERSON if (tip.status == "pending" and approvals
+                                    and len(approvals) < len(tip.required_approver_roles)) else None
+        confidence = answers[-1].detail.get("confidence", {}).get(raw)
+        column, summary, reason = _describe(tip, confidence)
+        is_accepted = tip.id in accepted
+        items.append(OnboardingItem(
+            proposal_id=tip.id, kind=tip.kind, column=column, summary=summary, status=tip.status,
+            confidence=confidence, pre_accepted=is_accepted,
+            needs_decision=tip.status == "pending" and not is_accepted and waiting is None, waiting_for=waiting,
+            edited=tip.edited_from is not None, edited_by=tip.edited_by, edited_from=tip.edited_from, reason=reason,
+            payload=tip.payload, decided_by=approvals[-1].decided_by if approvals else None,
+            decided_at=approvals[-1].created_at if approvals else None))
+    return items
+
+
+def _settled_state(items: list[OnboardingItem]) -> str:
+    return "needs_decision" if any(i.needs_decision or i.waiting_for for i in items) else "ready"
+
+
+def _reject_pending(session: Session, sessions: OnboardingRepository, sess: OnboardingSession, step: str) -> None:
+    """A step runs again: its pending proposals are rejected by `system` first, so the one-pending-per-column
+    guards hold. Decided configuration is left alone (it stays versioned)."""
+    proposals = ProposalRepository(session)
+    for kind in STEP_KINDS.get(step, ()):
+        for pending in proposals.list_for_feed(sess.feed_id, kind, "pending"):
+            proposals.record_decision(pending.id, user=_system(pending), decision="rejected", note=RERUN_NOTE)
+            sessions.add_event(sess.id, step=step, event="rejected", actor="system", proposal_id=pending.id,
+                               detail={"note": RERUN_NOTE})
+
+
+def _enter(session: Session, sess: OnboardingSession, step: str, *, actor: str, rerun: bool) -> None:
+    sessions, jobs = OnboardingRepository(session), OnboardingJobRepository(session)
+    if rerun:
+        _reject_pending(session, sessions, sess, step)
+    sessions.move_to(sess.id, step)
+    sessions.set_step_state(sess.id, step, "agent_working")
+    sessions.add_event(sess.id, step=step, event="entered", actor=actor)
+    jobs.queue(session_id=sess.id, step=step)
+    sessions.add_event(sess.id, step=step, event="agent_queued", actor=actor)
+
+
+def _locked(session: Session, session_id: UUID) -> OnboardingSession:
+    """The feed row, then the session row, both fresh."""
+    sessions = OnboardingRepository(session)
+    FeedRepository(session).lock(sessions.get(session_id).feed_id)
+    return sessions.lock(session_id)
+
+
+# ---------------------------------------------------------------- start, enter, back
+
+
+def start_session(session: Session, *, feed_id: UUID, user: User) -> OnboardingSession:
+    """Called when an upload is confirmed (task 5.4): upload is done, the profile step is entered and its job queued.
+    FeedNotFound, OnboardingAlreadyExists."""
+    FeedRepository(session).get(feed_id)
+    created = OnboardingRepository(session).create(feed_id=feed_id, created_by=user.id)
+    _enter(session, created, "profile", actor=user.id, rerun=False)
+    return OnboardingRepository(session).get(created.id)
+
+
+def enter_step(session: Session, *, session_id: UUID, step: str, user: User) -> OnboardingSession:
+    """Run the current step's agent again (after a failure, or a stale step). StepNotEnterable: not the current step,
+    a step that is done, or a finished session. StepJobActive: the agent is already working."""
+    sess = _locked(session, session_id)
+    if sess.status == "done" or step != sess.current_step or step not in AGENT_STEPS + ("first_load",):
+        raise StepNotEnterable(f"{step} is not the step this onboarding is on ({sess.current_step})")
+    state = sess.step_states[step]
+    if OnboardingJobRepository(session).active_for_session(session_id) is not None or state == "agent_working":
+        raise StepJobActive(f"The agent is already working on {step}")
+    if state == "done":
+        raise StepNotEnterable(f"{step} is done; go Back to run it again")
+    _enter(session, sess, step, actor=user.id, rerun=state == "stale")
+    return OnboardingRepository(session).get(session_id)
+
+
+def back(session: Session, *, session_id: UUID, to_step: str, user: User) -> OnboardingSession:
+    """Go back to a step already reached: every later step that was entered becomes stale, the step's pending
+    proposals are rejected by `system`, and its agent runs again. BackNotAllowed once the owner approved go-live."""
+    sess = _locked(session, session_id)
+    if sess.status == "done" or to_step not in BACKABLE:
+        raise BackNotAllowed(f"Back goes to one of {', '.join(BACKABLE)}, on an unfinished onboarding; not to {to_step}")
+    if ONBOARDING_STEPS.index(to_step) > ONBOARDING_STEPS.index(sess.current_step):
+        raise BackNotAllowed(f"{to_step} has not been reached; this onboarding is on {sess.current_step}")
+    if GoLiveRepository(session).latest(sess.feed_id) is not None:
+        raise BackNotAllowed("The owner approved go-live: the configuration is pinned and nothing goes back")
+    sessions, jobs = OnboardingRepository(session), OnboardingJobRepository(session)
+    active = jobs.active_for_session(session_id)
+    if active is not None:
+        jobs.discard(active.id)  # its answer is no longer wanted: the lease check discards it
+    sessions.add_event(session_id, step=to_step, event="back", actor=user.id, detail={"from": sess.current_step})
+    for later in ONBOARDING_STEPS[ONBOARDING_STEPS.index(to_step) + 1:]:
+        if sess.step_states[later] != "waiting":
+            sessions.set_step_state(session_id, later, "stale")
+            sessions.add_event(session_id, step=later, event="stale", actor=user.id)
+    _enter(session, sess, to_step, actor=user.id, rerun=True)
+    return sessions.get(session_id)
+
+
+# ---------------------------------------------------------------- the worker
+
+
+class _Counted:
+    """Wraps an agent: counts each call, and before the answer is written checks the job is still ours."""
+
+    def __init__(self, agent: Any, calls: list[int], still_ours: Callable[[Session], None]):
+        self._agent, self._calls, self._still_ours = agent, calls, still_ours
+
+    def run(self, session: Session, agent_input: Any, *, before_write=None, after_answer=None):
+        self._calls[0] += 1
+
+        def guarded(s: Session) -> None:
+            if before_write is not None:
+                before_write(s)
+            self._still_ours(s)  # JobSuperseded: Agent.run() logs the discard and writes nothing
+
+        extra = {} if after_answer is None else {"after_answer": after_answer}
+        return self._agent.run(session, agent_input, before_write=guarded, **extra)
+
+
+@dataclass
+class _Work:
+    """What one step's job produced."""
+
+    scores: dict[str, dict[str, float]] = field(default_factory=dict)  # mapping: column -> element -> score
+    nothing_to_do: str | None = None
+    failed: str | None = None  # the step ends failed with this (not an exception: a held test load, a held first load)
+    moves_on: bool = False  # the first load released: the product exists
+
+
+@dataclass
+class _Env:
+    sf: SessionFactory
+    ctx: OnboardingContext
+    session_id: UUID
+    feed_id: UUID
+    created_by: str
+    agents: StepAgents
+
+    def read(self, work: Callable[[Session], Any]) -> Any:
+        """Read, then end the transaction, so no connection is held afterwards."""
+        with self.sf() as s:
+            try:
+                out = work(s)
+            except BaseException:
+                s.rollback()
+                raise
+            s.commit()
+            return out
+
+    def write(self, work: Callable[[Session], Any]) -> Any:
+        return self.read(work)
+
+
+def run_job(session_factory: SessionFactory, *, ctx: OnboardingContext, lease_seconds: int = 300) -> JobRun | None:
+    """Claim the oldest queued job (or one whose lease passed) and run it; None when there is none. Never raises for a
+    failed step: the step is `failed` with the reason and the job `failed`; re-enter the step to try again."""
+    with session_factory() as s:
+        job = OnboardingJobRepository(s).claim(lease_seconds=lease_seconds)
+        sess = OnboardingRepository(s).get(job.session_id) if job is not None else None
+        s.commit()
+    if job is None or sess is None:
+        return None
+    step = job.step
+    calls = [0]
+
+    def still_ours(s: Session) -> None:
+        now = OnboardingJobRepository(s).get(job.id)
+        if now.status != "running" or now.attempt != job.attempt:
+            raise JobSuperseded(f"Onboarding job {job.id} is {now.status} on attempt {now.attempt}, not running on "
+                                f"{job.attempt}")
+
+    def counted(agent: Any) -> Any:
+        return _Counted(agent, calls, still_ours)
+
+    a = ctx.agents
+    agents = StepAgents(profiler=counted(a.profiler), glossary_builder=counted(a.glossary_builder),
+                        mapper=counted(a.mapper), transformer=counted(a.transformer),
+                        rule_recommender=counted(a.rule_recommender), summariser=counted(a.summariser))
+    env = _Env(sf=session_factory, ctx=ctx, session_id=sess.id, feed_id=sess.feed_id, created_by=sess.created_by,
+               agents=agents)
+    cap = ctx.settings.max_model_calls_per_onboarding
+
+    with session_factory() as s:  # the cap, then `agent_started`
+        sessions = OnboardingRepository(s)
+        locked = sessions.lock(sess.id)
+        if step in AGENT_STEPS and locked.model_calls >= cap:
+            message = f"The call cap of {cap} model calls for this onboarding is reached; the agent was not asked."
+            sessions.add_event(sess.id, step=step, event="call_cap_reached", actor="system",
+                               detail={"cap": cap, "model_calls": locked.model_calls, "message": message})
+            sessions.set_step_state(sess.id, step, "failed")
+            OnboardingJobRepository(s).discard(job.id)
+            s.commit()
+            return JobRun(job_id=job.id, session_id=sess.id, step=step, status="discarded", detail=message)
+        sessions.add_event(sess.id, step=step, event="agent_started", actor="system", detail={"attempt": job.attempt})
+        s.commit()
+
+    try:
+        work = _STEP_JOBS[step](env)
+    except JobSuperseded as exc:
+        log.warning("onboarding job %s: its answer came after its lease was taken again; discarded (%s)", job.id, exc)
+        _count_calls(session_factory, sess.id, calls[0])
+        return JobRun(job_id=job.id, session_id=sess.id, step=step, status="superseded", detail=str(exc),
+                      model_calls=calls[0])
+    except Exception as exc:
+        if not hasattr(exc, "reason") and type(exc).__module__.split(".")[0] not in ("core",):
+            log.exception("onboarding job %s (%s) failed", job.id, step)
+        return _fail_job(session_factory, job, sess, step, calls[0], exc)
+    return _finish_job(session_factory, ctx, job, sess, step, calls[0], work)
+
+
+def _count_calls(sf: SessionFactory, session_id: UUID, calls: int) -> None:
+    if calls:
+        with sf() as s:
+            OnboardingRepository(s).bump_model_calls(session_id, calls)
+            s.commit()
+
+
+def _fail_job(sf: SessionFactory, job, sess: OnboardingSession, step: str, calls: int, exc: Exception) -> JobRun:
+    reason = getattr(exc, "reason", None) or type(exc).__name__
+    message = f"{AGENT_NAMES.get(step, step)} could not finish: {reason}" + (
+        f" ({exc})" if str(exc) and str(exc) != reason else "")
+    return _record_failure(sf, job, sess, step, calls, reason=reason, error=type(exc).__name__, message=message)
+
+
+def _record_failure(sf: SessionFactory, job, sess: OnboardingSession, step: str, calls: int, *, reason: str, error: str,
+                    message: str) -> JobRun:
+    with sf() as s:
+        sessions = OnboardingRepository(s)
+        sessions.lock(sess.id)
+        try:
+            OnboardingJobRepository(s).fail(job.id, attempt=job.attempt, error=message)
+        except JobSuperseded:
+            s.rollback()
+            return JobRun(job_id=job.id, session_id=sess.id, step=step, status="superseded", detail=message,
+                          model_calls=calls)
+        if calls:
+            sessions.bump_model_calls(sess.id, calls)
+        sessions.add_event(sess.id, step=step, event="agent_failed", actor="system",
+                           detail={"reason": reason, "error": error, "message": message})
+        sessions.set_step_state(sess.id, step, "failed")
+        s.commit()
+    return JobRun(job_id=job.id, session_id=sess.id, step=step, status="failed", detail=message, model_calls=calls)
+
+
+def _finish_job(sf: SessionFactory, ctx: OnboardingContext, job, sess: OnboardingSession, step: str, calls: int,
+                work: _Work) -> JobRun:
+    if work.failed is not None:
+        return _record_failure(sf, job, sess, step, calls, reason="step_failed", error="StepFailed",
+                               message=work.failed)
+    with sf() as s:
+        sessions, proposals = OnboardingRepository(s), ProposalRepository(s)
+        sessions.lock(sess.id)
+        try:
+            OnboardingJobRepository(s).finish(job.id, attempt=job.attempt)
+        except JobSuperseded:
+            s.rollback()
+            return JobRun(job_id=job.id, session_id=sess.id, step=step, status="superseded", model_calls=calls)
+        if calls:
+            sessions.bump_model_calls(sess.id, calls)
+        if step == "first_load":
+            sessions.set_step_state(sess.id, "first_load", "done")
+            sessions.add_event(sess.id, step="first_load", event="done", actor="system")
+            sessions.move_to(sess.id, "product_ready")
+            sessions.set_step_state(sess.id, "product_ready", "done")
+            sessions.add_event(sess.id, step="product_ready", event="entered", actor="system")
+            sessions.add_event(sess.id, step="product_ready", event="done", actor="system")
+            sessions.finish(sess.id)
+            s.commit()
+            return JobRun(job_id=job.id, session_id=sess.id, step=step, status="done", model_calls=calls)
+        pending = [p for kind in STEP_KINDS[step] for p in proposals.list_for_feed(sess.feed_id, kind, "pending")]
+        if step == "profile":
+            pending = pending[-1:]  # one summary per profile; the latest is the item
+        confidence = {str(p.id): confidence_of(p, work.scores) for p in pending}
+        for p in pending:
+            value = confidence[str(p.id)]
+            if value is not None and value >= ctx.settings.auto_accept_confidence:
+                sessions.add_event(sess.id, step=step, event="pre_accepted", actor="system", proposal_id=p.id,
+                                   detail={"confidence": value, "threshold": ctx.settings.auto_accept_confidence})
+        sessions.add_event(sess.id, step=step, event="agent_done", actor="system",
+                           detail={"proposal_ids": [str(p.id) for p in pending], "confidence": confidence,
+                                   "model_calls": calls, "nothing_to_do": work.nothing_to_do})
+        items = _step_items(s, sessions.get(sess.id), step)
+        sessions.set_step_state(sess.id, step, _settled_state(items))
+        s.commit()
+    return JobRun(job_id=job.id, session_id=sess.id, step=step, status="done", model_calls=calls,
+                  detail=work.nothing_to_do)
+
+
+# ---------------------------------------------------------------- the jobs, one per step: the existing step functions
+
+
+def _job_profile(env: _Env) -> _Work:
+    feed_id, ctx = env.feed_id, env.ctx
+
+    def where(s: Session):
+        profile = FeedProfileRepository(s).latest(feed_id)
+        return profile, (summary_of(s, feed_id=feed_id, profile_id=profile.id) if profile else None)
+
+    profile, summary = env.read(where)
+    if profile is None:  # step 02: read, end the read, DuckDB with no connection, lock and write
+        plan = env.read(lambda s: profile_plan(s, feed_id=feed_id, catalogue=_catalogue(s, ctx.settings)))
+        attempt = run_profile(plan, blob_store=ctx.blob_store)
+        env.write(lambda s: record_profile(s, attempt, profiled_by=env.created_by))
+        summary = None
+    if summary is None:  # the ProfilerAgent's summary; a retry after a failed call profiles nothing twice
+        agent_input = env.read(lambda s: summary_input(s, feed_id=feed_id, settings=ctx.settings))
+        env.write(lambda s: record_summary(s, agent=env.agents.profiler, agent_input=agent_input,
+                                           blob_store=ctx.blob_store))
+    return _Work()
+
+
+def _job_glossary(env: _Env) -> _Work:
+    feed_id, ctx = env.feed_id, env.ctx
+    for _ in range(MAX_GLOSSARY_RUNS):
+        active = env.read(lambda s: GlossaryRunRepository(s).active(feed_id))
+        if active is None:
+            return _Work(nothing_to_do=None)
+        run = env.write(lambda s: claim_run(s, lease_seconds=ctx.settings.glossary_run_lease_seconds))
+        if run is None:
+            raise StepNotReady("The glossary builder is busy with this feed's run; enter the step again in a moment")
+        _run_glossary(env, run)
+    raise StepNotReady("The glossary builder has other runs to do first; enter the step again in a moment")
+
+
+def _run_glossary(env: _Env, run) -> None:
+    """GlossaryRuns._run_one() (apps/api/jobs.py) for one claimed run, with this job's counted agent."""
+    ctx = env.ctx
+    try:
+        plan = env.read(lambda s: builder_input(s, run, settings=ctx.settings))  # D3: samples only if the setting is on
+        env.write(lambda s: record_run(s, plan=plan, agent=env.agents.glossary_builder,
+                                       notifier=get_notifier(ctx.settings, session=s),
+                                       owners=_with_role(ctx, "glossary_owner")))
+    except RunSuperseded as exc:  # another worker took the run after its lease: this answer is not used
+        raise JobSuperseded(str(exc)) from exc
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        try:
+            env.write(lambda s: fail_run(s, run=run, error=error))
+        except RunSuperseded:
+            pass
+        raise
+
+
+def _description(catalogue: SourceCatalogue, source_code: str | None) -> str | None:
+    try:
+        return catalogue.get(source_code).description if source_code else None
+    except UnknownSource:
+        return None
+
+
+def _job_mapping(env: _Env) -> _Work:
+    feed_id, ctx = env.feed_id, env.ctx
+
+    def build(s: Session):
+        feed = FeedRepository(s).get(feed_id)
+        return mapping_input(s, feed_id=feed_id,
+                             source_description=_description(_catalogue(s, ctx.settings), feed.source_code))
+
+    try:
+        agent_input = env.read(build)
+    except NothingToMap as exc:  # every column is mapped or waits for the steward
+        return _Work(nothing_to_do=str(exc))
+    user = _person(ctx, env.created_by)
+    env.write(lambda s: record_mappings(s, agent=env.agents.mapper, agent_input=agent_input, user=user))
+    return _Work(scores={c.name: {x.key: x.score for x in c.candidates} for c in agent_input.columns})
+
+
+def _job_transformations(env: _Env) -> _Work:
+    feed_id, ctx = env.feed_id, env.ctx
+    try:
+        agent_input = env.read(lambda s: transform_input(s, feed_id=feed_id, settings=ctx.settings))
+    except NothingToTransform as exc:
+        return _Work(nothing_to_do=str(exc))
+    env.write(lambda s: propose_transformations(s, agent=env.agents.transformer, agent_input=agent_input))
+    return _Work()
+
+
+def _job_rules(env: _Env) -> _Work:
+    feed_id, ctx = env.feed_id, env.ctx
+    try:
+        agent_input = env.read(lambda s: rules_input(s, feed_id=feed_id, catalogue=_catalogue(s, ctx.settings)))
+    except NothingToMap as exc:
+        return _Work(nothing_to_do=str(exc))
+    backtest = backtest_for(agent_input, connector_factory=ctx.connector, blob_store=ctx.blob_store,
+                            rule_timeout_seconds=ctx.settings.rule_timeout_seconds)  # runs after the call, no session
+    env.write(lambda s: record_rules(s, agent=env.agents.rule_recommender, agent_input=agent_input, backtest=backtest))
+    return _Work()
+
+
+def _job_go_live(env: _Env) -> _Work:
+    """Step 11 prepare, as the API runs it: the checks, a test load through the engine (plan, execute with no session,
+    locked write), then a held notice or the ReviewSummariserAgent's summary."""
+    feed_id, ctx = env.feed_id, env.ctx
+    team, operations = _with_role(ctx, "backend_team"), _with_role(ctx, "operations")
+
+    def owner_is_data_owner(owner_id: str) -> bool:
+        owner = ctx.identity.get_user(owner_id)
+        return owner is not None and "data_owner" in owner.roles
+
+    plan = env.write(lambda s: go_live_plan(s, feed_id=feed_id, owner_is_data_owner=owner_is_data_owner,
+                                            notifier=get_notifier(ctx.settings, session=s), backend_team=team))
+    load = env.write(lambda s: begin_test_load(s, plan, stale_minutes=ctx.settings.load_stale_minutes,
+                                               notifier=get_notifier(ctx.settings, session=s), operations=operations))
+    engine_plan = env.read(lambda s: plan_load(s, load.id))
+    outcome = execute_load(engine_plan, blob_store=ctx.blob_store, rule_timeout_seconds=ctx.settings.rule_timeout_seconds)
+    load_run = env.write(lambda s: record_load(s, engine_plan, outcome))
+    after = env.write(lambda s: after_test_load(s, plan=plan, load_run=load_run,
+                                                notifier=get_notifier(ctx.settings, session=s), backend_team=team))
+    if isinstance(after, TestFailedHeld):
+        return _Work(failed=f"The test load failed at {after.stage}: {after.reason}. The feed is held; nothing was "
+                            "proposed.")
+    env.write(lambda s: record_go_live_summary(s, agent=env.agents.summariser, agent_input=after))
+    return _Work()
+
+
+def _job_first_load(env: _Env) -> _Work:
+    """Load now: the daily job's own fetch of the newest drop-folder file, then steps 12, 13, 15 and 20."""
+    if env.ctx.load_now is None:
+        raise StepNotReady("No loader is configured for the first load")
+    result = env.ctx.load_now(env.feed_id)
+    if result.get("fetch") != "fetched":
+        return _Work(failed=f"The first file was not fetched: {result.get('fetch')}.")
+    product = env.read(lambda s: ProductRepository(s).for_feed(env.feed_id))
+    if result.get("load") == "released" and product is not None:
+        return _Work(moves_on=True)
+    why = {"held": "its trust score is below the release threshold, so the load is held and its consumers are warned",
+           "failed_rolled_back": "the file failed and was rolled back", "quarantined": "the same file was loaded before",
+           }.get(result.get("load") or "", "the load did not release")
+    return _Work(failed=f"The first load ended {result.get('load')}: {why}. The feed's product was not created.")
+
+
+_STEP_JOBS: dict[str, Callable[[_Env], _Work]] = {
+    "profile": _job_profile, "glossary": _job_glossary, "mapping": _job_mapping,
+    "transformations": _job_transformations, "rules": _job_rules, "go_live": _job_go_live,
+    "first_load": _job_first_load}
+
+
+# ---------------------------------------------------------------- Approve & next
+
+
+def approve_and_next(session: Session, *, session_id: UUID, user: User, ctx: OnboardingContext,
+                     options: ApproveOptions | None = None) -> StepAdvance:
+    """Approve every pending item of the current step as the step says (the operator's own decisions, the existing
+    decision functions), then move on and enter the next step. StepNotReady: the agent has not answered. DecisionNeeded:
+    an item needs a person's decision first. With four-eyes on, the rules wait for a second person: nothing moves, and
+    the second person's own Approve & next finishes the step. A visibility in `options` is accepted only at profile and
+    at go-live with a pending item (StepNotReady otherwise); at go-live only the registration's owner may change it
+    (NotAnApprover)."""
+    options = options or ApproveOptions()
+    sess = _locked(session, session_id)
+    step = sess.current_step
+    if sess.status == "done" or sess.step_states[step] not in ("ready", "needs_decision"):
+        raise StepNotReady(f"{step} has no answer to approve ({sess.step_states[step]})")
+    items = _step_items(session, sess, step)
+    blocking = [i for i in items if i.needs_decision]
+    if blocking:
+        raise DecisionNeeded(f"{len(blocking)} item(s) of {step} need a decision first: "
+                             + "; ".join(i.summary for i in blocking), blocking)
+    approved, waiting = _approve(session, sess, step, items, user=user, ctx=ctx, options=options)
+    sessions = OnboardingRepository(session)
+    for proposal_id in approved:
+        sessions.add_event(session_id, step=step, event="approved", actor=user.id, proposal_id=proposal_id)
+    if waiting:
+        sessions.set_step_state(session_id, step, "needs_decision")
+        return StepAdvance(moved=False, current_step=step, approved=approved, waiting_for=SECOND_PERSON)
+    sessions.set_step_state(session_id, step, "done")
+    sessions.add_event(session_id, step=step, event="done", actor=user.id)
+    following = _next_step(step)
+    _enter(session, sessions.get(session_id), following, actor=user.id,
+           rerun=sess.step_states[following] == "stale")
+    return StepAdvance(moved=True, current_step=following, approved=approved)
+
+
+def _approve(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem], *, user: User,
+             ctx: OnboardingContext, options: ApproveOptions) -> tuple[list[UUID], int]:
+    """(proposals approved, items still waiting for a second person). A visibility is chosen at the profile step (the
+    registration) or at go-live (a next registration version, by the feed's owner), together with the approval: at
+    any other step, or at go-live with no pending go-live item, it is StepNotReady, before anything is written."""
+    if options.visibility is not None:
+        if step not in ("profile", "go_live"):
+            raise StepNotReady("the visibility is chosen at go-live")
+        if step == "go_live" and not any(i.status == "pending" for i in items):
+            raise StepNotReady("no go-live item is pending: the visibility is chosen with the go-live approval")
+    notifier = get_notifier(ctx.settings, session=session)
+    pending = [i for i in items if i.status == "pending"]
+    approved: list[UUID] = []
+    waiting = 0
+    if step == "profile":
+        approved += _approve_profile(session, sess, pending, user=user, ctx=ctx, options=options, notifier=notifier)
+    elif step == "glossary":
+        for item in pending:
+            decide_element(session, proposal_id=item.proposal_id, user=user, decision="approved", choice=None,
+                           note=None, notifier=notifier, stewards=_with_role(ctx, "data_steward"))
+            approved.append(item.proposal_id)
+    elif step == "mapping":
+        for item in pending:
+            decide_mapping(session, proposal_id=item.proposal_id, user=user, decision="approved", choice=None, note=None)
+            approved.append(item.proposal_id)
+    elif step == "transformations":
+        for item in pending:
+            decide_transformation(session, proposal_id=item.proposal_id, user=user, decision="approved")
+            approved.append(item.proposal_id)
+    elif step == "rules":
+        for item in pending:
+            try:
+                result = decide_rule(session, proposal_id=item.proposal_id, user=user, decision="approved",
+                                     notifier=notifier, checkers=_with_role(ctx, "checker"))
+            except (SameApproverTwice, NotAnApprover):
+                if item.waiting_for is None:
+                    raise
+                waiting += 1  # the steward's step is in; the checker is another person
+                continue
+            approved.append(item.proposal_id)
+            waiting += isinstance(result, RuleAwaitsChecker)
+    elif step == "go_live":
+        if options.visibility is not None:
+            # chosen here, by the owner, after the registration: a next registration version only when it differs;
+            # anyone but the registration's owner is NotAnApprover (403)
+            revise_visibility(session, feed_id=sess.feed_id, user=user, visibility=options.visibility)
+        for item in pending:
+            decide_go_live(session, proposal_id=item.proposal_id, user=user, decision="approved", note=None,
+                           back_to_step=None, today=date.today(), hypercare_days=ctx.settings.hypercare_days,
+                           daily_run_utc=ctx.daily_run_utc, notifier=notifier,
+                           backend_team=_with_role(ctx, "backend_team"), operations=_with_role(ctx, "operations"),
+                           role_holders=lambda role: _with_role(ctx, role))
+            approved.append(item.proposal_id)
+    else:
+        raise StepNotReady(f"{step} has nothing to approve")
+    return approved, waiting
+
+
+def _approve_profile(session: Session, sess: OnboardingSession, pending: list[OnboardingItem], *, user: User,
+                     ctx: OnboardingContext, options: ApproveOptions, notifier) -> list[UUID]:
+    """Step 03 with the outcome the agent recommended, then step 04: the operator is the owner (who must be a data
+    owner), the licence is the upload source's. Registration queues the glossary run, as it always does."""
+    catalogue = _catalogue(session, ctx.settings)
+    approved: list[UUID] = []
+    for item in pending:
+        outcome = item.payload["recommended_outcome"]
+        sign_off(session, feed_id=sess.feed_id, user=user, outcome=outcome,
+                 gaps=item.payload.get("gaps", []) if outcome == "meets_with_gaps" else [],
+                 reasons=item.payload.get("reasons", []) if outcome == "rejected" else [], catalogue=catalogue,
+                 notifier=notifier, backend_team=_with_role(ctx, "backend_team"))
+        approved.append(item.proposal_id)
+    if FeedRepository(session).get(sess.feed_id).stage == "candidate":
+        registered = register_feed(session, feed_id=sess.feed_id, user=user, owner_id=user.id,
+                                   visibility=options.visibility or "open", catalogue=catalogue, identity=ctx.identity,
+                                   notifier=notifier)
+        if isinstance(registered, NoOwner):
+            raise OwnerNotADataOwner(f"{user.id} cannot own the feed: {registered.reason.replace('_', ' ')}")
+    return approved
+
+
+# ---------------------------------------------------------------- edit
+
+
+def _checked_payload(kind: str, payload: dict[str, Any]) -> None:
+    model = {"glossary_element": GlossaryProposalPayload, "mapping": MappingProposalPayload,
+             "transformation": TransformationProposalPayload, "rule": RuleProposalPayload}.get(kind)
+    if model is None:
+        raise ProposalEditRefused(f"A {kind} proposal cannot be edited")
+    try:
+        model.model_validate(payload)
+    except ValidationError as exc:
+        raise ProposalEditRefused(f"The edited {kind} proposal is not valid: {exc.errors()[0]['msg']}") from exc
+
+
+def edit_item(session: Session, *, session_id: UUID, proposal_id: UUID, payload: dict[str, Any],
+              user: User) -> Proposal:
+    """The operator edits an item of the current step before it is approved: a new pending proposal on the same logged
+    call (ProposalRepository.edit), event `edited` ("edited by"), and the editor's own acceptance (`pre_accepted` with
+    the editor as actor). The agent's answer in the log stays as it was. ProposalEditRefused, ProposalAlreadyDecided,
+    NotAnApprover, StepNotEnterable (not an item of the current step)."""
+    sess = _locked(session, session_id)
+    step = sess.current_step
+    proposals = ProposalRepository(session)
+    old = proposals.get(proposal_id)
+    items = {i.proposal_id for i in _step_items(session, sess, step)}
+    if old.feed_id != sess.feed_id or STEP_OF_KIND.get(old.kind) != step or proposal_id not in items:
+        raise StepNotEnterable(f"Proposal {proposal_id} is not an item of {step}, the step this onboarding is on")
+    _checked_payload(old.kind, payload)
+    new = proposals.edit(proposal_id, payload=payload, user=user)
+    changed = sorted(k for k in set(old.payload) | set(payload) if old.payload.get(k) != payload.get(k))
+    sessions = OnboardingRepository(session)
+    sessions.add_event(session_id, step=step, event="edited", actor=user.id, proposal_id=new.id,
+                       detail={"edited_by": user.id, "edited_from": str(old.id), "changed": changed})
+    sessions.add_event(session_id, step=step, event="pre_accepted", actor=user.id, proposal_id=new.id,
+                       detail={"reason": "edited by the person who will approve it"})
+    state = sess.step_states[step]
+    if state in ("ready", "needs_decision"):
+        sessions.set_step_state(session_id, step, _settled_state(_step_items(session, sessions.get(session_id), step)))
+    return new
+
+
+# ---------------------------------------------------------------- what the audit trail and the screen read
+
+
+def timeline(session: Session, *, session_id: UUID) -> list[TimelineEntry]:
+    """Every event, proposal (with the logged call behind it: agent, model, prompt version, latency), edit and approval
+    of the onboarding's feed, in time order."""
+    sess = OnboardingRepository(session).get(session_id)
+    entries = [TimelineEntry(at=e.at, kind="event", actor=e.actor, step=e.step, title=e.event,
+                             proposal_id=e.proposal_id, detail=e.detail)
+               for e in OnboardingRepository(session).events(session_id)]
+    proposals = ProposalRepository(session)
+    for kinds in STEP_KINDS.values():
+        for kind in kinds:
+            for p in proposals.list_for_feed(sess.feed_id, kind):
+                call = session.get(ProposalLogEntry, p.proposal_log_id)
+                facts = {"kind": p.kind, "status": p.status, "agent": call.agent_name, "provider": call.provider,
+                         "model": call.model, "model_version": call.model_version, "prompt_id": call.prompt_id,
+                         "prompt_version": call.prompt_version, "latency_ms": call.latency_ms,
+                         "input_ref": call.input_ref}
+                if p.edited_from is not None:
+                    entries.append(TimelineEntry(
+                        at=p.created_at, kind="edit", actor=p.edited_by or "unknown", step=STEP_OF_KIND[kind],
+                        title=f"{kind} edited", proposal_id=p.id,
+                        detail={**facts, "edited_from": str(p.edited_from), "edited_by": p.edited_by}))
+                else:
+                    entries.append(TimelineEntry(at=p.created_at, kind="proposal", actor=call.agent_name,
+                                                 step=STEP_OF_KIND[kind], title=f"{kind} proposed", proposal_id=p.id,
+                                                 detail=facts))
+                for a in proposals.approvals(p.id):
+                    entries.append(TimelineEntry(
+                        at=a.created_at, kind="approval", actor=a.decided_by, step=STEP_OF_KIND[kind],
+                        title=f"{kind} {a.decision} ({a.role}, step {a.step})", proposal_id=p.id,
+                        detail={"decision": a.decision, "role": a.role, "step": a.step, "note": a.note}))
+    return sorted(entries, key=lambda entry: entry.at)
+
+
+def _glossary_before_this_feed(session: Session, feed_id: UUID) -> list:
+    """The glossary as the builder saw it: the elements (and alias versions) this feed's own approved proposals added
+    are taken out, so a count recomputed after the step equals the one the agent was given."""
+    glossary = GlossaryRepository(session)
+    own = {p.id for p in ProposalRepository(session).list_for_feed(feed_id, "glossary_element")}
+    pool = []
+    for element in glossary.list_current():
+        if element.proposal_id in own:
+            before = [h for h in glossary.history(element.key) if h.proposal_id not in own]
+            if not before:
+                continue
+            element = before[-1]
+        pool.append(element)
+    return pool
+
+
+def _candidate_counts(session: Session, feed_id: UUID, step: str, items: list[OnboardingItem],
+                      profile) -> dict[str, int]:
+    """Per column of the step's items, how many candidate elements the agent was given. The agent's input is stored in
+    the blob store, not the database, so the count is recomputed, read only, with core/steps/candidates.py over the
+    same facts the step used (the profile's column, its spec, the steward's rejections for the mapping step)."""
+    columns = {c.name: c for c in profile.columns}
+    counts: dict[str, int] = {}
+    if step == "mapping":
+        glossary, mappings = GlossaryRepository(session).list_current(), MappingRepository(session)
+    else:
+        glossary = _glossary_before_this_feed(session, feed_id)
+    for item in items:
+        column = columns.get(item.column or "")
+        if column is None:
+            continue
+        declared = profile.spec.columns.get(column.name)
+        if step == "mapping":
+            hint = declared if declared in profile.spec.elements else None
+            rejected = mappings.rejected_elements(feed_id, column.name)
+            counts[column.name] = len([x for x in candidate_list(column.name, column.type, glossary, hint=hint)
+                                       if x.key not in rejected])
+        else:
+            also = (declared,) if declared in profile.spec.other_fields else ()
+            counts[column.name] = len(candidate_list(column.name, column.type, glossary, also=also))
+    return counts
+
+
+def _fact(facts: list[InputFact], label: str, count: int | None, unit: str = "") -> None:
+    """A fact only when it has something to say: a total of 0 is left out ("0 of 0" never appears)."""
+    if count:
+        facts.append(InputFact(label=label, value=f"{count}{unit}"))
+
+
+def _first_load_facts(session: Session, feed_id: UUID, facts: list[InputFact]) -> None:
+    """The feed's first scheduled load, from the database only; a fact that does not exist yet is left out."""
+    scheduled = [x for x in LoadRepository(session).list_for_feed(feed_id) if x.purpose == "scheduled"]
+    if not scheduled:
+        return
+    first = scheduled[-1]  # list_for_feed is newest first
+    facts.append(InputFact(label="Load", value=first.status.replace("_", " ")))
+    certification = LoadCertificationRepository(session).for_load(first.id)
+    if certification is not None:
+        facts.append(InputFact(label="Rows loaded", value=str(certification.rows)))
+        facts.append(InputFact(label="Rows flagged", value=str(certification.flagged_rows)))
+        facts.append(InputFact(label="Trust score", value=f"{certification.trust_score:.1f}"))
+        facts.append(InputFact(label="Outcome", value=certification.outcome.replace("_", " ")))
+    product = ProductRepository(session).for_feed(feed_id)
+    if product is not None:
+        facts.append(InputFact(label="Product", value=product.code))
+
+
+def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem]) -> StepInputs | None:
+    """"Inputs it saw" for a step, from the database only: counts, names and flags, never a sample value."""
+    profile = FeedProfileRepository(session).latest(sess.feed_id)
+    if profile is None:
+        return None
+    found: dict[str, Any] = {"row_count": profile.row_count, "column_count": len(profile.columns),
+                             "columns": [c.name for c in profile.columns]}
+    facts: list[InputFact] = []
+    feed_id = sess.feed_id
+    if step == "profile":
+        found["issues"] = profile.issues
+        summary = next((i for i in items if i.kind == "profile_summary"), None)
+        if summary is not None:
+            keys = list(summary.payload.get("key_columns", []))
+            duplicate = summary.payload.get("duplicate_key")
+            found["key_columns"] = keys
+            found["duplicate_key_count"] = duplicate["extra_rows"] if duplicate else (0 if keys else None)
+    elif step in ("glossary", "mapping"):
+        found["candidate_counts"] = _candidate_counts(session, feed_id, step, items, profile)
+        _fact(facts, "Columns asked about" if step == "glossary" else "Columns proposed", len(items))
+    elif step == "transformations":
+        _fact(facts, "Columns cleaned", len(items))
+    if step in ("mapping", "transformations", "rules", "go_live"):
+        _fact(facts, "Mapped columns", len(MappingRepository(session).current_for_feed(feed_id)))
+    if step == "rules":
+        _fact(facts, "Rules proposed", len(items))
+    if step == "go_live":
+        _fact(facts, "Approved rules", len(RuleRepository(session).current_for_feed(feed_id)))
+        _fact(facts, "Transformations", len(TransformationRepository(session).current_for_feed(feed_id)))
+        test = next((x for x in LoadRepository(session).list_for_feed(feed_id) if x.purpose == "go_live_test"), None)
+        if test is not None:
+            rows = StandardRecordRepository(session).count(test.id)
+            facts.append(InputFact(label="Test load",
+                                   value=f"{test.status.replace('_', ' ')}" + (f", {rows} rows" if rows else "")))
+    if step == "first_load":
+        _first_load_facts(session, feed_id, facts)
+    return StepInputs(**found, facts=facts)
+
+
+def workspace(session: Session, *, session_id: UUID, settings: Settings | None = None,
+              step: str | None = None) -> Workspace:
+    """What the screen shows: the nine steps with their states, the viewed step's items (the current step unless
+    `step` names another, which is read only), the job, the agent's notes for the right-hand panel, the model-call
+    count and why Approve & next is disabled, if it is."""
+    settings = settings or Settings(_env_file=None)
+    sessions = OnboardingRepository(session)
+    sess = sessions.get(session_id)
+    feed = FeedRepository(session).get(sess.feed_id)
+    events = sessions.events(session_id)
+    requested = step
+    step = sess.current_step  # Approve & next and the progress line are always about the current step
+    viewed = step if requested is None else requested
+    if viewed not in ONBOARDING_STEPS:
+        raise StepNotEnterable(f"{viewed} is not one of the steps: {', '.join(ONBOARDING_STEPS)}")
+    current_items = _step_items(session, sess, step) if step in STEP_KINDS else []
+    items = current_items if viewed == step else (_step_items(session, sess, viewed) if viewed in STEP_KINDS else [])
+
+    def why_failed(name: str) -> str | None:
+        found = [e for e in events if e.step == name and e.event in ("agent_failed", "call_cap_reached")]
+        return found[-1].detail.get("message") if found else None
+
+    views = []
+    for name in ONBOARDING_STEPS:
+        state = sess.step_states[name]
+        detail = why_failed(name) if state == "failed" else None
+        if name == step and any(i.waiting_for for i in current_items):
+            detail = f"Waits for {SECOND_PERSON}"
+        views.append(StepView(name=name, state=state, detail=detail))
+
+    jobs = OnboardingJobRepository(session)
+    job = jobs.active_for_session(session_id) or (jobs.list_for_session(session_id) or [None])[-1]
+    state = sess.step_states[step]
+    agent = AGENT_NAMES.get(step, "The loader")
+    if state == "agent_working":
+        progress = (f"{agent} is working on {step}." if job is not None and job.status == "running"
+                    else f"{step}: waiting for a worker to start {agent}.")
+    elif state == "failed":
+        progress = why_failed(step)
+    else:
+        progress = None
+
+    notes = []
+    for item in items:
+        call = session.get(ProposalLogEntry, ProposalRepository(session).get(item.proposal_id).proposal_log_id)
+        notes.append(AgentNote(proposal_id=item.proposal_id, agent=call.agent_name, provider=call.provider,
+                               model=call.model, model_version=call.model_version, prompt_id=call.prompt_id,
+                               prompt_version=call.prompt_version, latency_ms=call.latency_ms,
+                               input_ref=call.input_ref, reasoning=item.reason))
+
+    blocking = [i for i in current_items if i.needs_decision]
+    if viewed != step:
+        blocked = "Viewing an earlier step."  # read only: nothing is approved from another step's view
+    elif sess.status == "done":
+        blocked = "This onboarding is finished."
+    elif state not in ("ready", "needs_decision"):
+        blocked = progress or f"{step} is {state}."
+    elif blocking:
+        blocked = f"{len(blocking)} item(s) need a decision first."
+    else:
+        blocked = None
+    key_policy = None
+    if viewed == "transformations" and feed.stage == "registered":
+        key_policy = effective_key_policy(session, feed.id).model_dump(mode="json")
+    registration = FeedRegistrationRepository(session).current(feed.id)
+    return Workspace(session=sess, feed_code=feed.code, steps=views, current_step=step, viewed_step=viewed,
+                     visibility=registration.visibility if registration else None,
+                     inputs=_step_inputs(session, sess, viewed, items), items=items, job=job,
+                     progress=progress, agent_notes=notes, key_policy=key_policy, model_calls=sess.model_calls,
+                     model_call_cap=settings.max_model_calls_per_onboarding, can_approve=blocked is None,
+                     blocked_by=blocked)

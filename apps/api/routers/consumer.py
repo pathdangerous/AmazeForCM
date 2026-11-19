@@ -6,12 +6,19 @@ The endpoint owns the transaction: a request is committed whole or rolled back w
 
 from __future__ import annotations
 
+import csv
+import tempfile
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
+from openpyxl.styles import Font
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.orm import Session
 
@@ -28,6 +35,7 @@ from apps.api.deps import (
     get_intent_agent,
     get_request_notifier,
     get_source_catalogue,
+    current_user,
     get_source_discovery_agent,
     requester_user,
 )
@@ -40,6 +48,9 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.steps.errors import StepInputError
 from core.steps.known_source import KnownSourceResult, find_known_source
+from core.steps.product_page import (
+    DomainGroup, NoData, NotEntitled, Preview, ProductNotFound, ProductPage, catalogue, export_rows, preview,
+    product_page)
 from core.steps.release import Released, release_source
 from core.steps.request_data import RequestResult, request_data
 from core.steps.requirement_page import RequirementPage, approval_missing_message, requirement_page
@@ -180,6 +191,109 @@ def my_request(request_id: UUID, session: DbSession, user: Requester) -> Request
     except ConsumerRequestNotFound:
         raise HTTPException(status_code=404, detail="Request not found") from None
     return _summaries(session, [request])[0]
+
+
+# ---- phase 7.8, task 7.1: the catalogue, a product's page, its preview and its downloads (GETs, any signed-in user)
+
+AnyUser = Annotated[User, Depends(current_user)]
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CHUNK = 64 * 1024
+SPOOL = 8 * 1024 * 1024  # a download is held in memory up to this size, then in a temporary file
+
+
+@router.get("/catalogue", response_model=list[DomainGroup])
+def product_catalogue(session: DbSession, user: AnyUser, identity: IdentityPort) -> list[DomainGroup]:
+    return catalogue(session, user=user, identity=identity)
+
+
+def _refuse(result) -> None:
+    """The typed non-answers of product_page as HTTP: not found and no data are 404, not entitled is 403."""
+    if isinstance(result, ProductNotFound):
+        raise HTTPException(status_code=404, detail="Product not found")
+    if isinstance(result, NotEntitled):
+        raise HTTPException(status_code=403, detail={"outcome": "not_entitled", "route": result.route})
+    if isinstance(result, NoData):
+        raise HTTPException(status_code=404, detail={"outcome": "no_data"})
+
+
+@router.get("/products/{code}", response_model=ProductPage)
+def product_detail(code: str, session: DbSession, user: AnyUser, identity: IdentityPort) -> ProductPage:
+    page = product_page(session, code=code, user=user, identity=identity)
+    _refuse(page)
+    return page
+
+
+@router.get("/products/{code}/preview", response_model=Preview)
+def product_preview(code: str, session: DbSession, user: AnyUser, identity: IdentityPort) -> Preview:
+    result = preview(session, code=code, user=user, identity=identity)
+    _refuse(result)
+    return result
+
+
+def _download(content: tempfile.SpooledTemporaryFile, media_type: str, filename: str) -> StreamingResponse:
+    """The file was written inside the request (the session is closed once it ends); it is sent in chunks."""
+    content.seek(0)
+
+    def chunks():
+        try:
+            while block := content.read(CHUNK):
+                yield block
+        finally:
+            content.close()
+
+    return StreamingResponse(chunks(), media_type=media_type,
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/products/{code}/download.csv")
+def download_csv(code: str, session: DbSession, user: AnyUser, identity: IdentityPort) -> StreamingResponse:
+    export = export_rows(session, code=code, user=user, identity=identity)
+    _refuse(export)
+    out = tempfile.SpooledTemporaryFile(max_size=SPOOL, mode="w+", encoding="utf-8", newline="")
+    writer = csv.writer(out)
+    writer.writerow(export.columns)
+    for row in export.rows:
+        writer.writerow(["" if v is None else v for v in row])
+    return _download(out, "text/csv; charset=utf-8", f"{code}.csv")
+
+
+def _typed(value: Any, data_type: str) -> Any:
+    """A JSON value as a spreadsheet cell: numbers as numbers, dates as dates; anything else as it is."""
+    if value is None or not isinstance(value, str):
+        return value
+    try:
+        if data_type == "decimal":
+            return Decimal(value)
+        if data_type == "date":
+            return date.fromisoformat(value)
+        if data_type == "datetime":
+            return datetime.fromisoformat(value)
+        if data_type == "integer":
+            return int(value)
+    except ValueError:
+        pass
+    return value
+
+
+@router.get("/products/{code}/download.xlsx")
+def download_xlsx(code: str, session: DbSession, user: AnyUser, identity: IdentityPort) -> StreamingResponse:
+    export = export_rows(session, code=code, user=user, identity=identity)
+    _refuse(export)
+    workbook = Workbook(write_only=True)
+    sheet = workbook.create_sheet(title=code[:31])
+    bold = Font(bold=True)
+    sheet.append([_bold(sheet, label, bold) for label in export.columns])
+    for row in export.rows:
+        sheet.append([_typed(v, t) for v, t in zip(row, export.data_types, strict=True)])
+    out = tempfile.SpooledTemporaryFile(max_size=SPOOL)
+    workbook.save(out)
+    return _download(out, XLSX, f"{code}.xlsx")
+
+
+def _bold(sheet, value: str, font: Font) -> WriteOnlyCell:
+    cell = WriteOnlyCell(sheet, value=value)
+    cell.font = font
+    return cell
 
 
 # ---- phase 3a: the custom data product (requirement page, Find a source)

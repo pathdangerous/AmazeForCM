@@ -229,6 +229,84 @@ def test_the_seed_needs_no_option(s):
     s.execute(text(ROW), element_row(None, key="seed_probe", by="seed"))
 
 
+# ---------------------------------------------------------------- 0025: the unit is compared too
+
+ROW_UNIT = ("INSERT INTO glossary_elements (key, version, name, domain, data_type, definition, aliases, unit, "
+            "created_by, proposal_id) VALUES (:key, :version, :name, :domain, :data_type, :definition, :aliases, "
+            ":unit, :by, :p)")
+
+
+def unit_option(key="best_pe_probe", unit="times"):
+    from core.domain.glossary import GlossaryElementDraft
+    from core.domain.mapping import ElementOption
+
+    return ElementOption(kind="new_element", key=key, element=GlossaryElementDraft(
+        key=key, name="Best PE probe", domain="estimates", data_type="decimal", definition="Synthetic definition.",
+        unit=unit))
+
+
+def unit_row(proposal_id, **more):
+    return {"key": "best_pe_probe", "version": 1, "name": "Best PE probe", "domain": "estimates",
+            "data_type": "decimal", "definition": "Synthetic definition.", "aliases": [], "unit": "times",
+            "by": GLENN, "p": proposal_id, **more}
+
+
+def test_an_element_with_its_options_unit_is_accepted(s):
+    proposal = glossary_proposal(s, [unit_option()], decision="approved")
+    s.execute(text(ROW_UNIT), unit_row(proposal.id))
+
+
+@pytest.mark.parametrize("unit", [None, "percent", "Times"])
+def test_an_element_whose_unit_differs_from_its_option_is_refused(s, unit):
+    proposal = glossary_proposal(s, [unit_option()], decision="approved")
+    answered_by(s, "is none of the options of proposal", ROW_UNIT, unit_row(proposal.id, unit=unit), NONE_OF)
+
+
+def test_an_option_with_no_unit_refuses_an_element_that_has_one(s):
+    proposal = glossary_proposal(s, [unit_option(unit=None)], decision="approved")
+    s.execute(text(ROW_UNIT), unit_row(proposal.id, unit=None))
+    other = glossary_proposal(s, [unit_option("best_pe_probe_b", unit=None)], decision="approved")
+    answered_by(s, "is none of the options of proposal", ROW_UNIT,
+                unit_row(other.id, key="best_pe_probe_b", name="Best PE probe", unit="times"), NONE_OF)
+
+
+def test_an_older_option_with_no_unit_key_reads_as_no_unit(s, feed, approved_proposal):
+    """An option written before 0025 has no unit key in its element: it means NULL."""
+    element = {"key": "best_old_probe", "name": "Best old probe", "domain": "estimates", "data_type": "decimal",
+               "definition": "Synthetic definition.", "aliases": []}
+    old = approved_proposal(kind="glossary_element", roles=("glossary_owner",), feed_id=feed, payload={
+        "source_field": "OLD_PROBE", "options": [{"kind": "new_element", "key": "best_old_probe", "alias": None,
+                                                  "element": element}]})
+    params = unit_row(old.id, key="best_old_probe", name="Best old probe", unit="times")
+    answered_by(s, "is none of the options of proposal", ROW_UNIT, params, NONE_OF)
+    s.execute(text(ROW_UNIT), {**params, "unit": None})
+
+
+def test_a_blank_unit_is_refused(s, feed, approved_proposal):
+    element = {"key": "best_blank_probe", "name": "Best blank probe", "domain": "estimates", "data_type": "decimal",
+               "definition": "Synthetic definition.", "aliases": [], "unit": "  "}
+    blank = approved_proposal(kind="glossary_element", roles=("glossary_owner",), feed_id=feed, payload={
+        "source_field": "BLANK_PROBE", "options": [{"kind": "new_element", "key": "best_blank_probe", "alias": None,
+                                                    "element": element}]})
+    answered_by(s, "ck_glossary_elements_unit", ROW_UNIT,
+                unit_row(blank.id, key="best_blank_probe", name="Best blank probe", unit="  "),
+                "ALTER TABLE glossary_elements DROP CONSTRAINT ck_glossary_elements_unit")
+
+
+def test_an_alias_row_keeps_the_last_versions_unit(s):
+    from tests.configured import approved_element
+
+    approved_element(s, unit_option("best_alias_probe", "percent"))
+    last = GlossaryRepository(s).get_current("best_alias_probe")
+    assert last.unit == "percent"
+    proposal = glossary_proposal(s, [alias("best_alias_probe", "alias_probe")], decision="approved")
+    row = unit_row(proposal.id, key="best_alias_probe", version=2, name=last.name, unit="percent",
+                   aliases=["alias_probe"])
+    for wrong in (None, "times"):
+        answered_by(s, "is none of the options of proposal", ROW_UNIT, {**row, "unit": wrong}, NONE_OF)
+    s.execute(text(ROW_UNIT), row)
+
+
 SEED_ONLY_NEW = _branch_off("amaze_require_glossary_option",
                             "glossary element % version %: a seed row is version 1 of a new key, with no proposal")
 
@@ -463,6 +541,8 @@ def test_the_payload_shape_the_guards_read_is_the_domain_models(s, feed):
     """The guards read options[].element and candidates as the domain models dump them."""
     proposal = glossary_proposal(s, [new_element("score_year", name="Score year", data_type="integer")])
     stored = s.execute(text("SELECT payload FROM proposals WHERE id = :id"), {"id": proposal.id}).scalar_one()
-    assert set(stored["options"][0]["element"]) == {"key", "name", "domain", "data_type", "definition", "aliases"}
+    # old: without "unit" (0025 adds it to the element the guard reads)
+    assert set(stored["options"][0]["element"]) == {"key", "name", "domain", "data_type", "definition", "aliases",
+                                                    "unit"}
     assert json.loads(json.dumps(stored["options"][0]["element"]["aliases"])) == []
     assert uuid.UUID(stored["run_id"])

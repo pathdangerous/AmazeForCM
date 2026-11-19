@@ -8,13 +8,18 @@ registered is linked to it at once (duplicate_linked): nothing is fetched, profi
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from core.repositories.errors import (
+    FeedHasProduct,
     FeedNotACandidate,
     FeedNotRegistered,
     FeedNotSignedOff,
+    NotAnApprover,
     RequirementNotInStatus,
 )
 from core.repositories.feed_registrations import FeedRegistrationRepository
@@ -23,7 +28,14 @@ from core.repositories.notifications import NotificationRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.steps.known_source import find_known_source
-from core.steps.s04_register import DuplicateLinked, NoOwner, Registered, link_to_registered_feed, register_feed
+from core.steps.s04_register import (
+    DuplicateLinked,
+    NoOwner,
+    Registered,
+    link_to_registered_feed,
+    register_feed,
+    revise_visibility,
+)
 from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.identity.dev import DevIdentity
 from ports.notify.inapp import InAppNotifier
@@ -139,6 +151,105 @@ def test_a_registered_feed_is_not_registered_again(db_session, volumes, glossary
     register(db_session, feed)
     with pytest.raises(FeedNotACandidate):
         register(db_session, feed)
+
+
+OWNER = dev_user_for("data_owner")  # the owner register() names
+OTHER_OWNER = DevIdentity().get_user("dev-operator")  # holds data_owner too, but is not this feed's owner
+
+
+def _revise(db_session, feed, visibility, user=OWNER):
+    return revise_visibility(db_session, feed_id=feed.id, user=user, visibility=visibility)
+
+
+@pytest.mark.parametrize("user", [OTHER_OWNER, BACKEND], ids=["another_data_owner", "backend_team"])
+@pytest.mark.parametrize("visibility", ["restricted", "open"], ids=["different", "same"])
+def test_only_the_registered_owner_revises_the_visibility(db_session, volumes, user, visibility):
+    """Task T0b: a non-owner is refused with NotAnApprover, also with the same visibility; nothing is written."""
+    _, feed = volumes
+    signed_off(db_session, feed.id)
+    register(db_session, feed)
+    with pytest.raises(NotAnApprover):
+        _revise(db_session, feed, visibility, user=user)
+    count = db_session.scalar(text("SELECT count(*) FROM feed_registrations WHERE feed_id = :f"), {"f": feed.id})
+    assert count == 1
+
+
+def test_a_registered_feeds_visibility_is_revised_by_a_next_registration_version(db_session, volumes):
+    """Phase 7.8, task 7.3a: visibility is chosen at go-live; only visibility differs from version 1."""
+    _, feed = volumes
+    signed_off(db_session, feed.id)
+    first = register(db_session, feed).registration
+    revised = _revise(db_session, feed, "restricted")
+    assert isinstance(revised, Registered) and revised.feed.stage == "registered"
+    row = revised.registration
+    assert (row.version, row.visibility) == (2, "restricted")
+    assert (row.owner_id, row.licence, row.permitted_use, row.redistribution, row.signoff_id) == (
+        first.owner_id, first.licence, first.permitted_use, first.redistribution, first.signoff_id)
+    assert FeedRegistrationRepository(db_session).current(feed.id) == row
+
+
+def test_the_same_visibility_writes_no_registration(db_session, volumes):
+    _, feed = volumes
+    signed_off(db_session, feed.id)
+    first = register(db_session, feed).registration
+    again = _revise(db_session, feed, "open")
+    assert again.registration == first
+    count = db_session.scalar(text("SELECT count(*) FROM feed_registrations WHERE feed_id = :f"), {"f": feed.id})
+    assert count == 1
+
+
+def test_a_candidate_feed_has_no_visibility_to_revise(db_session, volumes):
+    _, feed = volumes
+    with pytest.raises(FeedNotRegistered):
+        _revise(db_session, feed, "restricted")
+
+
+def _next_registration(db_session, feed, **over):
+    """A registration version 2 that copies version 1 except for `over`, through the repository."""
+    first = FeedRegistrationRepository(db_session).current(feed.id)
+    fields = dict(feed_id=feed.id, signoff_id=first.signoff_id, owner_id=first.owner_id, licence=first.licence,
+                  permitted_use=first.permitted_use, redistribution=first.redistribution,
+                  visibility="restricted", registered_by="dev-backend-team") | over
+    return FeedRegistrationRepository(db_session).add_version(**fields)
+
+
+def test_the_database_allows_only_a_visibility_revision_before_a_product_exists(db_session, volumes):
+    _, feed = volumes
+    signed_off(db_session, feed.id)
+    register(db_session, feed)
+    refusal = "only a candidate feed is registered"
+    for over in ({"owner_id": "dev-checker"}, {"licence": "Another licence"}, {"permitted_use": "Anything"},
+                 {"redistribution": "Allowed"}, {"visibility": "open"}):
+        with pytest.raises(DBAPIError, match=refusal):
+            with db_session.begin_nested():
+                _next_registration(db_session, feed, **over)
+    assert _next_registration(db_session, feed).version == 2
+
+
+def test_the_database_refuses_a_revision_on_another_signoff(db_session, volumes):
+    _, feed = volumes
+    signed_off(db_session, feed.id)
+    register(db_session, feed)
+    with pytest.raises(DBAPIError, match="is not the latest sign-off|only a candidate feed is registered"):
+        with db_session.begin_nested():
+            _next_registration(db_session, feed, signoff_id=uuid.uuid4())
+
+
+def test_the_database_refuses_a_revision_once_the_feed_has_a_product(db_session, volumes):
+    from core.repositories.products import ProductRepository
+    from tests.configured import released_load
+
+    _, feed = volumes
+    signed_off(db_session, feed.id)
+    register(db_session, feed)
+    released_load(db_session, feed.id)
+    ProductRepository(db_session).create(code="demo_revision_probe", name="Probe", domain="pricing", feed_id=feed.id,
+                                         owner_id="dev-data-owner", visibility="open", element_keys=["volume"])
+    with pytest.raises(DBAPIError, match="only a candidate feed is registered"):
+        with db_session.begin_nested():
+            _next_registration(db_session, feed)
+    with pytest.raises(FeedHasProduct):
+        _revise(db_session, feed, "restricted")
 
 
 def test_duplicate_linked_when_the_selected_source_is_already_a_registered_feed(db_session, volumes):

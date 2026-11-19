@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -27,6 +28,7 @@ from core.domain.go_live import GoLive
 from core.domain.load import STAGES, Load, LoadStageDraft, StandardRecordDraft
 from core.domain.mapping import ElementOption, GlossaryProposalPayload, MappingProposalPayload
 from core.domain.proposal import Proposal
+from core.domain.transformation import Transformation
 from core.proposal_log import ProposalLog
 from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.configuration import MappingRepository, RuleRepository
@@ -36,6 +38,7 @@ from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.standard_records import StandardRecordRepository
+from core.repositories.transformations import TransformationRepository
 from tests.conftest import dev_user_for
 from tests.onboarded import registered_feed
 
@@ -127,6 +130,37 @@ def approved_rule(session, feed_id: UUID, rule_key: str = "close_price_present",
                                                description=description, proposal_id=proposal.id)
 
 
+# ---------------------------------------------------------------- transformations (phase 7.8, migration 0023)
+
+
+def transformation_proposal(session, feed_id: UUID, source_field: str, steps: Any, *,
+                            decision: str | None = None, payload: dict | None = None,
+                            register: bool = True) -> Proposal:
+    """A transformation proposal of the real shape on a logged call; pending unless decision is given
+    ('approved' or 'rejected', by the dev data steward). `steps` is written as given (malformed cases);
+    `payload` replaces the whole payload. register=False leaves a candidate feed a candidate."""
+    if register:
+        registered(session, feed_id)
+    repo = ProposalRepository(session)
+    body = payload if payload is not None else {"source_field": source_field, "steps": steps,
+                                                "reason": "Synthetic reason."}
+    proposal = repo.create(proposal_log_id=logged_call(session, "TransformationAgent", "transformation").id,
+                           kind="transformation", payload=body, autonomy="A2",
+                           required_approver_roles=["data_steward"], feed_id=feed_id)
+    if decision is not None:
+        repo.record_decision(proposal.id, user=dev_user_for("data_steward"), decision=decision,
+                             note="Synthetic reason." if decision == "rejected" else None)
+    return repo.get(proposal.id)
+
+
+def approved_transformation(session, feed_id: UUID, source_field: str, steps: Sequence[dict]) -> Transformation:
+    """The column's next transformation version: a proposal of exactly these steps, approved, written. The column
+    must already be mapped (approved_mapping())."""
+    proposal = transformation_proposal(session, feed_id, source_field, steps, decision="approved")
+    return TransformationRepository(session).add_version(feed_id=feed_id, source_field=source_field, steps=steps,
+                                                         proposal_id=proposal.id, created_by="dev-data-steward")
+
+
 # ---------------------------------------------------------------- loads and go-lives (phase 6, migration 0018)
 
 
@@ -204,17 +238,19 @@ def go_live(session, feed_id: UUID, *, owner: str = "dev-data-owner", hypercare_
     registered(session, feed_id)
     mappings = [m.id for m in MappingRepository(session).current_for_feed(feed_id)]
     rules = [r.id for r in RuleRepository(session).current_for_feed(feed_id)]
+    transformations = [t.id for t in TransformationRepository(session).current_for_feed(feed_id)]
     test_load = a_load(session, feed_id, "loaded")
     repo = ProposalRepository(session)
     proposal = repo.create(
         proposal_log_id=logged_call(session, "ReviewSummariserAgent", "review_summariser").id,
         kind="review_summary", autonomy="A1", required_approver_roles=["data_owner"], feed_id=feed_id,
         payload={"mapping_ids": [str(i) for i in mappings], "rule_ids": [str(i) for i in rules],
-                 "test_load_id": str(test_load.id), "summary": "Synthetic.", "highlights": [], "risks": []})
+                 "transformation_ids": [str(i) for i in transformations], "test_load_id": str(test_load.id), "summary": "Synthetic.", "highlights": [], "risks": []})
     repo.record_decision(proposal.id, user=dev_user_for("data_owner"), decision="approved")
     return GoLiveRepository(session).add_version(
         feed_id=feed_id, proposal_id=proposal.id, approved_by=owner, mapping_ids=mappings, rule_ids=rules,
-        test_load_id=test_load.id, hypercare_until=date.today() + timedelta(days=hypercare_days))
+        test_load_id=test_load.id, hypercare_until=date.today() + timedelta(days=hypercare_days),
+        transformation_ids=transformations)
 
 
 # ---------------------------------------------------------------- glossary elements

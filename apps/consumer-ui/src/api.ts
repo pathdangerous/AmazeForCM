@@ -151,6 +151,72 @@ export type StepResponse = {
 export type Suggestion = { term: string; element_key: string; element_name: string; reason: string; products: Hit[] };
 export type Assistance = { log_id: string | null; suggestions: Suggestion[] };
 
+// ---- phase 7.8, task 7.4: the catalogue and a product's page (core/steps/product_page.py)
+
+export type Freshness = { released_at: string; rows: number };
+export type CatalogueProduct = {
+  code: string; name: string; description: string; owner_id: string; owner_name: string; visibility: string;
+  freshness: Freshness | null; access: "entitled" | "not_entitled_visible"; route: string | null;
+};
+export type DomainGroup = { domain: string; label: string; products: CatalogueProduct[] };
+export type DictionaryRow = {
+  element_key: string; name: string; definition: string; data_type: string; unit: string | null; label: string;
+};
+export type ProductPage = {
+  outcome: "product_page"; code: string; name: string; description: string; domain: string; domain_label: string;
+  owner: { id: string; name: string }; visibility: string; access: "entitled" | "not_entitled_visible";
+  route: string | null; freshness: Freshness | null; columns: string[]; dictionary: DictionaryRow[];
+};
+export type ProductPreview = { outcome: "preview"; columns: string[]; rows: unknown[][] };
+
+export const productPath = (code: string, tail = "") => `/api/consumer/products/${encodeURIComponent(code)}${tail}`;
+export const catalogue = (devUser: string) => apiGet<DomainGroup[]>("/api/consumer/catalogue", devUser);
+
+// The typed refusals of the product endpoints: 403 {outcome: "not_entitled", route}, 404 {outcome: "no_data"}.
+export type ProductRefusal = { kind: "not_entitled"; route: string } | { kind: "no_data" };
+
+export class ProductRefused extends Error {
+  refusal: ProductRefusal;
+  constructor(refusal: ProductRefusal) {
+    super(refusal.kind);
+    this.refusal = refusal;
+  }
+}
+
+async function productFetch(path: string, devUser: string): Promise<Response> {
+  const response = await fetch(path, { headers: headersFor(devUser) });
+  if (response.ok) return response;
+  let detail: unknown;
+  try {
+    detail = ((await response.clone().json()) as { detail?: unknown }).detail;
+  } catch {
+    detail = undefined;
+  }
+  const typed = (detail ?? {}) as { outcome?: string; route?: string };
+  if (response.status === 403 && typed.outcome === "not_entitled") {
+    throw new ProductRefused({ kind: "not_entitled", route: typed.route ?? "" });
+  }
+  if (response.status === 404 && typed.outcome === "no_data") throw new ProductRefused({ kind: "no_data" });
+  throw await failure(path, response);
+}
+
+export async function productGet<T>(path: string, devUser: string): Promise<T> {
+  return (await (await productFetch(path, devUser)).json()) as T;
+}
+
+// A download needs the dev-user header, which a plain link cannot send: fetch, then save the Blob.
+export async function downloadProduct(code: string, kind: "csv" | "xlsx", devUser: string): Promise<void> {
+  const blob = await (await productFetch(productPath(code, `/download.${kind}`), devUser)).blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${code}.${kind}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {

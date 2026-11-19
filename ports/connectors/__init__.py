@@ -2,7 +2,8 @@
 
 get_connector() builds a new connector for one fetch; the caller closes it (a `with` block).
 - local_file reads under the catalogue's folder (SOURCE_CATALOGUE's parent);
-- http reaches only SOURCE_HTTP_ALLOWED_HOSTS (this machine until the Azure move).
+- http reaches only SOURCE_HTTP_ALLOWED_HOSTS (this machine until the Azure move);
+- dropzone reads the newest file of an uploaded feed's drop folder under DROPZONE_ROOT.
 """
 
 from __future__ import annotations
@@ -27,4 +28,8 @@ def get_connector(name: str, settings: Settings | None = None) -> SourceConnecto
         from ports.connectors.http import HttpConnector
 
         return HttpConnector(allowed_hosts=settings.allowed_source_hosts())
-    raise UnknownConnector(f"No connector {name!r}; use local_file or http")
+    if name == "dropzone":
+        from ports.connectors.dropzone import DropzoneConnector
+
+        return DropzoneConnector(settings.dropzone_root)
+    raise UnknownConnector(f"No connector {name!r}; use local_file, http or dropzone")

@@ -105,7 +105,11 @@ fixtures/                 Synthetic feeds, sample files, glossary seed, gold map
                           sources/: the synthetic source catalogue and its files (codes start with syn_)
                           e2e/: the file the Playwright story swaps in for its held delivery
 e2e/                      The Playwright story (phase 7): prepare.py rebuilds schema e2e_story of amaze_test,
-                          serve_api.py serves it (DAILY_JOB_ENABLED=false), tests/poc_story.spec.ts is the test
+                          serve_api.py serves it (DAILY_JOB_ENABLED=false, mock provider, own drop folder,
+                          REQUIRE_FOUR_EYES from the environment, false by default), tests/poc_story.spec.ts is the
+                          test (run with REQUIRE_FOUR_EYES=true). Phase 7.8: tests/operator_story.spec.ts (one
+                          operator, upload to download) and screens/workspace.spec.ts (its shots, config
+                          playwright.workspace.config.ts) share one path, operator_flow.ts
 tests/
 ```
 
@@ -173,12 +177,14 @@ Implement these as typed results in `core/steps/`. Names in `snake_case`.
 - **01 Define requirement**: `defined`, `element_not_in_glossary`
 - **Known source?**: `known_source` → 02, `no_known_source` → S1
 - **S1–S4**: `scoped`, `scope_not_confirmed`; `sources_listed`, `no_fit`; `source_picked`, `approval_missing`; `fetched`, `source_down`
+- **00 Intake (phase 7.8, an uploaded file)**: `inspected`, `uploaded`, `table_extracted`; `too_large`, `unsupported_format`, `not_a_table`, `needs_image_extraction`
 - **02 Profile**: `profiled`, `spec_only_low_confidence`
 - **03 Sign off**: `meets`, `meets_with_gaps`, `rejected` (reasons kept, requester told)
 - **04 Register**: `registered`, `duplicate_linked`, `no_owner`
 - **05 Glossary**: `proposed`, `duplicate_alias`, `conflict_to_owner`
 - **06 Map**: `mapped`, `tie_to_steward`, `no_element_back_to_05`
 - **09 Validation**: `rules_proposed`, `flags_most_history_returned`
+- **10 Transform (phase 7.8)**: `transforms_proposed`, `nothing_to_transform` (the steward's decision; the engine applies approved transformations, no model call)
 - **11 Approve**: `approved_scheduled`, `rejected_back_to_step`, `test_failed_held`
 - **12 Arrival and structure**: `on_time_complete`, `late_alert`, `resent_quarantined`, `additive_parked`, `breaking_held`
 - **13 Run**: `stage_completed` per stage, `failed_rolled_back`

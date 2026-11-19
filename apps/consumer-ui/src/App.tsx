@@ -2,6 +2,8 @@ import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, describeError, type User } from "./api";
 import NotificationsView, { useInbox } from "./views/NotificationsView";
+import CatalogueView from "./views/CatalogueView";
+import ProductView from "./views/ProductView";
 import RequestsView from "./views/RequestsView";
 import RequirementView from "./views/RequirementView";
 import SearchView from "./views/SearchView";
@@ -12,12 +14,15 @@ const STORAGE_KEY = "amaze.consumer-ui.devUser";
 
 // Views, chosen by the URL hash (#/search). No router library (phase 2 plan, decision 16).
 // Phase 3 adds #/requirement/<id>, reached from My requests and after a raise; it is not in the nav.
-const VIEWS = { search: "Search", requests: "My requests", notifications: "Notifications" } as const;
+const VIEWS = { search: "Search", catalogue: "Catalogue", requests: "My requests",
+                notifications: "Notifications" } as const;
 type View = keyof typeof VIEWS;
-type Route = { view: View } | { view: "requirement"; id: string };
+type Route = { view: View } | { view: "requirement"; id: string } | { view: "product"; code: string };
 
 function routeFromHash(): Route {
   const path = window.location.hash.replace(/^#\/?/, "");
+  const product = /^product\/([A-Za-z0-9_.-]+)$/.exec(path);
+  if (product) return { view: "product", code: product[1] };
   const requirement = /^requirement\/([0-9a-f-]{36})$/.exec(path);
   if (requirement) return { view: "requirement", id: requirement[1] };
   return { view: path in VIEWS ? (path as View) : "search" };
@@ -110,7 +115,9 @@ export default function App() {
       <main className="app-main">
         <div className="app-panel">
         {route.view === "search" && <SearchView devUser={devUser} />}
-        {route.view === "requests" && <RequestsView key={devUser} devUser={devUser} />}
+        {route.view === "catalogue" && <CatalogueView key={devUser} devUser={devUser} />}
+        {route.view === "product" && <ProductView key={`${devUser}-${route.code}`} devUser={devUser} code={route.code} />}
+        {route.view === "requests" &&<RequestsView key={devUser} devUser={devUser} />}
         {route.view === "notifications" && (
           <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />
         )}

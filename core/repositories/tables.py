@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import (
     ARRAY,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -36,6 +37,7 @@ from core.domain.feed import CONNECTORS, FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.load import ARRIVAL_OUTCOMES, CERTIFICATION_OUTCOMES, LOAD_STATUSES
 from core.domain.mapping import GLOSSARY_RUN_REASONS, GLOSSARY_RUN_STATUSES
+from core.domain.onboarding import EVENT_NAMES, JOB_STATUSES, ONBOARDING_STEPS, SESSION_STATUSES
 from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
@@ -103,9 +105,13 @@ class ProposalRow(Base):
         CheckConstraint(
             f"required_approver_roles <@ ARRAY[{', '.join(repr(r) for r in ROLES)}]::text[]", name="known_roles"
         ),
-        CheckConstraint("status IN ('pending', 'approved', 'rejected')", name="status"),
+        CheckConstraint("status IN ('pending', 'approved', 'rejected', 'superseded')", name="status"),  # 0024
         CheckConstraint("(status = 'pending') = (decided_at IS NULL)", name="decided_at_matches_status"),
         Index("ix_proposals_status", "status"),
+        # 0024: an edit is a new row that names the row it replaces and who edited it, both or neither
+        CheckConstraint("(edited_from IS NULL) = (edited_by IS NULL)", name="edited_from_and_by_together"),
+        CheckConstraint("edited_by IS NULL OR length(btrim(edited_by)) > 0", name="edited_by"),
+        Index("uq_proposals_edited_from", "edited_from", unique=True, postgresql_where=text("edited_from IS NOT NULL")),
         # 0016, 0017: these kinds have a feed and name their column (a non-blank JSON string); one pending
         # proposal of them per feed and column
         CheckConstraint("kind NOT IN ('glossary_element', 'mapping') "
@@ -126,6 +132,14 @@ class ProposalRow(Base):
               unique=True, postgresql_where=text("status = 'pending' AND kind = 'rule'")),
         Index("uq_proposals_one_pending_review_summary_per_feed", "feed_id", unique=True,
               postgresql_where=text("status = 'pending' AND kind = 'review_summary'")),
+        # 0023: a transformation proposal has a feed and names its column; one pending per feed and column
+        CheckConstraint("kind <> 'transformation' "
+                        "OR (feed_id IS NOT NULL "
+                        "AND COALESCE(jsonb_typeof(payload -> 'source_field') = 'string', false) "
+                        "AND length(btrim(payload ->> 'source_field')) > 0)", name="names_a_transformation"),
+        Index("uq_proposals_one_pending_transformation_per_feed_column", "feed_id",
+              text("(payload ->> 'source_field')"), unique=True,
+              postgresql_where=text("status = 'pending' AND kind = 'transformation'")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -139,6 +153,8 @@ class ProposalRow(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
     feed_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feeds.id"))
+    edited_from: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))  # 0024
+    edited_by: Mapped[str | None] = mapped_column(Text)  # 0024
 
 
 class ApprovalRow(Base):
@@ -147,7 +163,7 @@ class ApprovalRow(Base):
     __tablename__ = "approvals"
     __table_args__ = (
         UniqueConstraint("proposal_id", "step"),
-        UniqueConstraint("proposal_id", "decided_by"),
+        # one person, one step: from 0020 a trigger reads amaze_settings (amaze_approvals_four_eyes), not a constraint
         CheckConstraint("step >= 1", name="step"),
         CheckConstraint(_in("role", ROLES), name="role"),
         CheckConstraint("length(btrim(decided_by)) > 0", name="decided_by"),
@@ -175,6 +191,7 @@ class GlossaryElementRow(Base):
         CheckConstraint("version >= 1", name="version"),
         CheckConstraint(_in("data_type", DATA_TYPES), name="data_type"),
         CheckConstraint("length(btrim(name)) > 0 AND length(btrim(definition)) > 0", name="text_present"),
+        CheckConstraint("unit IS NULL OR length(btrim(unit)) > 0", name="unit"),  # 0025
         # Rule 1: only the seed may create an element without an approved proposal.
         CheckConstraint("(proposal_id IS NULL) = (created_by = 'seed')", name="proposal_unless_seed"),
         Index("uq_glossary_elements_proposal_id", "proposal_id", unique=True,
@@ -190,6 +207,7 @@ class GlossaryElementRow(Base):
     data_type: Mapped[str] = mapped_column(Text)
     definition: Mapped[str] = mapped_column(Text)
     aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
+    unit: Mapped[str | None] = mapped_column(Text)  # 0025
     created_by: Mapped[str] = mapped_column(Text)
     proposal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))
 
@@ -555,6 +573,53 @@ class RuleRow(Base):
     proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
 
 
+class TransformationRow(Base):
+    """The approved safe steps for one mapped column of a feed (phase 7.8, assumption 28). Append-only. Migration
+    0023: a row matches its approved transformation proposal, and the JSON holds only the fixed set of steps."""
+
+    __tablename__ = "transformations"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "source_field", "version"),
+        CheckConstraint("length(btrim(source_field)) > 0", name="source_field"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("length(btrim(created_by)) > 0", name="created_by"),
+        CheckConstraint("amaze_valid_transform_steps(steps)", name="steps"),
+        Index("uq_transformations_proposal_id", "proposal_id", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    source_field: Mapped[str] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer)
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+    created_by: Mapped[str] = mapped_column(Text)
+
+
+class FeedKeyPolicyRow(Base):
+    """What a load does with duplicated key rows, versioned per feed (phase 7.8, assumption 29). Append-only."""
+
+    __tablename__ = "feed_key_policies"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "version"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("policy IN ('hold', 'keep_last', 'flag')", name="policy"),
+        CheckConstraint("amaze_valid_key_columns(key_columns)", name="key_columns"),
+        CheckConstraint("length(btrim(set_by)) > 0", name="set_by"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    policy: Mapped[str] = mapped_column(Text)
+    key_columns: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    set_by: Mapped[str] = mapped_column(Text)
+    set_at: Mapped[datetime] = _created_at(clock=True)
+    reason: Mapped[str] = mapped_column(Text)
+
+
 class LoadRow(Base):
     """One delivery of a registered feed (steps 12 to 15). Operational state: its status moves once, from
     received to loaded or failed_rolled_back, with its proof (migration 0018, trg_loads_a_status); a loaded
@@ -640,6 +705,9 @@ class FeedGoLiveRow(Base):
     approved_by: Mapped[str] = mapped_column(Text)
     mapping_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
     rule_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    # 0023: the feed's current transformations; the guard compares them with the feed's (task 4.2 writes them)
+    transformation_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid), default=list,
+                                                                server_default=text("'{}'::uuid[]"))
     test_load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
     hypercare_until: Mapped[date] = mapped_column(Date)
 
@@ -778,3 +846,138 @@ class ConsumerRequestRow(Base):
     product_codes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
     result: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class UploadSourceRow(Base):
+    """The source an uploaded file is (migration 0021; phase 7.8, task 2.4): one per feed, append-only, and the
+    feed must read this code through the dropzone (trigger amaze_guard_upload_source)."""
+
+    __tablename__ = "upload_sources"
+    __table_args__ = (
+        UniqueConstraint("code"),
+        UniqueConstraint("feed_id"),
+        CheckConstraint("code ~ '^upl_[a-z][a-z0-9_]*$'", name="code_format"),
+        *(CheckConstraint(f"length(btrim({column})) > 0", name=column)
+          for column in ("name", "provider", "description", "licence", "permitted_use", "redistribution",
+                         "original_name", "original_ref", "manifest_ref", "created_by")),
+        CheckConstraint("jsonb_typeof(manifest) = 'object'", name="manifest"),
+        CheckConstraint(
+            "COALESCE(jsonb_typeof(intake_options) = 'object' "
+            "AND jsonb_typeof(intake_options -> 'sheet') IN ('string', 'null') "
+            "AND jsonb_typeof(intake_options -> 'header_row') = 'number' "
+            "AND (intake_options ->> 'header_row') ~ '^[1-9][0-9]*$', false)", name="intake_options"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    code: Mapped[str] = mapped_column(Text)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    name: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text)
+    licence: Mapped[str] = mapped_column(Text)
+    permitted_use: Mapped[str] = mapped_column(Text)
+    redistribution: Mapped[str] = mapped_column(Text)
+    original_name: Mapped[str] = mapped_column(Text)
+    original_ref: Mapped[str] = mapped_column(Text)
+    manifest_ref: Mapped[str] = mapped_column(Text)
+    manifest: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    intake_options: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_by: Mapped[str] = mapped_column(Text)
+
+
+class AmazeSettingRow(Base):
+    """One version of the system settings that the database guards read (migration 0020). Append-only; the
+    latest version wins and no row means REQUIRE_FOUR_EYES is on."""
+
+    __tablename__ = "amaze_settings"
+    __table_args__ = (
+        UniqueConstraint("version"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("length(btrim(set_by)) > 0", name="set_by"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    version: Mapped[int] = mapped_column(Integer)
+    require_four_eyes: Mapped[bool] = mapped_column(Boolean)
+    set_by: Mapped[str] = mapped_column(Text)
+    set_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reason: Mapped[str] = mapped_column(Text)
+
+
+class OnboardingSessionRow(Base):
+    """One feed's walk through the nine onboarding steps (migration 0024). Workflow state, not configuration: only
+    current_step, step_states, status, updated_at and model_calls change; never deleted."""
+
+    __tablename__ = "onboarding_sessions"
+    __table_args__ = (
+        UniqueConstraint("feed_id"),
+        CheckConstraint(_in("current_step", ONBOARDING_STEPS), name="current_step"),
+        CheckConstraint("amaze_valid_step_states(step_states)", name="step_states"),
+        CheckConstraint(_in("status", SESSION_STATUSES), name="status"),
+        CheckConstraint("length(btrim(created_by)) > 0", name="created_by"),
+        CheckConstraint("model_calls >= 0", name="model_calls"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    current_step: Mapped[str] = mapped_column(Text)
+    step_states: Mapped[dict[str, str]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, default="active", server_default="active")
+    created_by: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at(clock=True)  # the moment of the insert: the list is oldest first
+    updated_at: Mapped[datetime] = _created_at(clock=True)
+    model_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class OnboardingEventRow(Base):
+    """One thing that happened in an onboarding (migration 0024). Append-only; the audit timeline reads it."""
+
+    __tablename__ = "onboarding_events"
+    __table_args__ = (
+        CheckConstraint(_in("step", ONBOARDING_STEPS), name="step"),
+        CheckConstraint(_in("event", EVENT_NAMES), name="event"),
+        CheckConstraint("length(btrim(actor)) > 0", name="actor"),
+        CheckConstraint("jsonb_typeof(detail) = 'object'", name="detail_is_an_object"),
+        Index("ix_onboarding_events_session_id_at", "session_id", "at"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("onboarding_sessions.id"))
+    step: Mapped[str] = mapped_column(Text)
+    event: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(Text)
+    at: Mapped[datetime] = _created_at(clock=True)
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+
+
+class OnboardingJobRow(Base):
+    """The queue of the onboarding worker (migration 0024), copied from glossary_runs: a lease, an attempt count, one
+    queued or running job per session. A finished job never changes; never deleted."""
+
+    __tablename__ = "onboarding_jobs"
+    __table_args__ = (
+        CheckConstraint(_in("step", ONBOARDING_STEPS), name="step"),
+        CheckConstraint(_in("status", JOB_STATUSES), name="status"),
+        CheckConstraint("attempt >= 0", name="attempt"),
+        CheckConstraint("status <> 'running' OR lease_until IS NOT NULL", name="running_has_a_lease"),
+        CheckConstraint("(status = 'failed') = (error IS NOT NULL)", name="failed_has_an_error"),
+        CheckConstraint("(status IN ('done', 'failed', 'discarded')) = (finished_at IS NOT NULL)",
+                        name="finished_at_matches_status"),
+        Index("ix_onboarding_jobs_session_id", "session_id"),
+        Index("uq_onboarding_jobs_one_active_per_session", "session_id", unique=True,
+              postgresql_where=text("status IN ('queued', 'running')")),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("onboarding_sessions.id"))
+    step: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="queued", server_default="queued")
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

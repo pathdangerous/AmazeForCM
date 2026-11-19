@@ -57,10 +57,32 @@ class Settings(BaseSettings):
     # Phase 7 (plan risk 6): false registers no daily job (the glossary runs worker still runs); the e2e API sets it
     # so the 06:00 UTC fetch cannot fire during a Playwright run.
     daily_job_enabled: bool = True
+    # Phase 7.8: the per-call timeout of the real model adapter, and the longest Retry-After it waits on an HTTP 429
+    # before it retries.
+    llm_timeout_seconds: int = Field(default=60, ge=1)
+    llm_retry_after_cap_seconds: int = Field(default=20, ge=0)
+    # Phase 7.8, D2: false lets one operator hold every role and approve every step; true keeps steward then
+    # checker, owner-only go-live and no same approver twice. The database row is what the guards read; the API
+    # writes it at start-up (apps/api/main.py).
+    require_four_eyes: bool = False
+    # Phase 7.8: the cap on model calls in one onboarding (enforced by core/steps/onboarding.py, task 5.3).
+    max_model_calls_per_onboarding: int = Field(default=60, ge=1)
+    # Phase 7.8, S5 (assumption 35): a proposal whose confidence is at or above this, and is no tie, is shown as
+    # pre-accepted in the onboarding workspace; below it a person decides it. The operator still clicks Approve & next.
+    auto_accept_confidence: float = Field(default=0.85, ge=0, le=1)
+    # Phase 7.8, S5 (task 5.4): an onboarding job left running this long by a worker that died is claimed again.
+    onboarding_job_lease_seconds: int = Field(default=300, ge=1)
+    # Phase 7.8, S2: the largest file the upload endpoint takes (UPLOAD_MAX_MB, in MB of 1024 x 1024 bytes).
+    upload_max_mb: int = Field(default=50, ge=1)
+    # Phase 7.8, S4 (decision D5): the watched drop folder of the uploaded feeds, <root>/<feed code>/ (DROPZONE_ROOT).
+    dropzone_root: Path = REPO_ROOT / "data" / "dropzone"
+    # Phase 7.8, D3: true sends at most 5 distinct non-empty values per column to a model (core/steps/samples.py);
+    # false (the default) sends none.
+    send_sample_values: bool = False
 
-    @field_validator("source_catalogue")
+    @field_validator("source_catalogue", "dropzone_root")
     @classmethod
-    def _catalogue_from_the_repository(cls, path: Path) -> Path:
+    def _path_from_the_repository(cls, path: Path) -> Path:
         """A relative path (as in .env.example) is read from the repository, not the current folder."""
         return path if path.is_absolute() else (REPO_ROOT / path).resolve()
 

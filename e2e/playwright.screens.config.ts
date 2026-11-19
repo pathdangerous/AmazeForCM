@@ -9,5 +9,7 @@ import story from "./playwright.config";
 export default defineConfig({
   ...story,
   testDir: "./screens",
+  testMatch: "screens.spec.ts", // the story's path: REQUIRE_FOUR_EYES=true, inherited from the story config
+  testIgnore: "workspace.spec.ts", // phase 7.8's shots have their own config (playwright.workspace.config.ts)
   use: { ...story.use, viewport: { width: 1280, height: 900 }, colorScheme: "light" },
 });

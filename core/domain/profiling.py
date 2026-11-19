@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from core.domain.common import NonBlank
 
@@ -25,6 +25,61 @@ class FileColumn(BaseModel):
     null_count: int
     null_rate: float | None
     distinct_count: int  # exact; nulls are not counted
+    # Phase 7.8, task 3.1 (assumptions 23 and 24): facts found by code. Defaults keep earlier stored profiles loading.
+    placeholder_count: int = 0  # non-null cells that are ALL, NA, N/A, - or blank; a null is not one
+    placeholder_values: list[str] = []  # the distinct spellings seen, as they appear: at most 5, sorted
+    text_date_format: str | None = None  # every value of a VARCHAR column fits this date format
+    date_format_ambiguous: bool = False  # day-first was chosen although month-first fitted too
+    all_empty: bool = False  # every row is null or a placeholder
+    constant: bool = False  # one distinct real value, in at least two rows
+    samples: list[str] = []  # at most 5 distinct real values, sorted, each cut to 64 characters
+
+
+IssueKind = Literal["duplicate_key", "placeholder_only", "placeholders", "date_as_text", "all_empty", "constant"]
+
+
+class ProfileIssue(BaseModel):
+    """Something code found wrong or odd in the file. Never written by a model."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: IssueKind
+    columns: list[str]
+    count: int
+    detail: str
+
+
+def _spellings(values: list[str]) -> str:
+    return ", ".join(repr(v) for v in values)
+
+
+def issues_of(row_count: int | None, columns: list[FileColumn]) -> list[ProfileIssue]:
+    """The issues the column facts show, in column order, one per column and kind. Pure: the same facts give
+    the same issues, so a stored profile needs no column of its own for them. (duplicate_key is separate.)"""
+    rows = row_count or 0
+    found: list[ProfileIssue] = []
+    for c in columns:
+        def issue(kind: IssueKind, count: int, detail: str, name: str = c.name) -> None:
+            found.append(ProfileIssue(kind=kind, columns=[name], count=count, detail=detail))
+
+        if c.all_empty and c.placeholder_count == 0:
+            issue("all_empty", rows, "Every row is empty.")
+            continue
+        if c.all_empty:
+            issue("placeholder_only", c.placeholder_count,
+                  f"Every value is empty or a placeholder: {_spellings(c.placeholder_values)}.")
+            continue
+        if c.placeholder_count:
+            issue("placeholders", c.placeholder_count,
+                  f"{c.placeholder_count} of {rows} rows hold a placeholder: {_spellings(c.placeholder_values)}.")
+        if c.text_date_format:
+            note = " (ambiguous: day first assumed, month first fits too)" if c.date_format_ambiguous else ""
+            issue("date_as_text", rows - c.null_count,
+                  f"Dates held as text, format {c.text_date_format}{note}.")
+        if c.constant:
+            value = c.samples[0] if c.samples else ""
+            issue("constant", rows, f"Every row holds the same value: {value!r}.")
+    return found
 
 
 class FileProfile(BaseModel):
@@ -33,6 +88,7 @@ class FileProfile(BaseModel):
     row_count: int
     columns: list[FileColumn]
     engine: str  # "duckdb <version>"
+    issues: list[ProfileIssue] = []  # computed by code from the columns (issues_of)
 
 
 class SourceSpec(BaseModel):
@@ -95,10 +151,27 @@ class ProfilerInput(BaseModel):
     spec: SourceSpec
     coverage: list[RequirementCoverage]
     requirement_titles: dict[UUID, str]
+    # Phase 7.8, task 3.2: what code found in the file, and (only when SEND_SAMPLE_VALUES is true, decision D3)
+    # at most 5 values per column. The columns above carry no samples.
+    issues: list[ProfileIssue] = []
+    samples: dict[str, list[str]] = {}
+    # Where the file is stored: used by the step to count duplicates, never shown to the model.
+    file_ref: str | None = Field(default=None, exclude=True)
+
+
+class DuplicateKey(BaseModel):
+    """Counted by code over the file for the key columns the model proposed."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    columns: list[str]
+    extra_rows: int
+    examples: list[str]  # up to five duplicated key values
 
 
 class ProfilerOutput(BaseModel):
-    """The summary and the recommended outcome. No statistics: every number shown comes from the profile."""
+    """The summary, the recommended outcome and the proposed key. No statistics: every number shown comes from
+    the profile. duplicate_key and unknown_key_columns are filled by code (after_answer) and left empty by the model."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +179,11 @@ class ProfilerOutput(BaseModel):
     recommended_outcome: SignoffOutcome
     gaps: list[NonBlank]
     reasons: list[NonBlank]
+    key_columns: list[str]  # the smallest set that should identify a row; may be empty
+    key_reason: NonBlank
+    confidence: float = Field(ge=0, le=1)
+    duplicate_key: DuplicateKey | None = None
+    unknown_key_columns: list[str] = []
 
 
 class FeedProfileDraft(BaseModel):
@@ -150,6 +228,12 @@ class FeedProfile(BaseModel):
     detail: str | None
     engine: str
     profiled_by: str
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def issues(self) -> list[ProfileIssue]:
+        """Found again from the stored columns (no migration): the same facts give the same issues."""
+        return issues_of(self.row_count, self.columns)
 
 
 class FeedSignoffDraft(BaseModel):

@@ -3,7 +3,7 @@ trg_standard_records_b_load (migration 0018, G11) lets a record in only for a re
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -30,6 +30,14 @@ class StandardRecordRepository:
         """The records of the load that at least one rule flagged."""
         return self._session.scalar(select(func.count()).select_from(Row).where(
             Row.load_id == load_id, func.cardinality(Row.flags) > 0)) or 0
+
+    def iter_for_load(self, load_id: UUID, limit: int | None = None, batch: int = 1000) -> Iterator[StandardRecord]:
+        """Every record of the load (or the first `limit`), by row number, read in batches."""
+        query = select(Row).where(Row.load_id == load_id).order_by(Row.row_number)
+        if limit is not None:
+            query = query.limit(limit)
+        for row in self._session.scalars(query.execution_options(yield_per=batch)):
+            yield StandardRecord.model_validate(row)
 
     def list_for_load(self, load_id: UUID, limit: int = 50) -> list[StandardRecord]:
         """By row number."""

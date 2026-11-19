@@ -315,3 +315,135 @@ def test_only_a_glossary_owner_decides_and_only_once(db_session, proposals):
     decide(db_session, proposals["rating"])
     with pytest.raises(ProposalAlreadyDecided):
         decide(db_session, proposals["rating"])
+
+
+# ---------------------------------------------------------------- phase 7.8, task 6.1: the security master (D8) and units
+
+UNIT_SEED = {"best_pe_ratio": "times", "best_px_bps_ratio": "times", "best_ev_to_best_ebitda": "times",
+             "best_div_yld": "percent", "best_roe": "percent", "best_gross_margin": "percent",
+             "best_eps_4_week_percent_change": "percent", "best_eps_6_month_percent_change": "percent",
+             "best_eps_3_month_percent_change": "percent", "best_eps_1_week_percent_change": "percent"}
+
+
+def d8_registered(db_session, tmp_path, code="syn_security_master"):
+    """The D8 file's real column facts (profiled from Synthetic_Security_Master.xlsx), as a registered feed."""
+    from pathlib import Path
+
+    from core.intake import canonical_csv, read_xlsx_bytes
+    from core.steps.profiling import profile_csv
+
+    demo = Path(__file__).resolve().parent.parent / "fixtures" / "synthetic" / "Synthetic_Security_Master.xlsx"
+    table, _ = read_xlsx_bytes(demo.read_bytes(), original_name=demo.name)
+    csv = tmp_path / "master.csv"
+    csv.write_bytes(canonical_csv(table))
+    feed = FeedRepository(db_session).create_candidate(code=code, name="Security master")
+    return registered_feed(db_session, feed.id, columns=profile_csv(csv).columns,
+                           spec=SourceSpec(source_code=code, elements=[], other_fields=[], columns={}))
+
+
+@pytest.fixture
+def master(db_session, glossary, tmp_path):
+    return d8_registered(db_session, tmp_path)
+
+
+def test_the_units_seed_is_exactly_what_the_builder_cannot_know():
+    import json
+
+    from ports.config import REPO_ROOT
+
+    seed = json.loads((REPO_ROOT / "fixtures" / "glossary" / "units.json").read_text(encoding="utf-8"))
+    assert set(seed) == {"description", "units"} and seed["units"] == UNIT_SEED
+
+
+def test_the_d8_run_proposes_every_one_of_the_thirty_columns(db_session, master, tmp_path, notifier):
+    recorded = run(db_session, master, tmp_path, notifier)
+    assert len(recorded.run.results) == 30 and len(recorded.results) == 30
+    outcomes = {r.column: r.outcome for r in recorded.results}
+    assert {c for c, o in outcomes.items() if o == "duplicate_alias"} == {"TICKER_NAME", "COUNTRY"}
+    assert {o for c, o in outcomes.items() if c not in ("TICKER_NAME", "COUNTRY")} == {"proposed"}
+    by_column = {r.column: r for r in recorded.results}
+    assert by_column["TICKER_NAME"].element_key == "ticker" and by_column["COUNTRY"].element_key == "country_of_risk"
+    assert len(NotificationRepository(db_session).list_for("dev-glossary-owner")) == 1
+
+
+def test_the_d8_new_elements_have_names_definitions_types_and_the_estimates_domain(db_session, master, tmp_path,
+                                                                                    notifier):
+    run(db_session, master, tmp_path, notifier)
+    elements = {}
+    for column in ("SOURCE", "SHORTNAME", "SECTOR", "REGION", "F_PERIOD", "RECORD_DATE", "BEST_EPS", "BEST_SALES",
+                   "BEST_EPS_1_WEEK_PERCENT_CHANGE", "BEST_PX_BPS_RATIO", "BEST_NET_GAAP"):
+        [option] = pending(db_session, master, column).payload["options"]
+        elements[column] = option["element"]
+    assert elements["BEST_EPS"]["key"] == "best_eps" and elements["BEST_EPS"]["domain"] == "estimates"
+    assert elements["BEST_EPS"]["name"] == "Best earnings per share estimate"
+    assert "consensus estimate" in elements["BEST_EPS"]["definition"].lower()
+    assert elements["BEST_NET_GAAP"]["name"] == "Best GAAP net income estimate"
+    assert elements["BEST_PX_BPS_RATIO"]["name"] == "Best price to book ratio estimate"
+    assert elements["BEST_EPS_1_WEEK_PERCENT_CHANGE"]["name"] == "Best earnings per share estimate, change over 1 week"
+    assert elements["BEST_EPS_1_WEEK_PERCENT_CHANGE"]["data_type"] == "decimal"  # the file holds text placeholders
+    assert [elements[c]["data_type"] for c in ("RECORD_DATE", "BEST_SALES", "SECTOR")] == ["date", "decimal", "string"]
+    assert [(elements[c]["key"], elements[c]["domain"]) for c in ("SOURCE", "SHORTNAME", "SECTOR", "REGION",
+                                                                 "F_PERIOD", "RECORD_DATE")] == [
+        ("data_source", "security_master"), ("short_name", "security_master"), ("sector", "security_master"),
+        ("region", "security_master"), ("fiscal_period", "security_master"), ("record_date", "security_master")]
+    assert all(e["definition"].strip() and e["name"].strip() for e in elements.values())
+
+
+def test_every_d8_proposal_can_be_approved_and_the_seeded_units_are_filled_and_marked(db_session, master, tmp_path,
+                                                                                       notifier):
+    recorded = run(db_session, master, tmp_path, notifier)
+    seeded, written = {}, {}
+    for result in recorded.results:
+        proposal = ProposalRepository(db_session).get(result.proposal_id)
+        if result.outcome == "proposed":
+            option = proposal.payload["options"][0]["element"]
+            seeded[option["key"]] = (option["unit"], proposal.payload["unit_source"])
+        decided = decide(db_session, proposal, notifier=notifier)  # none is a PhraseTaken or refused by a guard
+        written[decided.element.key] = decided.element.unit
+    assert {k: u for k, (u, source) in seeded.items() if source == "seed"} == UNIT_SEED
+    assert all(source == "seed" for k, (u, source) in seeded.items() if k in UNIT_SEED)
+    assert all((u, source) == (None, None) for k, (u, source) in seeded.items() if k not in UNIT_SEED)
+    assert {k: u for k, u in written.items() if u is not None} == UNIT_SEED  # the element carries the unit
+    assert len(written) == 30  # 28 new elements and the two aliased ones (ticker, country_of_risk)
+
+
+def test_the_log_keeps_what_the_model_said_and_a_model_unit_is_never_overwritten(db_session, glossary, tmp_path,
+                                                                                  notifier):
+    from sqlalchemy import text
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_units", name="Units")
+    feed = registered_feed(db_session, feed.id, spec=SourceSpec(source_code="syn_units", elements=[], other_fields=[],
+                                                                columns={}),
+                           columns=[col("BEST_PE_RATIO", "DOUBLE"), col("BEST_ROE", "DOUBLE"), col("BEST_SALES", "DOUBLE")])
+
+    def element(key, unit):
+        return {"key": key, "name": key.replace("_", " ").capitalize(), "domain": "estimates", "data_type": "decimal",
+                "definition": "Synthetic.", "aliases": [], "unit": unit}
+
+    answer = {"answers": [{"column": "BEST_PE_RATIO", "reason": "r", "new_element": element("best_pe_ratio", "multiple")},
+                          {"column": "BEST_ROE", "reason": "r", "new_element": element("best_roe", None)},
+                          {"column": "BEST_SALES", "reason": "r", "new_element": element("best_sales", None)}]}
+    recorded = run(db_session, feed, tmp_path, notifier, provider=FixedProvider(answer))
+    payloads = {c: pending(db_session, feed, c).payload for c in ("BEST_PE_RATIO", "BEST_ROE", "BEST_SALES")}
+    got = {c: (p["options"][0]["element"]["unit"], p["unit_source"]) for c, p in payloads.items()}
+    assert got == {"BEST_PE_RATIO": ("multiple", "model"), "BEST_ROE": ("percent", "seed"),
+                   "BEST_SALES": (None, None)}
+    logged = db_session.execute(text("SELECT output FROM proposal_log WHERE id = :i"),
+                                {"i": recorded.run.proposal_log_id}).scalar_one()
+    assert {a["column"]: a["new_element"]["unit"] for a in logged["answers"]} == {
+        "BEST_PE_RATIO": "multiple", "BEST_ROE": None, "BEST_SALES": None}  # the seed is not in what the model said
+
+
+def test_an_alias_option_has_no_unit_source(db_session, master, tmp_path, notifier):
+    run(db_session, master, tmp_path, notifier)
+    assert pending(db_session, master, "TICKER_NAME").payload["unit_source"] is None
+
+
+def test_an_edit_of_the_unit_is_accepted_and_the_approved_element_carries_it(db_session, master, tmp_path, notifier):
+    run(db_session, master, tmp_path, notifier)
+    old = pending(db_session, master, "BEST_SALES")
+    option = {**old.payload["options"][0], "element": {**old.payload["options"][0]["element"], "unit": "USD"}}
+    new = ProposalRepository(db_session).edit(old.id, payload={**old.payload, "options": [option]}, user=GLENN)
+    decided = decide(db_session, new, notifier=notifier)
+    assert (decided.element.key, decided.element.unit) == ("best_sales", "USD")
+    assert GlossaryRepository(db_session).get_current("best_sales").unit == "USD"

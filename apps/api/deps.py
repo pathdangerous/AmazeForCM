@@ -17,7 +17,10 @@ from agents.profiler import ProfilerAgent
 from agents.review_summariser import ReviewSummariserAgent
 from agents.rule_recommender import RuleRecommenderAgent
 from agents.source_discovery import SourceDiscoveryAgent
+from agents.table_extractor import TableExtractorAgent
+from agents.transformation import TransformationAgent
 from apps.api.jobs import DailyFetch
+from core.repositories.upload_sources import UploadSourceRepository
 from ports.config import Settings, get_settings
 from ports.llm import LLMProvider, get_llm_provider
 from ports.connectors import SourceConnector, get_connector
@@ -88,8 +91,17 @@ def get_request_notifier(
 # ---- phase 3: the custom data product. Each is a dependency so tests can replace it.
 
 
-def get_source_catalogue(settings: Annotated[Settings, Depends(get_app_settings)]) -> SourceCatalogue:
-    return SourceCatalogue.load(settings.source_catalogue, allowed_hosts=settings.allowed_source_hosts())
+def get_source_catalogue(settings: Annotated[Settings, Depends(get_app_settings)],
+                         session: Annotated[Session, Depends(get_db_session)]) -> SourceCatalogue:
+    """The file catalogue plus the sources of the uploaded files (phase 7.8, task 2.4), read on the request's
+    session. The read leaves no transaction open when it began one (Agent.run() refuses a session in a transaction,
+    and the request may call a model next); a session already in a transaction is left as it was."""
+    catalogue = SourceCatalogue.load(settings.source_catalogue, allowed_hosts=settings.allowed_source_hosts())
+    began = not session.in_transaction()
+    entries = UploadSourceRepository(session).entries()
+    if began:
+        session.rollback()
+    return catalogue.with_uploads(entries)
 
 
 def get_blob_store_port(settings: Annotated[Settings, Depends(get_app_settings)]) -> BlobStore:
@@ -166,9 +178,59 @@ def get_rule_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_por
     return RuleRecommenderAgent(provider=provider, blob_store=blob_store)
 
 
+def get_transformation_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                             blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> TransformationAgent:
+    return TransformationAgent(provider=provider, blob_store=blob_store)  # phase 7.8, task 4.3 (step 10)
+
+
 def get_review_summariser(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
                           blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> ReviewSummariserAgent:
     return ReviewSummariserAgent(provider=provider, blob_store=blob_store)
+
+
+def get_table_extractor_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                              blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]) -> TableExtractorAgent:
+    return TableExtractorAgent(provider=provider, blob_store=blob_store)
+
+
+def step_agents(provider: LLMProvider, blob_store: BlobStore):
+    """Every agent the onboarding workspace calls (phase 7.8, task 5.4), as core/steps/onboarding.StepAgents."""
+    from agents.glossary_builder import GlossaryBuilderAgent
+    from core.steps.onboarding import StepAgents
+
+    return StepAgents(profiler=ProfilerAgent(provider=provider, blob_store=blob_store),
+                      glossary_builder=GlossaryBuilderAgent(provider=provider, blob_store=blob_store),
+                      mapper=MappingAgent(provider=provider, blob_store=blob_store),
+                      transformer=TransformationAgent(provider=provider, blob_store=blob_store),
+                      rule_recommender=RuleRecommenderAgent(provider=provider, blob_store=blob_store),
+                      summariser=ReviewSummariserAgent(provider=provider, blob_store=blob_store))
+
+
+def get_onboarding_context(request: Request, settings: Annotated[Settings, Depends(get_app_settings)],
+                           provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                           blob_store: Annotated[BlobStore, Depends(get_blob_store_port)],
+                           connectors: Annotated[Callable[[str], SourceConnector], Depends(get_connector_factory)]):
+    """What a workspace request passes to core/steps/onboarding.py (phase 7.8, task 5.4)."""
+    from apps.api.jobs import DAILY_FETCH_HOUR
+    from core.steps.onboarding import OnboardingContext
+
+    return OnboardingContext(agents=step_agents(provider, blob_store), blob_store=blob_store, settings=settings,
+                             identity=request.app.state.identity, load_now=get_daily_fetch(request).fetch_and_load,
+                             connector_factory=connectors, daily_run_utc=f"{DAILY_FETCH_HOUR:02d}:00")
+
+
+def get_onboarding_kick(request: Request) -> Callable[[], None]:
+    """Wakes the onboarding jobs worker (app.state.onboarding_jobs) after a commit that queued a job. A failed kick is
+    logged and swallowed, as the glossary kick: the job is taken by the next kick or start-up."""
+    from apps.api.jobs import kick_onboarding_jobs
+
+    def kick() -> None:
+        try:
+            kick_onboarding_jobs(request.app.state.scheduler, request.app.state.onboarding_jobs)
+        except Exception:
+            log.exception("the kick after a committed write failed; the onboarding job waits for the next kick")
+
+    return kick
 
 
 def get_daily_fetch(request: Request) -> DailyFetch:

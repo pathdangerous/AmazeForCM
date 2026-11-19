@@ -35,6 +35,7 @@ from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.repositories.upload_sources import UploadSourceRepository
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
 from core.steps.s12_arrival import (
@@ -60,6 +61,16 @@ DAILY_FETCH_JOB_ID = "daily-source-fetch"
 DAILY_FETCH_HOUR = 6  # UTC
 
 log = logging.getLogger(__name__)
+
+
+def catalogue_with_uploads(settings: Settings,
+                           session_factory: Callable[[], AbstractContextManager[Session]]) -> SourceCatalogue:
+    """The catalogue a run reads: the file catalogue and, read in a short session of their own, the sources of the
+    uploaded files (phase 7.8, task 2.4). A bad file catalogue still raises, as before (the run reports it)."""
+    catalogue = SourceCatalogue.load(settings.source_catalogue, settings.allowed_source_hosts())
+    with session_factory() as session:
+        entries = UploadSourceRepository(session).entries()
+    return catalogue.with_uploads(entries)
 
 
 @dataclass
@@ -101,7 +112,7 @@ class DailyFetch:
             connector_factory=lambda name: get_connector(name, settings),
             backend_team=lambda: [u.id for u in identity.list_users() if "backend_team" in u.roles],
             settings=settings,
-            catalogue_loader=lambda: SourceCatalogue.load(settings.source_catalogue, settings.allowed_source_hosts()),
+            catalogue_loader=lambda: catalogue_with_uploads(settings, sessions),
             release_after_days=settings.source_down_release_days,
             operations=lambda: [u.id for u in identity.list_users() if "operations" in u.roles],
             rule_timeout_seconds=settings.rule_timeout_seconds,
@@ -437,3 +448,76 @@ def kick_glossary_runs(scheduler: Scheduler, runs: GlossaryRuns, *, delay_second
             kick_glossary_runs(scheduler, runs, delay_seconds=wait + LEASE_GRACE_SECONDS)
 
     scheduler.run_soon(GLOSSARY_RUNS_JOB_ID, work, delay_seconds=delay_seconds)
+
+
+# ---------------------------------------------------------------- phase 7.8, task 5.4: the onboarding jobs worker
+
+ONBOARDING_JOBS_JOB_ID = "onboarding-jobs"
+
+
+@dataclass
+class OnboardingJobs:
+    """The onboarding workspace's jobs in the background (plan assumption 33), like GlossaryRuns: drain() claims and
+    runs queued jobs (and running ones whose lease passed) one by one with core.steps.onboarding.run_job, which holds
+    no connection during a model call and discards a late answer. Kicked after each commit that queues a job and once
+    at start-up, so jobs left by the last process are taken (resume after a restart). The glossary step's job and
+    the glossary runs worker never run one run twice: a run is claimed once (its lease), and the job that finds this
+    feed's run busy fails with "enter the step again". The API builds it from the settings; tests build their own."""
+
+    session_factory: Callable[[], AbstractContextManager[Session]]
+    context_factory: Callable[[], object]  # an OnboardingContext (core/steps/onboarding.py)
+
+    @classmethod
+    def from_settings(cls, settings: Settings, identity: Identity) -> OnboardingJobs:
+        def sessions() -> AbstractContextManager[Session]:
+            from ports.db import get_sessionmaker
+
+            return get_sessionmaker()()
+
+        def context():
+            from apps.api.deps import step_agents
+            from core.steps.onboarding import OnboardingContext
+            from ports.llm import get_llm_provider
+
+            blobs = get_blob_store(settings)
+            daily = DailyFetch.from_settings(settings, identity)
+            return OnboardingContext(agents=step_agents(get_llm_provider(settings), blobs), blob_store=blobs,
+                                     settings=settings, identity=identity, load_now=daily.fetch_and_load,
+                                     connector_factory=lambda name: get_connector(name, settings),
+                                     daily_run_utc=f"{DAILY_FETCH_HOUR:02d}:00")
+
+        return cls(session_factory=sessions, context_factory=context)
+
+    def drain(self) -> list:
+        """What each job this call took came to (JobRun), until none waits."""
+        from core.steps.onboarding import run_job
+
+        ctx = self.context_factory()
+        done = []
+        while True:
+            ran = run_job(self.session_factory, ctx=ctx, lease_seconds=ctx.settings.onboarding_job_lease_seconds)
+            if ran is None:
+                return done
+            done.append(ran)
+
+    def lease_wait(self) -> float | None:
+        """Seconds until the earliest live lease of a running job passes; None when there is none."""
+        from core.repositories.onboarding import OnboardingJobRepository
+
+        with self.session_factory() as session:
+            wait = OnboardingJobRepository(session).seconds_to_live_lease()
+            session.rollback()
+        return wait
+
+
+def kick_onboarding_jobs(scheduler: Scheduler, jobs: OnboardingJobs, *, delay_seconds: float = 0.0) -> None:
+    """After a commit that queued an onboarding job, and at every start-up. When the drain leaves a running job with a
+    live lease (a worker of the last process may have died), one more kick comes just after that lease."""
+
+    def work() -> None:
+        jobs.drain()
+        wait = jobs.lease_wait()
+        if wait is not None:
+            kick_onboarding_jobs(scheduler, jobs, delay_seconds=wait + LEASE_GRACE_SECONDS)
+
+    scheduler.run_soon(ONBOARDING_JOBS_JOB_ID, work, delay_seconds=delay_seconds)

@@ -122,7 +122,7 @@ export default function SearchView({ devUser }: { devUser: string }) {
             <ul className="hits" data-testid="hits">
               {found.hits.map((h) => (
                 <li key={h.product.code} data-testid={`hit-${h.product.code}`}>
-                  <strong>{h.product.name}</strong>{" "}
+                  <strong><Anchor href={`#/product/${h.product.code}`}>{h.product.name}</Anchor></strong>{" "}
                   {h.outcome === "found"
                     ? <Badge tt="none" color="var(--amz-success)">Available</Badge>
                     : <Badge tt="none" color="var(--amz-warning)" c="var(--amz-on-bright)">Access restricted</Badge>}

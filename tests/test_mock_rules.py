@@ -27,7 +27,8 @@ def _intent(text="open price", purpose=None, note=None):
 
 def test_rules_are_named_by_prompt_id():
     assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler", "glossary_builder",
-                          "mapping", "rule_recommender", "review_summariser"}
+                          "mapping", "rule_recommender", "review_summariser",
+                          "transformation"}  # phase 7.8, task 4.3 (old: without "transformation")
 
 
 def test_the_rule_recommender_rule_makes_one_rule_per_offer_and_leaves_the_checks_to_code():
@@ -84,6 +85,50 @@ def test_the_glossary_builder_rule():
 def test_the_glossary_builder_types_a_new_element_from_the_duckdb_family(duckdb, data_type):
     [answer] = RULES["glossary_builder"](_builder(("col_x", duckdb, [])))["answers"]
     assert answer["new_element"]["data_type"] == data_type
+
+
+def test_the_glossary_builder_rule_names_the_security_master_columns_in_plain_words():
+    """Phase 7.8, task 6.1 (assumption 41): estimates in their own domain, names and definitions built from the column,
+    the type from the profile (an estimate is a decimal even when the file holds text), and never a unit."""
+    cols = [("BEST_EPS", "DOUBLE"), ("BEST_BPS", "DOUBLE"), ("BEST_EBITDA", "DOUBLE"), ("BEST_CAPEX", "DOUBLE"),
+            ("BEST_EV_TO_BEST_EBITDA", "DOUBLE"), ("BEST_ESP_GAAP", "DOUBLE"), ("BEST_OPP", "DOUBLE"),
+            ("BEST_EPS_6_MONTH_PERCENT_CHANGE", "DOUBLE"), ("BEST_EPS_1_WEEK_PERCENT_CHANGE", "VARCHAR"),
+            ("SECTOR", "VARCHAR"), ("F_PERIOD", "VARCHAR"), ("RECORD_DATE", "VARCHAR"), ("SOURCE", "VARCHAR"),
+            ("SHORTNAME", "VARCHAR")]
+    data = _builder(*[(n, t, [_cand("price_source", 0.5)] if n == "SOURCE" else []) for n, t in cols])
+    data["domains"] = ["pricing", "security_master"]
+    data["source_domain"] = "pricing"  # the first domain when the spec names none
+    answers = {a["column"]: a["new_element"] for a in RULES["glossary_builder"](data)["answers"]}
+    assert {a["column"] for a in RULES["glossary_builder"](data)["answers"]} == {n for n, _ in cols}
+    names = {c: answers[c]["name"] for c, _ in cols}
+    assert names["BEST_EPS"] == "Best earnings per share estimate"
+    assert names["BEST_BPS"] == "Best book value per share estimate"
+    assert names["BEST_EBITDA"] == "Best EBITDA estimate" and names["BEST_CAPEX"] == "Best capital expenditure estimate"
+    assert names["BEST_EV_TO_BEST_EBITDA"] == "Best enterprise value to EBITDA estimate"
+    assert names["BEST_ESP_GAAP"] == "Best GAAP earnings per share estimate"
+    assert names["BEST_OPP"] == "Best operating profit estimate"
+    assert names["BEST_EPS_6_MONTH_PERCENT_CHANGE"] == "Best earnings per share estimate, change over 6 months"
+    assert names["BEST_EPS_1_WEEK_PERCENT_CHANGE"] == "Best earnings per share estimate, change over 1 week"
+    for column in (c for c, _ in cols if c.startswith("BEST_")):
+        element = answers[column]
+        assert (element["key"], element["domain"], element["data_type"], element["unit"]) == (
+            column.lower(), "estimates", "decimal", None)
+        assert element["definition"].startswith("Consensus estimate of ") or element["definition"].startswith(
+            "Change in the consensus estimate of ")
+        assert "Bond terms" in element["definition"] and column in element["definition"]
+    assert [(answers[c]["key"], answers[c]["name"], answers[c]["data_type"], answers[c]["domain"], answers[c]["unit"])
+            for c in ("SECTOR", "F_PERIOD", "RECORD_DATE", "SOURCE", "SHORTNAME")] == [
+        ("sector", "Sector", "string", "security_master", None),
+        ("fiscal_period", "Fiscal period", "string", "security_master", None),
+        ("record_date", "Record date", "date", "security_master", None),
+        ("data_source", "Data source", "string", "security_master", None),
+        ("short_name", "Short name", "string", "security_master", None)]
+    assert answers["F_PERIOD"]["aliases"] == ["f_period"] and answers["SOURCE"]["aliases"] == ["source"]
+
+
+def test_a_column_that_is_exactly_an_element_is_not_renamed_by_the_security_master_names():
+    [answer] = RULES["glossary_builder"](_builder(("sector", "VARCHAR", [_cand("sector", 1.0)])))["answers"]
+    assert answer["same_as"] == "sector" and answer["new_element"] is None
 
 
 def _mapping(*columns):
@@ -147,6 +192,45 @@ def test_the_profiler_rule(data, outcome, gaps, reasons):
 def test_the_profiler_summary_agrees_with_the_found_count(data, summary):
     """Phase 7.5, P10 (plan, assumption 22): the verb agrees with the number of items found."""
     assert RULES["profiler"](data)["summary"] == summary
+
+
+def _columns(n):
+    return [{"name": f"C{i}", "distinct_count": 3} for i in range(1, n + 1)]
+
+
+@pytest.mark.parametrize(("rows", "columns", "summary"), [
+    (70, 28, "70 rows, 28 columns."), (1, 1, "1 row, 1 column."), (2, 1, "2 rows, 1 column.")])
+def test_a_summary_with_no_requested_items_says_rows_and_columns_never_zero_of_zero(rows, columns, summary):
+    """Phase 7.8, task 7.3a: an upload has no requirement, so no 'N of M requested items'."""
+    data = {**_profiler(rows=rows, requirements=0), "columns": _columns(columns)}
+    out = RULES["profiler"](data)
+    assert out["summary"].startswith(summary) and "0 of 0" not in out["summary"]
+    assert out["recommended_outcome"] == "meets" and out["gaps"] == []
+    # with requested items the coverage sentence stays
+    data = {**_profiler(_item("volume"), rows=10), "columns": _columns(columns)}
+    assert RULES["profiler"](data)["summary"].startswith("10 rows; 1 of 1 requested items is in the file.")
+
+
+def _issue(kind, columns, count=12):
+    return {"kind": kind, "columns": columns, "count": count, "detail": "x"}
+
+
+@pytest.mark.parametrize(("issue", "sentence"), [
+    (_issue("placeholders", ["SOURCE"]), "Column SOURCE holds placeholders among real values (12 rows)."),
+    (_issue("placeholders", ["A", "B"]), "Columns A, B hold placeholders among real values (12 rows)."),
+    (_issue("duplicate_key", ["TICKER"], 2), "Column TICKER repeats a key (2 rows)."),
+    (_issue("duplicate_key", ["A", "B"], 2), "Columns A, B repeat a key (2 rows)."),
+    (_issue("placeholder_only", ["X"]), "Column X holds only empty cells or placeholders (12 rows)."),
+    (_issue("date_as_text", ["D"]), "Column D holds dates as text (12 rows)."),
+    (_issue("all_empty", ["E"]), "Column E is empty in every row (12 rows)."),
+    (_issue("all_empty", ["E", "F"]), "Columns E, F are empty in every row (12 rows)."),
+    (_issue("constant", ["K"]), "Column K holds the same value in every row (12 rows)."),
+    (_issue("constant", ["K", "L"]), "Columns K, L hold the same value in every row (12 rows)."),
+])
+def test_an_issue_sentence_is_grammatical_in_the_singular_and_the_plural(issue, sentence):
+    out = RULES["profiler"]({**_profiler(_item("volume")), "columns": _columns(2), "issues": [issue]})
+    assert sentence in out["summary"] and out["gaps"] == [sentence]
+    assert out["recommended_outcome"] == "meets_with_gaps"
 
 
 # ---------------------------------------------------------------- intent
@@ -237,6 +321,10 @@ def test_a_word_like_nothing_gets_no_suggestion():
     ("discovery_assistant", {"query": "closing prices", "unmatched_terms": ["closing prices"], "glossary": GLOSSARY}),
     ("glossary_builder", _builder(("venue_mic_code", "VARCHAR", [_cand("exchange_mic", 0.67)]), ("x", "DATE", []))),
     ("mapping", _mapping(("date", [_cand("issue_date", 0.5), _cand("maturity_date", 0.5)]))),
+    ("transformation", {"columns": [
+        {"source_field": "D", "element_key": "e", "element_type": "date", "duckdb_type": "VARCHAR", "null_count": 0,
+         "row_count": 3, "placeholder_values": ["NA"], "placeholder_count": 1, "text_date_format": "DD-MM-YYYY",
+         "date_format_ambiguous": False, "all_empty": False, "constant": False}]}),
 ])
 def test_a_rule_is_deterministic_and_does_not_change_its_input(prompt_id, data):
     before = copy.deepcopy(data)

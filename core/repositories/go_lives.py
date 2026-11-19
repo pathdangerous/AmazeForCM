@@ -22,7 +22,8 @@ class GoLiveRepository:
         self._session = session
 
     def add_version(self, *, feed_id: UUID, proposal_id: UUID, approved_by: str, mapping_ids: Sequence[UUID],
-                    rule_ids: Sequence[UUID], test_load_id: UUID, hypercare_until: date) -> GoLive:
+                    rule_ids: Sequence[UUID], test_load_id: UUID, hypercare_until: date,
+                    transformation_ids: Sequence[UUID] = ()) -> GoLive:
         """The feed's next go-live, from an approved review_summary proposal of this feed. The caller holds the
         feed row lock; the database checks the rest (the decider, the owner, the pinned ids, the test load)."""
         if self._session.get(FeedRow, feed_id) is None:
@@ -33,7 +34,7 @@ class GoLiveRepository:
         latest = self._session.scalar(select(func.max(Row.version)).where(Row.feed_id == feed_id))
         row = Row(feed_id=feed_id, version=(latest or 0) + 1, proposal_id=proposal_id, approved_by=approved_by,
                   mapping_ids=list(mapping_ids), rule_ids=list(rule_ids), test_load_id=test_load_id,
-                  hypercare_until=hypercare_until)
+                  hypercare_until=hypercare_until, transformation_ids=list(transformation_ids))
         self._session.add(row)
         self._session.flush()
         return GoLive.model_validate(row)

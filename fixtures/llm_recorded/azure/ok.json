@@ -1,0 +1,18 @@
+{
+  "id": "chatcmpl-synthetic-0001",
+  "object": "chat.completion",
+  "created": 1790000000,
+  "model": "gpt-4o-2026-08-06",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "{\"summary\": \"The synthetic feed has 120 rows and covers the requested price fields.\", \"recommended_outcome\": \"meets_with_gaps\", \"gaps\": [\"Volume is missing before 2026-01-01\"], \"reasons\": [], \"key_columns\": [\"instr_id\"], \"key_reason\": \"instr_id identifies each instrument.\", \"confidence\": 0.8, \"duplicate_key\": null, \"unknown_key_columns\": []}",
+        "refusal": null
+      }
+    }
+  ],
+  "usage": {"prompt_tokens": 210, "completion_tokens": 48, "total_tokens": 258}
+}

@@ -2,6 +2,7 @@ import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, describeError, type FindSourceResponse, type RequestSummary } from "../api";
 import { formatWhen } from "../theme";
+import { STEPS } from "./RequirementView";
 
 const OUTCOMES: Record<RequestSummary["outcome"], string> = {
   reuse: "Reuse",
@@ -9,6 +10,13 @@ const OUTCOMES: Record<RequestSummary["outcome"], string> = {
   create_product: "Create product",
   raise_requirement: "Requirement raised",
 };
+
+// The requester's journey (the steps of RequirementView). The summary carries only the requirement's status, so
+// a request still onboarding is placed at "Setting up"; the requirement page has the exact step.
+const isReady = (r: RequestSummary) =>
+  r.requirement_status === "ready" || r.requirement_status === "access_restricted" || r.outcome === "reuse";
+const current = (r: RequestSummary): number | null =>
+  isReady(r) ? STEPS.length - 1 : r.requirement_status === "onboarding" ? 1 : null;
 
 // Every request of the signed-in requester and its outcome, newest first (decision 7).
 export default function RequestsView({ devUser }: { devUser: string }) {
@@ -62,7 +70,20 @@ export default function RequestsView({ devUser }: { devUser: string }) {
                   <Table.Td>{formatWhen(r.created_at)}</Table.Td>
                   <Table.Td>{r.query}</Table.Td>
                   <Table.Td data-testid="outcome">{OUTCOMES[r.outcome]}</Table.Td>
-                  <Table.Td>{r.product_codes.join(", ") || "-"}</Table.Td>
+                  <Table.Td>
+                    {r.product_codes.join(", ") || "-"}
+                    {isReady(r) && r.product_codes.map((code) => (
+                      <div key={code}><Anchor href={`#/product/${code}`} aria-label={`Open ${code}`}>Open the data</Anchor></div>
+                    ))}
+                    {current(r) !== null && (
+                      <ol className="progress-steps" data-testid={`request-steps-${r.id}`} aria-label="Where your data is">
+                        {STEPS.map((step, i) => (
+                          <li key={step} aria-current={i === current(r) ? "step" : undefined}
+                              data-done={i < (current(r) as number) ? "true" : undefined}>{step}</li>
+                        ))}
+                      </ol>
+                    )}
+                  </Table.Td>
                   <Table.Td data-testid="requirement-status">
                     {r.requirement_id ? (
                       <>

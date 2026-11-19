@@ -17,10 +17,10 @@ from ports.config import AZURE_NOT_IMPLEMENTED, read_env
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# (local adapter, Azure stub). Each port adds its row when it is built.
+# (local adapter, Azure stub). Each port adds its row when it is built. The LLM pair left in phase 7.8 task 1.2:
+# AzureOpenAIProvider is the real adapter now (tests/test_port_llm_azure.py); its guarantees are kept below.
 PAIRS = [
     ("ports.secrets.env:EnvSecrets", "ports.secrets.key_vault:KeyVaultSecrets"),
-    ("ports.llm.mock:MockProvider", "ports.llm.azure_openai:AzureOpenAIProvider"),
     ("ports.storage.local:LocalBlobStore", "ports.storage.azure_blob:AzureBlobStore"),
     ("ports.scheduler.local:LocalScheduler", "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
     ("ports.identity.dev:DevIdentity", "ports.identity.entra_id:EntraIdIdentity"),
@@ -117,3 +117,57 @@ def test_stub_imports_no_azure_or_openai_sdk(local_ref, stub_ref):
             imported.add(node.module)
     sdk = {name for name in imported if name.split(".")[0] in {"azure", "openai", "msal"}}
     assert not sdk, f"stub imports an SDK: {sorted(sdk)}"
+
+
+# ---- phase 7.8 task 1.2: what the stub tests guaranteed for the LLM adapter, kept now that it is real
+
+OPENAI_ALLOWED = {"ports/llm/azure_openai.py"}
+SCANNED_FOR_OPENAI = ("agents", "apps", "core", "ports", "e2e", "tests")
+
+
+def _openai_importers(root: Path) -> list[str]:
+    found = []
+    for top in SCANNED_FOR_OPENAI:
+        for path in sorted((root / top).rglob("*.py")):
+            if "node_modules" in path.parts or ".venv" in path.parts:
+                continue
+            rel = path.relative_to(root).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                    names = [node.module]
+                else:
+                    continue
+                if any(name.split(".")[0] == "openai" for name in names) and rel not in OPENAI_ALLOWED:
+                    found.append(f"{rel}:{node.lineno}")
+    return found
+
+
+def test_only_the_azure_openai_adapter_imports_the_openai_sdk():
+    assert _openai_importers(REPO_ROOT) == []
+
+
+def test_the_openai_check_catches_a_planted_import(tmp_path):
+    for top in SCANNED_FOR_OPENAI:
+        (tmp_path / top).mkdir()
+    (tmp_path / "agents" / "x.py").write_text("from openai import AzureOpenAI\n", encoding="utf-8")
+    (tmp_path / "core" / "y.py").write_text("import openai.lib\n", encoding="utf-8")
+    assert _openai_importers(tmp_path) == ["agents/x.py:1", "core/y.py:1"]
+
+
+def test_the_azure_openai_adapter_does_import_openai():
+    """Otherwise the check above would pass with nothing to protect."""
+    tree = ast.parse((REPO_ROOT / "ports" / "llm" / "azure_openai.py").read_text(encoding="utf-8"))
+    assert any(isinstance(n, (ast.Import, ast.ImportFrom)) and "openai" in ast.dump(n) for n in ast.walk(tree))
+
+
+def test_every_real_model_setting_is_in_the_readme():
+    from ports.llm.azure_openai import AzureOpenAIProvider
+
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    keys = [*AzureOpenAIProvider.ENV_KEYS, "LLM_TIMEOUT_SECONDS", "LLM_RETRY_AFTER_CAP_SECONDS",
+            "MAX_MODEL_CALLS_PER_ONBOARDING"]
+    missing = [key for key in keys if f"`{key}`" not in readme]
+    assert not missing, f"add to the README settings table: {missing}"

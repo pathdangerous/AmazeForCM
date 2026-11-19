@@ -31,6 +31,7 @@ class GlossaryElementDraft(BaseModel):
     data_type: DataType
     definition: Text
     aliases: list[SnakeName] = Field(default_factory=list)
+    unit: Text | None = None  # "times", "percent"; None when the value has no unit or it is not known (0025)
 
     @model_validator(mode="after")
     def _aliases_distinct(self) -> GlossaryElementDraft:
@@ -53,5 +54,6 @@ class GlossaryElement(BaseModel):
     data_type: DataType
     definition: str
     aliases: list[str]
+    unit: str | None = None
     created_by: str
     proposal_id: UUID | None  # None only for the seed

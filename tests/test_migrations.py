@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0019"
+HEAD = "0026"  # old: "0025" (phase 7.8, task 7.3a: a registered feed's visibility may be revised)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -26,7 +26,10 @@ PHASE_4_TABLES = {"feed_profiles", "feed_signoffs", "feed_registrations"}  # 001
 PHASE_5_TABLES = {"glossary_runs"}  # 0016
 PHASE_6_TABLES = {"feed_go_lives", "load_stages", "standard_records"}  # 0018
 PHASE_7_TABLES = {"load_certifications"}  # 0019
-TABLES |= PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES | PHASE_6_TABLES | PHASE_7_TABLES
+PHASE_78_TABLES = {"amaze_settings", "upload_sources", "transformations", "feed_key_policies",  # 0020, 0021, 0023
+                   "onboarding_sessions", "onboarding_events", "onboarding_jobs"}  # 0024
+TABLES |= (PHASE_2_TABLES | PHASE_3_TABLES | PHASE_4_TABLES | PHASE_5_TABLES | PHASE_6_TABLES | PHASE_7_TABLES
+           | PHASE_78_TABLES)
 
 
 def _tables(url: str) -> set[str]:
@@ -226,6 +229,20 @@ REVIEWED_NULLABLE_CHECKS = {
         "rule_key or sql; kind and payload are NOT NULL: never NULL",
     "loads.ck_loads_purpose_fits":
         "go_live_id IS NOT NULL / IS NULL spelt out on both sides; purpose is NOT NULL: never NULL",
+    # 0023 (phase 7.8, task 4.1). Its NULL cases are in test_db_transformation_guards.py.
+    "proposals.ck_proposals_names_a_transformation":
+        "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
+        "source_field; kind and payload are NOT NULL: never NULL",
+    # 0024 (phase 7.8, task 5.2). Their NULL cases are in test_proposal_edit.py and
+    # test_db_onboarding_session_guards.py.
+    "proposals.ck_proposals_edited_from_and_by_together": "IS NULL on both sides: never NULL",
+    "proposals.ck_proposals_edited_by": "edited_by IS NULL OR ...: never NULL",
+    "onboarding_jobs.ck_onboarding_jobs_running_has_a_lease": "IS NOT NULL on lease_until; status is NOT NULL: never NULL",
+    "onboarding_jobs.ck_onboarding_jobs_failed_has_an_error": "IS NOT NULL on error; status is NOT NULL: never NULL",
+    "onboarding_jobs.ck_onboarding_jobs_finished_at_matches_status":
+        "IS NOT NULL on finished_at; status is NOT NULL: never NULL",
+    # 0025 (phase 7.8, task 6.1). Its NULL case (an element with no unit) is in test_db_configuration_guards.py.
+    "glossary_elements.ck_glossary_elements_unit": "unit IS NULL OR ...: never NULL",
     # 0019 (phase 7 plan, section 6). Their NULL case (a load with no arrival) is in test_db_arrival_guards.py.
     "loads.ck_loads_content_sha256": "content_sha256 IS NULL OR ...: never NULL",
     "loads.ck_loads_arrival_outcome": "arrival_outcome IS NULL OR ...: never NULL",
@@ -647,6 +664,355 @@ def test_0019_downgrade_restores_the_0018_schema(scratch_schema):
     assert not new_constraints & down["constraints"] and not new_functions & down["functions"]
     command.upgrade(config, "0019")
     assert state() == up
+
+
+def _0020_state(engine):
+    with engine.connect() as connection:
+        names = lambda sql: set(connection.execute(text(sql)).scalars())  # noqa: E731
+        return {
+            "tables": set(inspect(engine).get_table_names()),
+            "triggers": names("SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                              "WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal"),
+            "constraints": names("SELECT conname FROM pg_constraint "
+                                 "WHERE connamespace = current_schema()::regnamespace"),
+            "functions": names("SELECT proname FROM pg_proc WHERE pronamespace = current_schema()::regnamespace"),
+        }
+
+
+def test_0020_downgrade_restores_the_same_approver_constraint(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    new_triggers = {"trg_approvals_four_eyes", "trg_amaze_settings_append_only", "trg_amaze_settings_no_truncate"}
+    new_functions = {"amaze_four_eyes", "amaze_approvals_four_eyes"}
+    command.upgrade(config, "0020")
+    up = _0020_state(engine)
+    assert {"amaze_settings"} <= up["tables"] and new_triggers <= up["triggers"] and new_functions <= up["functions"]
+    assert "uq_approvals_proposal_id_decided_by" not in up["constraints"]
+    assert "uq_approvals_proposal_id_step" in up["constraints"]  # the other guard stays
+    command.downgrade(config, "0019")
+    down = _0020_state(engine)
+    assert not {"amaze_settings"} & down["tables"] and not new_triggers & down["triggers"]
+    assert not new_functions & down["functions"] and "uq_approvals_proposal_id_decided_by" in down["constraints"]
+    command.upgrade(config, "0020")
+    assert _0020_state(engine) == up
+
+
+def test_0020_downgrade_refuses_when_one_person_decided_two_steps(scratch_schema):
+    """0019 has the unique constraint (proposal, person): the downgrade stops, naming 0020, instead of failing
+    half-way, when a false setting let one person decide two steps."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0020")
+    with engine.begin() as connection:
+        log, _ = _a_log_and_a_feed(connection)
+        proposal = connection.execute(text(
+            "INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles) "
+            "VALUES (:l, 'scope', '{}', 'A2', ARRAY['data_steward', 'checker']) RETURNING id"), {"l": log}).scalar_one()
+        connection.execute(text("INSERT INTO amaze_settings (version, require_four_eyes, set_by, reason) "
+                                "VALUES (1, false, 'p', 'r')"))
+        for step, role in ((1, "data_steward"), (2, "checker")):
+            connection.execute(text("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+                                    "VALUES (:p, :s, :r, 'dev-operator', 'approved')"),
+                               {"p": proposal, "s": step, "r": role})
+    with pytest.raises(DBAPIError, match="migration 0020 cannot be downgraded"):
+        command.downgrade(config, "0019")
+
+
+def _0021_state(engine):
+    with engine.connect() as connection:
+        names = lambda sql: set(connection.execute(text(sql)).scalars())  # noqa: E731
+        return {
+            "tables": set(inspect(engine).get_table_names()),
+            "connector_check": connection.execute(text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_feeds_connector' "
+                "AND connamespace = current_schema()::regnamespace")).scalar_one(),
+            "triggers": names("SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                              "WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal"),
+            "constraints": names("SELECT conname FROM pg_constraint "
+                                 "WHERE connamespace = current_schema()::regnamespace"),
+            "functions": names("SELECT proname FROM pg_proc WHERE pronamespace = current_schema()::regnamespace"),
+        }
+
+
+def test_0021_downgrade_restores_the_0020_schema(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    new_triggers = {"trg_upload_sources_append_only", "trg_upload_sources_no_truncate", "trg_upload_sources_b_guard"}
+    new_constraints = {"pk_upload_sources", "uq_upload_sources_code", "uq_upload_sources_feed_id",
+                       "fk_upload_sources_feed_id_feeds", "ck_upload_sources_code_format",
+                       "ck_upload_sources_intake_options", "ck_upload_sources_manifest"}
+    command.upgrade(config, "0021")
+    up = _0021_state(engine)
+    assert "upload_sources" in up["tables"] and "'dropzone'" in up["connector_check"]
+    assert new_triggers <= up["triggers"] and new_constraints <= up["constraints"]
+    assert "amaze_guard_upload_source" in up["functions"]
+    command.downgrade(config, "0020")
+    down = _0021_state(engine)
+    assert "upload_sources" not in down["tables"] and "'dropzone'" not in down["connector_check"]
+    assert "'local_file'" in down["connector_check"] and "'http'" in down["connector_check"]
+    assert not new_triggers & down["triggers"] and not new_constraints & down["constraints"]
+    assert "amaze_guard_upload_source" not in down["functions"]
+    command.upgrade(config, "0021")
+    assert _0021_state(engine) == up
+
+
+@pytest.mark.parametrize("case", ["an upload source", "a dropzone feed"])
+def test_0021_downgrade_refuses_when_an_upload_exists(scratch_schema, case):
+    """0020 has no upload_sources and its connector check refuses dropzone: the downgrade stops, naming 0021."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0021")
+    with engine.begin() as connection:
+        feed = connection.execute(text(
+            "INSERT INTO feeds (code, name, source_code, connector, source_ref) "
+            "VALUES ('upload_a', 'A', 'upl_upload_a', 'dropzone', 'dropzone/upload_a') RETURNING id")).scalar_one()
+        if case == "an upload source":
+            connection.execute(text(
+                "INSERT INTO upload_sources (code, feed_id, name, provider, description, licence, permitted_use, "
+                "redistribution, original_name, original_ref, manifest_ref, manifest, intake_options, created_by) "
+                "VALUES ('upl_upload_a', :f, 'A', 'P', 'D', 'L', 'U', 'R', 'a.csv', 'uploads/u/a.csv', 'raw/m.json', "
+                "'{}', '{\"sheet\": null, \"header_row\": 1}', 'p')"), {"f": feed})
+    with pytest.raises(DBAPIError, match="migration 0021 cannot be downgraded"):
+        command.downgrade(config, "0020")
+
+
+def _kind_check(connection):
+    return connection.execute(text(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_proposals_kind' "
+        "AND connamespace = current_schema()::regnamespace")).scalar_one()
+
+
+_EXTRACTED = ("INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles) "
+              "VALUES (:l, 'extracted_table', '{}', 'A2', ARRAY['backend_team'])")
+
+
+def test_0022_adds_the_extracted_table_kind_and_downgrade_restores_the_0021_list(scratch_schema):
+    """The new kind needs no feed (the feed is made at confirm); the 0021 list refuses it."""
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0021")
+    with engine.connect() as connection:
+        assert "extracted_table" not in _kind_check(connection)
+    command.upgrade(config, "0022")
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        assert "extracted_table" in _kind_check(connection)
+        log, _ = _a_log_and_a_feed(connection)
+        connection.execute(text(_EXTRACTED), {"l": log})  # no feed, no requirement
+        transaction.rollback()  # the downgrade below refuses while such a proposal exists
+    command.downgrade(config, "0021")
+    with engine.connect() as connection:
+        assert "extracted_table" not in _kind_check(connection) and "'review_summary'" in _kind_check(connection)
+
+
+def test_0022_downgrade_refuses_while_an_extracted_table_proposal_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0022")
+    with engine.begin() as connection:
+        log, _ = _a_log_and_a_feed(connection)
+        connection.execute(text(_EXTRACTED), {"l": log})
+    with pytest.raises(DBAPIError, match="migration 0022 cannot be downgraded"):
+        command.downgrade(config, "0021")
+
+
+def _0023_state(engine):
+    with engine.connect() as connection:
+        names = lambda sql: set(connection.execute(text(sql)).scalars())  # noqa: E731
+        return {
+            "tables": set(inspect(engine).get_table_names()),
+            "go_live_columns": {c["name"] for c in inspect(engine).get_columns("feed_go_lives")},
+            "kind_check": _kind_check(connection),
+            "go_live_guard": connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_guard_feed_go_live' "
+                "AND p.pronamespace = current_schema()::regnamespace")).scalar_one(),
+            "triggers": names("SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                              "WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal"),
+            "indexes": names("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"),
+            "constraints": names("SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace"),
+            "functions": names("SELECT proname FROM pg_proc WHERE pronamespace = current_schema()::regnamespace"),
+        }
+
+
+def test_0023_downgrade_restores_the_0022_schema(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    new_tables = {"transformations", "feed_key_policies"}
+    new_functions = {"amaze_valid_transform_steps", "amaze_valid_key_columns",
+                     "amaze_require_transformation_matches_proposal", "amaze_guard_feed_key_policy"}
+    new_triggers = {"trg_transformations_approved_proposal", "trg_transformations_b_matches_proposal",
+                    "trg_transformations_append_only", "trg_transformations_no_truncate",
+                    "trg_feed_key_policies_b_guard", "trg_feed_key_policies_append_only",
+                    "trg_feed_key_policies_no_truncate"}
+    new_indexes = {"uq_proposals_one_pending_transformation_per_feed_column", "uq_transformations_proposal_id"}
+    command.upgrade(config, "0023")
+    up = _0023_state(engine)
+    assert new_tables <= up["tables"] and "transformation_ids" in up["go_live_columns"]
+    assert "'transformation'" in up["kind_check"] and "transformation_ids" in up["go_live_guard"]
+    assert new_functions <= up["functions"] and new_triggers <= up["triggers"] and new_indexes <= up["indexes"]
+    assert "ck_proposals_names_a_transformation" in up["constraints"]
+    command.downgrade(config, "0022")
+    down = _0023_state(engine)
+    assert not new_tables & down["tables"] and "transformation_ids" not in down["go_live_columns"]
+    assert "'transformation'" not in down["kind_check"] and "'extracted_table'" in down["kind_check"]
+    assert "transformation_ids" not in down["go_live_guard"] and "rule_ids are not those" in down["go_live_guard"]
+    assert not new_functions & down["functions"] and not new_triggers & down["triggers"]
+    assert not new_indexes & down["indexes"] and "ck_proposals_names_a_transformation" not in down["constraints"]
+    command.upgrade(config, "0023")
+    assert _0023_state(engine) == up
+
+
+def test_0023_downgrade_refuses_while_a_transformation_proposal_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0023")
+    with engine.begin() as connection:
+        log, feed = _a_log_and_a_feed(connection)
+        connection.execute(text(
+            "INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles, feed_id) "
+            "VALUES (:l, 'transformation', '{\"source_field\": \"px\", \"steps\": []}', 'A2', "
+            "ARRAY['data_steward'], :f)"), {"l": log, "f": feed})
+    with pytest.raises(DBAPIError, match="migration 0023 cannot be downgraded"):
+        command.downgrade(config, "0022")
+
+
+def _0024_state(engine):
+    with engine.connect() as connection:
+        names = lambda sql: set(connection.execute(text(sql)).scalars())  # noqa: E731
+        return {
+            "tables": set(inspect(engine).get_table_names()),
+            "proposal_columns": {c["name"] for c in inspect(engine).get_columns("proposals")},
+            "status_check": connection.execute(text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_proposals_status' "
+                "AND connamespace = current_schema()::regnamespace")).scalar_one(),
+            "proposal_guard": connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_guard_proposal_change' "
+                "AND p.pronamespace = current_schema()::regnamespace")).scalar_one(),
+            "triggers": names("SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                              "WHERE c.relnamespace = current_schema()::regnamespace AND NOT t.tgisinternal"),
+            "indexes": names("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()"),
+            "constraints": names("SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace"),
+            "functions": names("SELECT proname FROM pg_proc WHERE pronamespace = current_schema()::regnamespace"),
+        }
+
+
+def test_0024_downgrade_restores_the_0023_schema(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    new_tables = {"onboarding_sessions", "onboarding_events", "onboarding_jobs"}
+    new_functions = {"amaze_edit_proposal", "amaze_guard_proposal_edit", "amaze_require_edit_of_superseded",
+                     "amaze_refuse_superseded_approval", "amaze_valid_step_states", "amaze_guard_onboarding_session",
+                     "amaze_guard_onboarding_job"}
+    new_triggers = {"trg_proposals_edit", "trg_proposals_superseded_has_an_edit", "trg_approvals_not_superseded",
+                    "trg_onboarding_sessions_a_guard", "trg_onboarding_sessions_no_truncate",
+                    "trg_onboarding_events_append_only", "trg_onboarding_events_no_truncate",
+                    "trg_onboarding_jobs_a_guard", "trg_onboarding_jobs_no_truncate"}
+    new_indexes = {"uq_proposals_edited_from", "uq_onboarding_jobs_one_active_per_session"}
+    new_constraints = {"ck_proposals_edited_by", "ck_proposals_edited_from_and_by_together",
+                       "fk_proposals_edited_from_proposals"}
+    command.upgrade(config, "0023")
+    before = _0024_state(engine)
+    command.upgrade(config, "0024")
+    up = _0024_state(engine)
+    assert new_tables <= up["tables"] and {"edited_from", "edited_by"} <= up["proposal_columns"]
+    assert "'superseded'" in up["status_check"] and "superseded" in up["proposal_guard"]
+    assert new_functions <= up["functions"] and new_triggers <= up["triggers"] and new_indexes <= up["indexes"]
+    assert new_constraints <= up["constraints"]
+    command.downgrade(config, "0023")
+    down = _0024_state(engine)
+    assert down == before
+    assert not new_tables & down["tables"] and "'superseded'" not in down["status_check"]
+    assert "moves only to approved or rejected" in down["proposal_guard"]
+    command.upgrade(config, "0024")
+    assert _0024_state(engine) == up
+
+
+@pytest.mark.parametrize("case", ["a superseded proposal", "a session"])
+def test_0024_downgrade_refuses_while_an_edit_or_a_session_exists(scratch_schema, case):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0024")
+    with engine.begin() as connection:
+        log, feed = _a_log_and_a_feed(connection)
+        if case == "a session":
+            states = ", ".join(f'"{step}": "waiting"' for step in (
+                "upload", "profile", "glossary", "mapping", "transformations", "rules", "go_live", "first_load",
+                "product_ready"))
+            connection.execute(text(
+                "INSERT INTO onboarding_sessions (feed_id, current_step, step_states, created_by) "
+                "VALUES (:f, 'profile', CAST(:s AS jsonb), 'dev-operator')"), {"f": feed, "s": "{" + states + "}"})
+        else:
+            old = connection.execute(text(
+                "INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles, feed_id) "
+                "VALUES (:l, 'mapping', '{\"source_field\": \"px\", \"candidates\": [\"a\", \"b\"]}', 'A2', "
+                "ARRAY['data_steward'], :f) RETURNING id"), {"l": log, "f": feed}).scalar_one()
+            connection.execute(text("SELECT amaze_edit_proposal(:o, "
+                                    "'{\"source_field\": \"px\", \"candidates\": [\"a\", \"b\"], \"recommended\": \"a\"}', 'x')"),
+                               {"o": old})
+    with pytest.raises(DBAPIError, match="migration 0024 cannot be downgraded"):
+        command.downgrade(config, "0023")
+
+
+def _0025_state(engine):
+    with engine.connect() as connection:
+        return {
+            "glossary_columns": {c["name"] for c in inspect(engine).get_columns("glossary_elements")},
+            "constraints": set(connection.execute(text(
+                "SELECT conname FROM pg_constraint WHERE connamespace = current_schema()::regnamespace")).scalars()),
+            "option_guard": connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_require_glossary_option' "
+                "AND p.pronamespace = current_schema()::regnamespace")).scalar_one(),
+        }
+
+
+def test_0025_downgrade_restores_the_0024_schema(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0024")
+    before = _0025_state(engine)
+    command.upgrade(config, "0025")
+    up = _0025_state(engine)
+    assert "unit" in up["glossary_columns"] and "ck_glossary_elements_unit" in up["constraints"]
+    assert "'unit'" in up["option_guard"] and "'unit'" not in before["option_guard"]
+    command.downgrade(config, "0024")
+    assert _0025_state(engine) == before
+    command.upgrade(config, "0025")
+    assert _0025_state(engine) == up
+
+
+def test_0025_downgrade_refuses_while_an_element_has_a_unit(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0025")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO glossary_elements (key, version, name, domain, data_type, definition, aliases, unit, created_by) "
+            "VALUES ('probe_ratio', 1, 'Probe ratio', 'estimates', 'decimal', 'Synthetic.', '{}', 'times', 'seed')"))
+    with pytest.raises(DBAPIError, match="migration 0025 cannot be downgraded"):
+        command.downgrade(config, "0024")
+
+
+def _0026_state(engine):
+    with engine.connect() as connection:
+        return {name: connection.execute(text(
+            "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :n "
+            "AND p.pronamespace = current_schema()::regnamespace"), {"n": name}).scalar_one()
+            for name in ("amaze_guard_feed_registration", "amaze_refuse_second_registration")}
+
+
+def test_0026_downgrade_restores_the_0015_registration_guards(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0025")
+    before = _0026_state(engine)
+    command.upgrade(config, "0026")
+    up = _0026_state(engine)
+    assert up != before and "visibility" in up["amaze_guard_feed_registration"]
+    assert "visibility" not in before["amaze_guard_feed_registration"]
+    command.downgrade(config, "0025")
+    assert _0026_state(engine) == before
+    command.upgrade(config, "0026")
+    assert _0026_state(engine) == up
 
 
 def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_schema):

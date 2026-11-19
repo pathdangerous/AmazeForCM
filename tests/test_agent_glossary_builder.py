@@ -107,4 +107,43 @@ def test_through_agent_run_with_the_mock(db_session, tmp_path):
                                         ("glossary_element", "venue_mic_code", "duplicate_alias", ["glossary_owner"],
                                          "pending")]
     rating = run.proposals[0].payload["options"][0]["element"]
-    assert rating == {**NEW_RATING, "aliases": []}
+    assert rating == {**NEW_RATING, "aliases": [], "unit": None}  # old: without "unit" (0025)
+
+
+# ---------------------------------------------------------------- phase 7.8, task 6.1: the security master (D8)
+
+DEMO = Path(__file__).resolve().parents[1] / "fixtures" / "synthetic" / "Synthetic_Security_Master.xlsx"
+
+
+def d8_input(feed_id, tmp_path):
+    from core.intake import canonical_csv, read_xlsx_bytes
+    from core.steps.profiling import profile_csv
+
+    table, _ = read_xlsx_bytes(DEMO.read_bytes(), original_name=DEMO.name)
+    csv = tmp_path / "master.csv"
+    csv.write_bytes(canonical_csv(table))
+    return builder_input(feed_id, *[column(c.name, c.type) for c in profile_csv(csv).columns])
+
+
+def test_the_d8_run_gives_every_one_of_the_thirty_columns_a_proposal(db_session, tmp_path):
+    from core.repositories.feeds import FeedRepository
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_security_master", name="Security master")
+    agent = GlossaryBuilderAgent(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "blob"))
+    agent_input = d8_input(feed.id, tmp_path)
+    assert len(agent_input.columns) == 30 and all(len(c.candidates) <= 10 for c in agent_input.columns)
+    end_read(db_session)
+    run = agent.run(db_session, agent_input)
+    payloads = {p.payload["source_field"]: p.payload for p in run.proposals}
+    assert list(payloads) == [c.name for c in agent_input.columns]  # all thirty, in file order
+    aliases = {c: (p["options"][0]["key"], p["options"][0]["alias"]) for c, p in payloads.items()
+               if p["outcome"] == "duplicate_alias"}
+    assert aliases == {"TICKER_NAME": ("ticker", "ticker_name"), "COUNTRY": ("country_of_risk", "country")}
+    new = {c: p["options"][0]["element"] for c, p in payloads.items() if p["outcome"] == "proposed"}
+    assert len(new) == 28
+    assert {e["domain"] for c, e in new.items() if c.startswith("BEST_")} == {"estimates"}
+    assert len([c for c in new if c.startswith("BEST_")]) == 22
+    assert len({e["key"] for e in new.values()}) == len({e["name"] for e in new.values()}) == 28
+    assert all(e["name"].strip() and e["definition"].strip() and e["unit"] is None for e in new.values())  # no unit guessed
+    assert {e["data_type"] for c, e in new.items() if c.startswith("BEST_")} == {"decimal"}
+    assert new["RECORD_DATE"]["data_type"] == "date" and new["SECTOR"]["data_type"] == "string"

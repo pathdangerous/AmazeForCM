@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "description": "Gold set for the intent prompt (S1 scope): six invented requirements. Each has one clearly right visibility and only channels offered in the input. Checks are deterministic (agents/evaluate_agents.py).",
+  "cases": [
+    {
+      "id": "public_filings",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000101",
+        "requirement_text": "Public filings of listed companies: annual and quarterly reports.",
+        "purpose": "Fundamental research",
+        "note": null,
+        "elements": [],
+        "terms": ["filings"],
+        "channels": [
+          {"channel": "exchanges", "visibility": "public"},
+          {"channel": "market_data_vendors", "visibility": "public"},
+          {"channel": "public_websites", "visibility": "public"},
+          {"channel": "internal_systems", "visibility": "private"}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "visibility", "value": "public"},
+        {"check": "nonempty", "path": "where_to_search"},
+        {"check": "in", "path": "where_to_search.*", "values": ["exchanges", "market_data_vendors", "public_websites"]},
+        {"check": "nonempty", "path": "reason"}
+      ]
+    },
+    {
+      "id": "internal_trade_blotter",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000102",
+        "requirement_text": "The firm's own trade blotter: every order and fill booked by our desks.",
+        "purpose": "Trade surveillance",
+        "note": "This data must stay inside the firm.",
+        "elements": [],
+        "terms": ["orders", "fills"],
+        "channels": [
+          {"channel": "exchanges", "visibility": "public"},
+          {"channel": "market_data_vendors", "visibility": "public"},
+          {"channel": "public_websites", "visibility": "public"},
+          {"channel": "internal_systems", "visibility": "private"}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "visibility", "value": "private"},
+        {"check": "nonempty", "path": "where_to_search"},
+        {"check": "in", "path": "where_to_search.*", "values": ["internal_systems"]}
+      ]
+    },
+    {
+      "id": "exchange_closing_prices",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000103",
+        "requirement_text": "Daily closing prices of equities listed on a stock exchange.",
+        "purpose": "Portfolio valuation",
+        "note": null,
+        "elements": [{"key": "close_price", "name": "Close price"}, {"key": "price_date", "name": "Price date"}],
+        "terms": [],
+        "channels": [
+          {"channel": "exchanges", "visibility": "public"},
+          {"channel": "market_data_vendors", "visibility": "public"},
+          {"channel": "public_websites", "visibility": "public"},
+          {"channel": "internal_systems", "visibility": "private"}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "visibility", "value": "public"},
+        {"check": "nonempty", "path": "where_to_search"},
+        {"check": "in", "path": "where_to_search.*", "values": ["exchanges", "market_data_vendors", "public_websites"]}
+      ]
+    },
+    {
+      "id": "internal_holdings",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000104",
+        "requirement_text": "Current holdings and positions of our funds, from the firm's portfolio system.",
+        "purpose": "Risk reporting",
+        "note": "Client positions are confidential.",
+        "elements": [{"key": "instrument_id", "name": "Instrument ID"}, {"key": "volume", "name": "Volume"}],
+        "terms": ["positions"],
+        "channels": [
+          {"channel": "exchanges", "visibility": "public"},
+          {"channel": "market_data_vendors", "visibility": "public"},
+          {"channel": "internal_systems", "visibility": "private"}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "visibility", "value": "private"},
+        {"check": "in", "path": "where_to_search.*", "values": ["internal_systems"]},
+        {"check": "nonempty", "path": "where_to_search"}
+      ]
+    },
+    {
+      "id": "bond_reference_two_channels",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000105",
+        "requirement_text": "Reference data on bonds listed on a public exchange: issue date, maturity date and coupon.",
+        "purpose": "Fixed income screening",
+        "note": null,
+        "elements": [{"key": "issue_date", "name": "Issue date"}, {"key": "maturity_date", "name": "Maturity date"},
+                     {"key": "coupon_rate", "name": "Coupon rate"}],
+        "terms": [],
+        "channels": [
+          {"channel": "exchanges", "visibility": "public"},
+          {"channel": "internal_systems", "visibility": "private"}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "visibility", "value": "public"},
+        {"check": "in", "path": "where_to_search.*", "values": ["exchanges"]},
+        {"check": "nonempty", "path": "where_to_search"}
+      ]
+    },
+    {
+      "id": "vendor_consensus_estimates",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000106",
+        "requirement_text": "Analyst consensus earnings estimates, bought from a data vendor.",
+        "purpose": "Equity research",
+        "note": null,
+        "elements": [],
+        "terms": ["consensus estimate", "earnings"],
+        "channels": [
+          {"channel": "exchanges", "visibility": "public"},
+          {"channel": "market_data_vendors", "visibility": "public"},
+          {"channel": "public_websites", "visibility": "public"},
+          {"channel": "internal_systems", "visibility": "private"}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "visibility", "value": "public"},
+        {"check": "contains", "path": "where_to_search", "value": "market_data_vendors"},
+        {"check": "in", "path": "where_to_search.*", "values": ["exchanges", "market_data_vendors", "public_websites"]}
+      ]
+    }
+  ]
+}

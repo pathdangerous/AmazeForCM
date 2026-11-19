@@ -123,7 +123,7 @@ async def test_find_source_commits_the_selection_and_the_fetch(own_schema, tmp_p
         == [("syn_exchange_volumes", "fetched")]
     assert committed(own_schema, "SELECT subject FROM notifications WHERE subject LIKE 'File ready%'") == [
         ("File ready to profile: syn_exchange_volumes",)
-    ]
+    ] * 2  # the backend team is dev-backend-team and, since 7.8, dev-operator
 
 
 # ---------------------------------------------------------------- 3b: one test per endpoint (assumption 57)
@@ -644,6 +644,65 @@ async def test_rules_propose_commits_the_proposals(own_schema, p6):
     assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(0,)]
 
 
+def messy_feed(engine) -> str:
+    """Phase 7.8, task 4.3: syn_messy_feed, registered, two columns mapped, one of them (instr_id) holding the
+    placeholder N/A in two rows; committed. Returns the feed id."""
+    from core.domain.profiling import FileColumn, SourceSpec
+    from core.repositories.feeds import FeedRepository
+    from tests.configured import approved_mapping
+    from tests.onboarded import registered_feed
+
+    columns = [FileColumn(name="instr_id", type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=8,
+                          placeholder_count=2, placeholder_values=["N/A"]),
+               FileColumn(name="traded_qty", type="BIGINT", null_count=0, null_rate=0.0, distinct_count=10)]
+    spec = SourceSpec(source_code="syn_messy_feed", elements=[], other_fields=[], columns={})
+    with get_sessionmaker(engine)() as session:
+        feed = FeedRepository(session).create_candidate(code="syn_messy_feed", name="Messy feed")
+        registered_feed(session, feed.id, spec=spec, columns=columns)
+        approved_mapping(session, feed.id, "instr_id", "instrument_id")
+        approved_mapping(session, feed.id, "traded_qty", "volume")
+        session.commit()
+    return str(feed.id)
+
+
+@pytest.mark.anyio
+async def test_transformations_propose_commits_the_proposals(own_schema, flow):
+    feed_id = messy_feed(own_schema)
+    async with flow() as f:
+        proposed = await amaze_post(f.client, f"feeds/{feed_id}/transformations/propose")
+    assert proposed["result"]["outcome"] == "transforms_proposed"
+    assert committed(own_schema, "SELECT payload->>'source_field', status, required_approver_roles::text "
+                                 "FROM proposals WHERE kind = 'transformation'") == [
+        ("instr_id", "pending", "{data_steward}")]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'TransformationAgent'") == [(1,)]
+    assert committed(own_schema, "SELECT count(*) FROM proposal_log_discards") == [(0,)]
+
+
+@pytest.mark.anyio
+async def test_a_transformation_decision_commits_the_transformation(own_schema, flow):
+    feed_id = messy_feed(own_schema)
+    async with flow() as f:
+        proposed = await amaze_post(f.client, f"feeds/{feed_id}/transformations/propose")
+        proposal_id = proposed["result"]["proposal_ids"][0]
+        await amaze_post(f.client, f"proposals/{proposal_id}/decision", {"decision": "approved"})
+    assert committed(own_schema, "SELECT decision, decided_by FROM approvals WHERE proposal_id = :p",
+                     p=proposal_id) == [("approved", "dev-data-steward")]
+    assert committed(own_schema, "SELECT source_field, version, created_by, steps::text, proposal_id::text = :p "
+                                 "FROM transformations", p=proposal_id) == [
+        ("instr_id", 1, "dev-data-steward", '[{"op": "placeholder_to_null", "values": ["N/A"]}]', True)]
+
+
+@pytest.mark.anyio
+async def test_the_key_policy_commits_the_next_version(own_schema, flow):
+    feed_id = messy_feed(own_schema)
+    async with flow() as f:
+        response = await f.client.put(f"/api/amaze/feeds/{feed_id}/key-policy", headers=SAM, json={
+            "policy": "hold", "key_columns": ["instr_id"], "reason": "A repeated id must stop the load."})
+        assert response.status_code == 200, response.text
+    assert committed(own_schema, "SELECT version, policy, key_columns::text, set_by FROM feed_key_policies") == [
+        (1, "hold", "{instr_id}", "dev-data-steward")]
+
+
 @pytest.mark.anyio
 async def test_the_rule_decision_commits_the_rule(own_schema, p6):
     async with p6() as p:
@@ -681,7 +740,7 @@ async def test_the_owners_decision_commits_the_go_live(own_schema, p6):
                                  "FROM feed_go_lives", p=proposal_id) == [(1, "dev-data-owner", True, True)]
     assert committed(own_schema, "SELECT role, decision FROM approvals WHERE proposal_id = :p", p=proposal_id) == [
         ("data_owner", "approved")]
-    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'Feed goes live%'") == [(2,)]
+    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'Feed goes live%'") == [(4,)]  # 7.8: dev-operator joins both
 
 
 @pytest.mark.anyio
@@ -714,3 +773,64 @@ async def test_the_daily_job_commits_the_scheduled_load(own_schema, p6):
                                  "WHERE l.purpose = 'scheduled'") == [(VOLUME_ROWS,)]
     assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject = 'Load loaded: "
                                  "syn_exchange_volumes'") == [(2,)]  # hypercare: the owner and operations
+
+
+@pytest.mark.anyio
+async def test_confirm_upload_commits_the_feed_its_fetch_its_source_and_the_notice(own_schema, tmp_path):
+    """Phase 7.8, task 2.4: the confirm endpoint on the app's real session. The feed page is read afterwards on a
+    new session, which also proves the catalogue dependency reads the committed upload source."""
+    from apps.api.deps import get_blob_store_port
+    from apps.api.main import app
+
+    blobs = LocalBlobStore(tmp_path / "blob")
+    headers = {"X-Dev-User": "dev-operator", "Content-Type": "application/octet-stream"}
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None, dropzone_root=tmp_path / "dz")
+                           ) as client:  # no session override
+        app.dependency_overrides[get_blob_store_port] = lambda: blobs
+        stored = await client.post("/api/amaze/uploads", params={"filename": "prices.csv"}, headers=headers,
+                                   content=b"id,name,qty\n1,a,2\n2,b,3\n")
+        confirmed = await client.post(
+            f"/api/amaze/uploads/{stored.json()['upload_id']}/confirm", headers={"X-Dev-User": "dev-operator"},
+            json={"filename": "prices.csv", "feed_code": "upload_prices", "feed_name": "Prices", "sheet": None,
+                  "header_row": None})
+        assert confirmed.status_code == 200, confirmed.text
+        page = await client.get(f"/api/amaze/feeds/{confirmed.json()['feed_id']}", headers={"X-Dev-User": "dev-operator"})
+        assert page.status_code == 200 and page.json()["source"]["code"] == "upl_upload_prices"
+
+    assert committed(own_schema, "SELECT code, stage, connector, source_code, source_ref FROM feeds") == [
+        ("upload_prices", "candidate", "dropzone", "upl_upload_prices", "dropzone/upload_prices")]
+    assert committed(own_schema, "SELECT s.outcome, s.size_bytes > 0 FROM source_fetches s") == [("fetched", True)]
+    assert committed(own_schema, "SELECT code, created_by, intake_options->>'header_row' FROM upload_sources") == [
+        ("upl_upload_prices", "dev-operator", "1")]
+    assert committed(own_schema, "SELECT subject FROM notifications WHERE subject LIKE 'File ready%'") == [
+        ("File ready to profile: upload_prices",)] * 2  # dev-backend-team and dev-operator
+
+
+@pytest.mark.anyio
+async def test_a_re_upload_puts_the_file_in_the_drop_folder_and_writes_no_row(
+        own_schema, tmp_path):
+    """Phase 7.8, task 4.4, happy path: the re-upload on the app's real session writes only a file (no row, no load)
+    and the newest file of the folder is the re-uploaded one."""
+    from apps.api.deps import get_blob_store_port
+    from apps.api.main import app
+    from ports.connectors.dropzone import DropzoneConnector
+
+    blobs = LocalBlobStore(tmp_path / "blob")
+    dropzone = tmp_path / "dz"
+    operator = {"X-Dev-User": "dev-operator"}
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None, dropzone_root=dropzone)) as client:
+        app.dependency_overrides[get_blob_store_port] = lambda: blobs
+        stored = await client.post("/api/amaze/uploads", params={"filename": "prices.csv"},
+                                   headers={**operator, "Content-Type": "application/octet-stream"},
+                                   content=b"id,name,qty\n1,a,2\n")
+        confirmed = await client.post(
+            f"/api/amaze/uploads/{stored.json()['upload_id']}/confirm", headers=operator,
+            json={"filename": "prices.csv", "feed_code": "upload_prices", "feed_name": "Prices", "sheet": None,
+                  "header_row": None})
+        again = await client.post(f"/api/amaze/feeds/{confirmed.json()['feed_id']}/files",
+                                  params={"filename": "next.csv"}, headers={**operator, "Content-Type": "application/octet-stream"},
+                                  content=b"id,name,qty\n2,b,3\n")
+        assert again.status_code == 200, again.text
+    assert committed(own_schema, "SELECT count(*) FROM loads") == [(0,)]
+    assert committed(own_schema, "SELECT count(*) FROM source_fetches") == [(1,)]  # the first file only
+    assert DropzoneConnector(dropzone).fetch("dropzone/upload_prices").content == b"id,name,qty\n2,b,3\n"

@@ -142,6 +142,64 @@ def test_the_release_threshold_defaults_to_ninety_and_is_between_one_and_a_hundr
     assert "TRUST_RELEASE_THRESHOLD=90" in (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
 
 
+def test_phase_7_8_model_settings_default(tmp_path, monkeypatch):
+    for name in ("LLM_TIMEOUT_SECONDS", "LLM_RETRY_AFTER_CAP_SECONDS", "MAX_MODEL_CALLS_PER_ONBOARDING"):
+        monkeypatch.delenv(name, raising=False)
+    settings = load_settings(tmp_path / "missing.env")
+    assert settings.llm_timeout_seconds == 60
+    assert settings.llm_retry_after_cap_seconds == 20
+    assert settings.max_model_calls_per_onboarding == 60
+
+
+def test_a_model_setting_is_read_from_an_env_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("LLM_TIMEOUT_SECONDS", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("LLM_TIMEOUT_SECONDS=5\nLLM_RETRY_AFTER_CAP_SECONDS=0\n", encoding="utf-8")
+    settings = load_settings(env_file)
+    assert settings.llm_timeout_seconds == 5
+    assert settings.llm_retry_after_cap_seconds == 0
+
+
+def test_a_zero_llm_timeout_is_refused_by_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ConfigError, match="LLM_TIMEOUT_SECONDS"):
+        load_settings(tmp_path / "missing.env")
+
+
 def test_env_example_names_the_phase_6_settings():
     text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
     assert "RULE_TIMEOUT_SECONDS=5" in text and "HYPERCARE_DAYS=10" in text
+
+
+def _example_assignments() -> dict[str, str]:
+    """KEY -> value (inline comment removed) of every assignment in .env.example."""
+    found = {}
+    for line in (REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            found[key.strip()] = value.split("#", 1)[0].strip()
+    return found
+
+
+def test_env_example_names_every_setting_with_its_default():
+    """Phase 7.8: every Settings field is in .env.example, and its value there is the default (so a copied
+    .env.example changes nothing). Paths are compared as written; the four selectors are checked above."""
+    example = _example_assignments()
+    missing = sorted(name.upper() for name in Settings.model_fields if name.upper() not in example)
+    assert not missing, f"add to .env.example: {missing}"
+    defaults = Settings(_env_file=None)
+    for name in ("require_four_eyes", "send_sample_values", "upload_max_mb", "auto_accept_confidence",
+                 "onboarding_job_lease_seconds", "llm_timeout_seconds", "llm_retry_after_cap_seconds",
+                 "max_model_calls_per_onboarding"):
+        value = getattr(defaults, name)
+        written = example[name.upper()]
+        assert (written.lower() == str(value).lower()) if isinstance(value, bool) else float(written) == float(value), (
+            name, written, value)
+
+
+def test_env_example_names_every_model_adapter_key_and_auth_defaults_to_key():
+    from ports.llm.azure_openai import AzureOpenAIProvider
+
+    example = _example_assignments()
+    assert set(AzureOpenAIProvider.ENV_KEYS) <= set(example)
+    assert example["AZURE_OPENAI_AUTH"] == "key"  # the adapter's default (ports/llm/azure_openai.py)

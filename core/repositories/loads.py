@@ -122,6 +122,13 @@ class LoadRepository:
                  .order_by(Row.received_at.desc(), Row.created_at.desc()))
         return {sha: load_id for sha, load_id in self._session.execute(query)}  # the oldest is read last, so it wins
 
+    def latest_released(self, feed_id: UUID) -> Load | None:
+        """The feed's newest released load (what a product shows), whatever came after it."""
+        query = (select(Row).where(Row.feed_id == feed_id, Row.status == "released")
+                 .order_by(Row.received_at.desc(), Row.created_at.desc()).limit(1))
+        row = self._session.scalars(query).first()
+        return None if row is None else Load.model_validate(row)
+
     def fully_loaded_scheduled(self, feed_id: UUID, limit: int) -> list[Load]:
         """The feed's newest scheduled loads that completed all four stages, whatever their status: a load held on
         arrival (breaking_held) is `held` too but has no stage, so the status alone would let it in."""

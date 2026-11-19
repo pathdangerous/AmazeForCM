@@ -16,7 +16,8 @@ def identity():
 
 
 def test_exactly_one_user_per_role(identity):
-    roles = Counter(role for user in identity.list_users() for role in user.roles)
+    # phase 7.8: dev-operator holds every role but requester (REQUIRE_FOUR_EYES=false); the others hold one each
+    roles = Counter(role for user in identity.list_users() if user.id != "dev-operator" for role in user.roles)
     assert roles == Counter({role: 1 for role in ROLES})
     assert len(ROLES) == 7
 
@@ -31,7 +32,7 @@ def test_ids_unique_and_synthetic(identity):
 def test_requester_is_consumer_others_are_backend(identity):
     assert [u.id for u in identity.list_users(app="consumer")] == ["dev-requester"]
     backend = identity.list_users(app="backend")
-    assert len(backend) == 6
+    assert len(backend) == 7  # phase 7.8: dev-operator
     assert "dev-requester" not in {u.id for u in backend}
 
 

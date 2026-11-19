@@ -85,6 +85,9 @@ class GlossaryBuilderInput(BaseModel):
     source_domain: str  # the domain most of the source's declared elements belong to
     domains: list[str]
     columns: list[NewColumn]
+    # D3 (phase 7.8): up to 5 example values for some of the columns above, only through samples_for_model()
+    # (SEND_SAMPLE_VALUES); {} otherwise
+    samples: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class GlossaryAnswer(BaseModel):
@@ -108,6 +111,18 @@ class GlossaryBuilderOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answers: list[GlossaryAnswer]
+
+
+class SeededAnswer(GlossaryAnswer):
+    """What step 05's after_answer returns for an answer whose new element got its unit from the seed
+    (fixtures/glossary/units.json). Not part of the model's schema (the agent's output_schema is
+    GlossaryBuilderOutput); an instance of it still is one, so Agent.run() accepts the copy."""
+
+    unit_source: Literal["model", "seed"] | None = None
+
+
+class SeededOutput(GlossaryBuilderOutput):
+    answers: list[SeededAnswer]
 
 
 class MappingInput(BaseModel):
@@ -174,6 +189,9 @@ class GlossaryProposalPayload(BaseModel):
     clashes: list[str] = Field(default_factory=list)  # the existing elements it hits
     reason: str
     run_id: UUID
+    # where the new element's unit came from: "model" (the agent gave it), "seed" (step 05 filled it from
+    # fixtures/glossary/units.json); None when the proposal has no new element or the element has no unit
+    unit_source: Literal["model", "seed"] | None = None
 
     @model_validator(mode="after")
     def _recommendation(self) -> GlossaryProposalPayload:

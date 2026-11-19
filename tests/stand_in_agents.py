@@ -49,7 +49,7 @@ class StandInAgent:
         self.during_call = during_call  # runs where the model call would be; gets the session
         self.inputs: list[BaseModel] = []
 
-    def run(self, session, agent_input: BaseModel, *, before_write=None) -> AgentRun:
+    def run(self, session, agent_input: BaseModel, *, before_write=None, after_answer=None) -> AgentRun:
         self.inputs.append(agent_input)
         if self.error is not None:
             raise self.error
@@ -62,6 +62,8 @@ class StandInAgent:
         # As Agent.run(): the call row first, then before_write; a refusal adds a discard row.
         log = ProposalLog(session)
         entry = log.record(agent_name=self.name, input_ref="stand-in://input", result=result)
+        if after_answer is not None:  # as Agent.run(): after the call row, before before_write
+            output = after_answer(output)
         if before_write is not None:
             try:
                 before_write(session)

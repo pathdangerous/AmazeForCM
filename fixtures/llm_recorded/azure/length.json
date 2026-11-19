@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-synthetic-0006",
+  "object": "chat.completion",
+  "created": 1790000005,
+  "model": "gpt-4o-2026-08-06",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "length",
+      "message": {"role": "assistant", "content": "{\"summary\": \"SYNTHETIC-CUT-OFF the summary of the synthetic feed is lon", "refusal": null}
+    }
+  ],
+  "usage": {"prompt_tokens": 210, "completion_tokens": 4096, "total_tokens": 4306}
+}

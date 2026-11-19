@@ -129,7 +129,7 @@ class GlossaryRepository:
         if words(option.alias) in {words(p) for p in (last.key, last.name, *last.aliases)}:
             raise AliasAlreadyOnElement(f"{last.key} (version {last.version}) already has the name {option.alias}")
         draft = GlossaryElementDraft(key=last.key, name=last.name, domain=last.domain, data_type=last.data_type,
-                                     definition=last.definition, aliases=[*last.aliases, option.alias])
+                                     definition=last.definition, aliases=[*last.aliases, option.alias], unit=last.unit)
         return self._insert(draft, version=last.version + 1, created_by=created_by, proposal_id=proposal_id)
 
     # ---- helpers

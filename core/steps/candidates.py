@@ -265,10 +265,13 @@ def glossary_payloads(agent_input: GlossaryBuilderInput,
                                           new_element=answer.new_element)
             if classified is None:
                 continue
+            new = next((o.element for o in classified.options if o.kind == "new_element"), None)
+            # the unit's source: "seed" when step 05's after_answer filled it (the answer says so), else the model's
+            unit_source = (getattr(answer, "unit_source", None) or "model") if new is not None and new.unit else None
             payloads.append(GlossaryProposalPayload(
                 source_field=column.name, outcome=classified.outcome, options=classified.options,
                 recommended=classified.recommended, clashes=classified.clashes, reason=answer.reason,
-                run_id=agent_input.run_id))
+                run_id=agent_input.run_id, unit_source=unit_source))
         except ValidationError as exc:
             first = exc.errors()[0]
             skipped[column.name] = f"{'.'.join(str(p) for p in first['loc'])}: {first['msg']}"

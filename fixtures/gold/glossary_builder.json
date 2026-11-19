@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "description": "Gold set for the glossary_builder prompt (step 05): six invented one-column inputs. A column named like a candidate's alias is that candidate (same_as); a column with no fitting candidate is a new element of the right type; two equally good candidates are left to the steward (neither).",
+  "cases": [
+    {
+      "id": "alias_of_close_price",
+      "input": {
+        "run_id": "00000000-0000-4000-8000-000000000401", "feed_id": "00000000-0000-4000-8000-000000000411",
+        "source_code": "syn_gold_glossary_a", "source_name": "Gold glossary feed A", "source_domain": "pricing",
+        "domains": ["pricing", "security_master"],
+        "columns": [
+          {"name": "closing_price", "type": "DOUBLE", "null_rate": 0.0, "distinct_count": 90, "declared_as": null, "sent_back": false,
+           "candidates": [
+             {"key": "close_price", "name": "Close price", "data_type": "decimal", "definition": "The last price of an instrument on a trading day.", "aliases": ["closing_price", "close"], "score": 0.98, "from_hint": false, "type_fits": true},
+             {"key": "open_price", "name": "Open price", "data_type": "decimal", "definition": "The first price of an instrument on a trading day.", "aliases": ["opening_price", "open"], "score": 0.41, "from_hint": false, "type_fits": true}
+           ]}
+        ]
+      },
+      "checks": [
+        {"check": "option_kind", "column": "closing_price", "kind": "same_as", "key": "close_price"}
+      ]
+    },
+    {
+      "id": "alias_of_isin",
+      "input": {
+        "run_id": "00000000-0000-4000-8000-000000000402", "feed_id": "00000000-0000-4000-8000-000000000412",
+        "source_code": "syn_gold_glossary_b", "source_name": "Gold glossary feed B", "source_domain": "security_master",
+        "domains": ["pricing", "security_master"],
+        "columns": [
+          {"name": "ISIN_CODE", "type": "VARCHAR", "null_rate": 0.0, "distinct_count": 120, "declared_as": null, "sent_back": false,
+           "candidates": [
+             {"key": "isin", "name": "ISIN", "data_type": "string", "definition": "The 12-character international securities identification number.", "aliases": ["isin_code", "isin_id"], "score": 0.97, "from_hint": false, "type_fits": true},
+             {"key": "cusip", "name": "CUSIP", "data_type": "string", "definition": "The 9-character North American securities identifier.", "aliases": ["cusip_code", "cusip_id"], "score": 0.35, "from_hint": false, "type_fits": true}
+           ]}
+        ]
+      },
+      "checks": [
+        {"check": "option_kind", "column": "ISIN_CODE", "kind": "same_as", "key": "isin"}
+      ]
+    },
+    {
+      "id": "new_decimal_estimate",
+      "input": {
+        "run_id": "00000000-0000-4000-8000-000000000403", "feed_id": "00000000-0000-4000-8000-000000000413",
+        "source_code": "syn_gold_glossary_c", "source_name": "Gold glossary feed C", "source_domain": "pricing",
+        "domains": ["pricing", "security_master"],
+        "columns": [
+          {"name": "BEST_EPS", "type": "DOUBLE", "null_rate": 0.1, "distinct_count": 80, "declared_as": null, "sent_back": false,
+           "candidates": [
+             {"key": "close_price", "name": "Close price", "data_type": "decimal", "definition": "The last price of an instrument on a trading day.", "aliases": ["closing_price", "close"], "score": 0.12, "from_hint": false, "type_fits": true},
+             {"key": "accrued_interest", "name": "Accrued interest", "data_type": "decimal", "definition": "Interest accrued on a bond since the last coupon date.", "aliases": ["accrued", "accrued_coupon"], "score": 0.08, "from_hint": false, "type_fits": true}
+           ]}
+        ]
+      },
+      "checks": [
+        {"check": "option_kind", "column": "BEST_EPS", "kind": "new_element"},
+        {"check": "equals", "path": "answers.0.new_element.data_type", "value": "decimal"}
+      ]
+    },
+    {
+      "id": "new_integer_count",
+      "input": {
+        "run_id": "00000000-0000-4000-8000-000000000404", "feed_id": "00000000-0000-4000-8000-000000000414",
+        "source_code": "syn_gold_glossary_d", "source_name": "Gold glossary feed D", "source_domain": "pricing",
+        "domains": ["pricing", "security_master"],
+        "columns": [
+          {"name": "ANALYST_COUNT", "type": "BIGINT", "null_rate": 0.0, "distinct_count": 14, "declared_as": null, "sent_back": false,
+           "candidates": [
+             {"key": "volume", "name": "Volume", "data_type": "integer", "definition": "The number of units traded on a trading day.", "aliases": ["traded_volume", "trade_volume"], "score": 0.15, "from_hint": false, "type_fits": true},
+             {"key": "lot_size", "name": "Lot size", "data_type": "integer", "definition": "The smallest tradable quantity of an instrument.", "aliases": ["round_lot", "trading_lot"], "score": 0.1, "from_hint": false, "type_fits": true}
+           ]}
+        ]
+      },
+      "checks": [
+        {"check": "option_kind", "column": "ANALYST_COUNT", "kind": "new_element"},
+        {"check": "equals", "path": "answers.0.new_element.data_type", "value": "integer"}
+      ]
+    },
+    {
+      "id": "two_equal_candidates",
+      "input": {
+        "run_id": "00000000-0000-4000-8000-000000000405", "feed_id": "00000000-0000-4000-8000-000000000415",
+        "source_code": "syn_gold_glossary_e", "source_name": "Gold glossary feed E", "source_domain": "pricing",
+        "domains": ["pricing", "security_master"],
+        "columns": [
+          {"name": "curr", "type": "VARCHAR", "null_rate": 0.0, "distinct_count": 4, "declared_as": null, "sent_back": false,
+           "candidates": [
+             {"key": "currency", "name": "Currency", "data_type": "string", "definition": "The currency an instrument is denominated in.", "aliases": ["denomination_currency", "instrument_currency"], "score": 0.6, "from_hint": false, "type_fits": true},
+             {"key": "price_currency", "name": "Price currency", "data_type": "string", "definition": "The currency a price is quoted in.", "aliases": ["pricing_currency", "quote_currency"], "score": 0.6, "from_hint": false, "type_fits": true}
+           ]}
+        ]
+      },
+      "checks": [
+        {"check": "option_kind", "column": "curr", "kind": "neither"}
+      ]
+    },
+    {
+      "id": "new_ratio_has_unit_times",
+      "input": {
+        "run_id": "00000000-0000-4000-8000-000000000406", "feed_id": "00000000-0000-4000-8000-000000000416",
+        "source_code": "syn_gold_glossary_f", "source_name": "Gold glossary feed F", "source_domain": "pricing",
+        "domains": ["pricing", "security_master"],
+        "columns": [
+          {"name": "PE_RATIO", "type": "DOUBLE", "null_rate": 0.05, "distinct_count": 95, "declared_as": null, "sent_back": false,
+           "candidates": []}
+        ]
+      },
+      "checks": [
+        {"check": "option_kind", "column": "PE_RATIO", "kind": "new_element"},
+        {"check": "equals", "path": "answers.0.new_element.unit", "value": "times"},
+        {"check": "equals", "path": "answers.0.new_element.data_type", "value": "decimal"}
+      ]
+    }
+  ]
+}

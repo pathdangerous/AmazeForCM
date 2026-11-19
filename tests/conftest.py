@@ -163,22 +163,44 @@ class NoGlossaryRuns:
         return None  # no run is running: no later kick
 
 
+class NoOnboardingJobs:
+    """A do-nothing onboarding worker (phase 7.8, task 5.4), like NoGlossaryRuns: an API test never starts a worker on
+    its own. kicked is set when a kick reaches it; a test that needs the worker calls its own drain()."""
+
+    def __init__(self):
+        import threading
+
+        self.kicked = threading.Event()
+
+    def drain(self) -> list:
+        self.kicked.set()
+        return []
+
+    def lease_wait(self) -> None:
+        return None
+
+
 @asynccontextmanager
-async def running_app(engine=None, settings=None, session=None, glossary_runs=None):
+async def running_app(engine=None, settings=None, session=None, glossary_runs=None, four_eyes_sync=None,
+                      onboarding_jobs=None):
     """Start the API (lifespan included) with optional overrides and yield an httpx client.
 
     session: every request uses this session (the test's rolled-back db_session), so a request sees
     rows the test created without committing them.
     glossary_runs: the step 05 worker; a do-nothing one unless the test gives its own. False: none is set, so
     the app builds its own from the settings (only for a test whose scheduler is a stub, which runs nothing).
+    four_eyes_sync: the start-up write of REQUIRE_FOUR_EYES (phase 7.8, D2); a no-op unless the test gives its own,
+    so no API test commits a settings row into the worker schema.
     """
     import httpx
 
     from apps.api.deps import get_app_settings, get_db_engine, get_db_session
     from apps.api.main import app
 
+    app.state.four_eyes_sync = four_eyes_sync or (lambda _app: None)
     if glossary_runs is not False:
         app.state.glossary_runs = glossary_runs or NoGlossaryRuns()
+    app.state.onboarding_jobs = onboarding_jobs or NoOnboardingJobs()
     if engine is not None:
         app.dependency_overrides[get_db_engine] = lambda: engine
     if settings is not None:
@@ -194,6 +216,10 @@ async def running_app(engine=None, settings=None, session=None, glossary_runs=No
         app.dependency_overrides.clear()
         if hasattr(app.state, "glossary_runs"):
             del app.state.glossary_runs
+        if hasattr(app.state, "onboarding_jobs"):
+            del app.state.onboarding_jobs
+        if hasattr(app.state, "four_eyes_sync"):
+            del app.state.four_eyes_sync
 
 
 # ---------------------------------------------------------------- phase 1: proposals and approvals

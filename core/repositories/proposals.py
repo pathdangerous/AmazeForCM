@@ -2,29 +2,42 @@
 
 Decision rules (phase 1 plan, assumption 8):
 - the roles in required_approver_roles decide in that order, one decision per step;
-- the same person cannot decide two steps of one proposal;
+- the same person cannot decide two steps of one proposal, unless REQUIRE_FOUR_EYES is off (phase 7.8; the
+  database says, core/repositories/settings.py);
 - the first rejection ends the proposal; nothing can be decided after approval or rejection.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from core.domain.proposal import Approval, Decision, Proposal, ProposalDraft, ProposalKind, ProposalStatus
+from core.domain.proposal import (
+    EDITABLE_KINDS,
+    Approval,
+    Decision,
+    Proposal,
+    ProposalDraft,
+    ProposalKind,
+    ProposalStatus,
+)
 from core.repositories.errors import (
     NotAnApprover,
     ProposalAlreadyDecided,
+    ProposalEditRefused,
     ProposalLogEntryNotFound,
     ProposalNotApproved,
     ProposalNotFound,
     SameApproverTwice,
     WrongProposalKind,
 )
+from core.repositories.settings import FourEyesRepository
 from core.repositories.tables import ApprovalRow, ProposalLogEntry, ProposalRow
 from ports.identity.base import User
 
@@ -92,6 +105,48 @@ class ProposalRepository:
         found = self.list_for_feed_column(kind, feed_id, source_field, status="pending")
         return found[0] if found else None
 
+    def edit(self, proposal_id: UUID, *, payload: dict[str, Any], user: User) -> Proposal:
+        """Edit a pending proposal before it is decided (phase 7.8 plan, assumption 36; migration 0024): a NEW pending
+        proposal with the edited payload, on the same logged call, and the old one becomes superseded, both in one
+        statement (amaze_edit_proposal). Only a person who could decide it may edit it. The database checks what an
+        edit may change (the column, a mapping's candidates, a glossary option's kind and key stay); a refusal is
+        ProposalEditRefused and changes nothing. Editing is not deciding: nobody's approval moves, and the new proposal
+        needs every approval step again. The caller owns the transaction and has locked what its step locks."""
+        row = self._row(proposal_id, lock=True)
+        if row.status != "pending":
+            raise ProposalAlreadyDecided(f"Proposal {proposal_id} is already {row.status}")
+        if row.kind not in EDITABLE_KINDS:
+            raise WrongProposalKind(f"A {row.kind} proposal cannot be edited")
+        if not set(row.required_approver_roles) & set(user.roles):
+            raise NotAnApprover(f"Proposal {proposal_id} needs one of {row.required_approver_roles}; "
+                                f"{user.id} has {user.roles}")
+        try:
+            with self._session.begin_nested():
+                new_id = self._session.execute(
+                    text("SELECT amaze_edit_proposal(:old, CAST(:payload AS jsonb), :by)"),
+                    {"old": proposal_id, "payload": json.dumps(payload), "by": user.id}).scalar_one()
+        except DBAPIError as error:
+            state = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
+            if state == "23514":  # check_violation: the edit guard's refusals
+                raise ProposalEditRefused(str(error.orig).splitlines()[0]) from error
+            raise
+        self._session.refresh(row)  # the function moved the old row to superseded behind the session's back
+        return Proposal.model_validate(self._row(new_id))
+
+    def lineage(self, proposal_id: UUID) -> list[Proposal]:
+        """The proposal's edit chain, oldest first: the one the model proposed, then each edit of it, to the last. A
+        proposal that was never edited is a chain of one."""
+        row = self._row(proposal_id)
+        chain = [row]
+        while chain[0].edited_from is not None:
+            chain.insert(0, self._row(chain[0].edited_from))
+        while True:
+            child = self._session.scalars(select(ProposalRow).where(ProposalRow.edited_from == chain[-1].id)).one_or_none()
+            if child is None:
+                break
+            chain.append(child)
+        return [Proposal.model_validate(r) for r in chain]
+
     def approvals(self, proposal_id: UUID) -> list[Approval]:
         rows = self._session.scalars(
             select(ApprovalRow).where(ApprovalRow.proposal_id == proposal_id).order_by(ApprovalRow.step)
@@ -111,7 +166,7 @@ class ProposalRepository:
         role = row.required_approver_roles[step - 1]
         if role not in user.roles:
             raise NotAnApprover(f"Step {step} of proposal {proposal_id} needs role {role}; {user.id} has {user.roles}")
-        if any(a.decided_by == user.id for a in done):
+        if any(a.decided_by == user.id for a in done) and FourEyesRepository(self._session).current():
             raise SameApproverTwice(f"{user.id} already decided a step of proposal {proposal_id}")
 
         approval = ApprovalRow(
@@ -124,6 +179,19 @@ class ProposalRepository:
             row.status, row.decided_at = "approved", datetime.now(UTC)
         self._session.flush()
         return Approval.model_validate(approval)
+
+    def approve_my_steps(self, proposal_id: UUID, *, user: User, note: str | None = None) -> list[Approval]:
+        """Approve the next step and, when REQUIRE_FOUR_EYES is off, every following step whose role the user
+        holds (each its own approvals row, so the audit shows every role), stopping at the first role the user
+        lacks. When it is on, exactly one step: the same as record_decision(..., "approved")."""
+        done = [self.record_decision(proposal_id, user=user, decision="approved", note=note)]
+        if FourEyesRepository(self._session).current():
+            return done
+        while True:
+            row = self._row(proposal_id)
+            if row.status != "pending" or row.required_approver_roles[len(self.approvals(proposal_id))] not in user.roles:
+                return done
+            done.append(self.record_decision(proposal_id, user=user, decision="approved", note=note))
 
     def require_approved(self, proposal_id: UUID, *, kind: ProposalKind) -> Proposal:
         """The proposal, if it is approved and of this kind; used before writing configuration."""

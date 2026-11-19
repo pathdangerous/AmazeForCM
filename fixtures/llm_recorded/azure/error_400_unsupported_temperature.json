@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "SYNTHETIC-TEMPERATURE-TEXT Only the default value is supported for this parameter.",
+    "type": "invalid_request_error",
+    "param": "temperature",
+    "code": "unsupported_value"
+  }
+}

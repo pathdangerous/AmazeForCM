@@ -7,7 +7,10 @@ requires-python = ">=3.14,<3.15"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m \"not live\""
+markers = [
+    "live: calls the real Azure OpenAI model; excluded from the default run, run with pytest -m live",
+]
 # Every warning fails the run. API tests use httpx.AsyncClient, not Starlette's TestClient, so the
 # httpx2 deprecation warning cannot appear (tests/test_no_starlette_testclient.py keeps it that way).
 filterwarnings = ["error"]

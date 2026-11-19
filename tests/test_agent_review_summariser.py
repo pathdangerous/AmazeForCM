@@ -21,7 +21,7 @@ FEED, MAPPING, RULE, LOAD = (uuid.uuid4() for _ in range(4))
 
 def facts(**more):
     base = dict(feed_id=FEED, feed_code="syn_x", source_name="X", owner_id="dev-data-owner", licence="L",
-                permitted_use="P", redistribution="R", visibility="open", mapped=[], unmapped_columns=[],
+                permitted_use="P", redistribution="R", mapped=[], unmapped_columns=[],
                 rejected_glossary=[], rules=[], test_load={"load_id": LOAD, "rows": 3, "stages": [], "flags": {}},
                 pending={"glossary": 0, "mapping": 0, "rule": 0}, mapping_ids=[MAPPING], rule_ids=[RULE],
                 test_load_id=LOAD)
@@ -58,6 +58,18 @@ def test_one_review_summary_proposal_with_the_pins_and_the_facts_code_filled(db_
     assert payload["unmapped_columns"] == ["note"]
     assert payload["rejected_glossary"] == [{"source_field": "maturity", "note": "No."}]
     assert payload["summary"] == run.output.summary and payload["highlights"] == run.output.highlights
+
+
+def test_the_input_and_the_rendered_prompt_never_mention_visibility():
+    """Phase 7.8, S8: the owner chooses visibility at go-live, after the summary is drafted (prompt v2)."""
+    from agents.prompt_loader import PromptLibrary
+    from agents.registry import PROMPT_VERSIONS
+
+    assert "visibility" not in ReviewSummaryInput.model_fields
+    assert PROMPT_VERSIONS["review_summariser"] == "v2"
+    messages = PromptLibrary().get("review_summariser").render(facts(unmapped_columns=["note"]))
+    rendered = " ".join(m.text() for m in messages).lower()
+    assert "visibility" not in rendered and "visible" not in rendered
 
 
 def test_the_mock_summary_names_the_unmapped_columns_and_rejected_proposals(db_session, tmp_path):

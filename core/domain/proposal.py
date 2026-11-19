@@ -22,11 +22,14 @@ ProposalKind = Literal[
     "mapping",           # 06 MappingAgent
     "rule",              # 09 RuleRecommenderAgent
     "review_summary",    # 11 ReviewSummariserAgent
+    "extracted_table",   # 00 TableExtractorAgent (phase 7.8): no feed yet; the feed is made when it is confirmed
+    "transformation",    # 10 TransformationAgent (phase 7.8): safe steps for one mapped column of a feed
 ]
 PROPOSAL_KINDS: tuple[str, ...] = get_args(ProposalKind)
 
 Autonomy = Literal["A1", "A2"]  # A3 is not used in the PoC
-ProposalStatus = Literal["pending", "approved", "rejected"]
+ProposalStatus = Literal["pending", "approved", "rejected", "superseded"]  # superseded: edited (phase 7.8, 0024)
+EDITABLE_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule")  # what an edit may change
 Decision = Literal["approved", "rejected"]
 
 
@@ -64,6 +67,8 @@ class Proposal(BaseModel):
     decided_at: datetime | None
     requirement_id: UUID | None
     feed_id: UUID | None
+    edited_from: UUID | None = None  # the proposal this one replaces (0024); the old one is superseded
+    edited_by: str | None = None  # who edited it
 
 
 class Approval(BaseModel):

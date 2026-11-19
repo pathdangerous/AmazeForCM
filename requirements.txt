@@ -14,3 +14,22 @@ httpx==0.28.1
 pyyaml==6.0.3
 # Step 02 profiling (phase 4): in-memory DuckDB over one CSV file. 1.5.6 has a cp314 Windows wheel.
 duckdb==1.5.6
+# Phase 7.8: the real model adapter (ports/llm/azure_openai.py) and what openai 3.45.0 pulled in (it uses httpx2,
+# not httpx). Installed with pip --uploaded-prior-to 2026-11-05.
+openai==3.45.0
+httpx2==2.16.0
+httpcore2==2.16.0
+jiter==0.18.0
+sniffio==1.3.1
+truststore==0.10.5
+# Phase 7.8 S2: file intake (XLSX, table PDFs). Installed with pip --uploaded-prior-to 2026-11-05.
+openpyxl==3.1.5
+et-xmlfile==2.0.0
+pdfplumber==0.11.10
+pdfminer.six==20260107
+pypdfium2==5.14.0
+pillow==13.0.0
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
+charset-normalizer==3.5.2

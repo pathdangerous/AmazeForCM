@@ -60,6 +60,8 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
+from core.repositories.source_fetches import SourceFetchRepository
+from core.repositories.transformations import TransformationRepository
 from core.steps.errors import needs_a_note
 from core.steps.result import StepResult
 from core.steps.rule_candidates import element_offers, feed_offers
@@ -176,13 +178,16 @@ def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue) 
             null_rate=column.null_rate if column else None, distinct_count=column.distinct_count if column else None,
             templates=element_offers(mapping.element_key, data_type)))
     entry = catalogue.get(feed.source_code) if feed.source_code else None
+    fetch = SourceFetchRepository(session).latest_fetched(feed_id)
     return RuleRecommenderInput(
+        current_file=LoadHistoryItem(label="current file", file_ref=fetch.blob_ref) if fetch else None,
         feed_id=feed.id, feed_code=feed.code, source_name=feed.name, elements=elements,
         feed_templates=feed_offers([e.key for e in elements]), existing_keys=_known_keys(session, feed_id),
         rejected_keys=sorted(RuleRepository(session).rejected_keys(feed_id)), mapping_ids=sorted(m.id for m in mappings),
         connector=feed.connector, history=list(entry.history) if entry else [],
         load_history=[LoadHistoryItem(label=f"load {load.received_at:%Y-%m-%d}", file_ref=load.file_ref)
-                      for load in LoadRepository(session).fully_loaded_scheduled(feed_id, LOAD_HISTORY)])
+                      for load in LoadRepository(session).fully_loaded_scheduled(feed_id, LOAD_HISTORY)],
+        transformations=TransformationRepository(session).current_for_feed(feed_id))
 
 
 # ---------------------------------------------------------------- the back-test (no connection held)
@@ -232,7 +237,7 @@ def _checked(agent_input: RuleRecommenderInput, output: RuleRecommenderOutput,
         else:
             live.append((index, rule))
     from_source = bool(agent_input.history) and agent_input.connector is not None
-    from_loads = bool(agent_input.load_history) and blob_store is not None
+    from_loads = bool(agent_input.load_history or agent_input.current_file) and blob_store is not None
     if not live or not (from_source or from_loads):
         for index, rule in live:
             verdicts[index] = rule.model_copy(update={"verdict": "kept", "backtest": Backtest(status="not_back_tested")})
@@ -247,6 +252,8 @@ def _run_history(agent_input: RuleRecommenderInput, live: list[tuple[int, Propos
                  blob_store: BlobStore | None = None, from_source: bool = True) -> dict[int, ProposedRule]:
     columns = [SimpleNamespace(source_field=e.source_field, element_key=e.key, data_type=e.data_type)
                for e in agent_input.elements]
+    # the file is read as the engine would read it: through the feed's approved transformations (task 4.3)
+    steps_of = {t.source_field.lower(): tuple(t.steps) for t in agent_input.transformations}
     deliveries: dict[int, list[Delivery]] = defaultdict(list)
     failed: dict[int, str] = {}
 
@@ -256,7 +263,7 @@ def _run_history(agent_input: RuleRecommenderInput, live: list[tuple[int, Propos
         except missing:
             _exclude(deliveries, live, label, why_missing)
             return
-        ran, why = _one_delivery(content, columns, [(i, r) for i, r in live if i not in failed], timeout)
+        ran, why = _one_delivery(content, columns, [(i, r) for i, r in live if i not in failed], timeout, steps_of)
         if why is not None:
             _exclude(deliveries, live, label, why)
             return
@@ -276,7 +283,8 @@ def _run_history(agent_input: RuleRecommenderInput, live: list[tuple[int, Propos
         finally:
             connector.close()
     if blob_store is not None:  # the feed's own loads, after the source's history; no connection is held
-        for item in agent_input.load_history:
+        own = [agent_input.current_file] if agent_input.current_file else []  # the profiled file, then the past loads
+        for item in own + list(agent_input.load_history):
             one(item.label, lambda ref=item.file_ref: blob_store.get(ref), BlobNotFound, "file_missing")
     verdicts = {}
     for index, rule in live:
@@ -304,7 +312,7 @@ def _exclude(deliveries: dict[int, list[Delivery]], live, label: str, why: str) 
         deliveries[index].append(Delivery(label=label, rows=0, flagged=0, excluded=why))
 
 
-def _one_delivery(content: bytes, columns, live, timeout: float):
+def _one_delivery(content: bytes, columns, live, timeout: float, steps_of=None):
     """((rows, {rule index: flagged rows, or the reason the rule failed}), None), or (None, why it is left out)."""
     box = Sandbox(timeout_seconds=timeout)
     try:
@@ -316,7 +324,7 @@ def _one_delivery(content: bytes, columns, live, timeout: float):
             except FileUnreadable as exc:
                 return None, f"DuckDB could not read the delivery: {exc}"
         header = [r[0] for r in box.execute("DESCRIBE raw") if r[0] != "_row"]
-        found, missing, _ = match_header(columns, header)
+        found, missing, _ = match_header(columns, header, steps_of)
         if missing:
             return None, f"{len(missing)} mapped column(s) are not in the file: {', '.join(missing)}"
         rows = box.execute("SELECT count(*) FROM raw")[0][0]
@@ -393,10 +401,12 @@ def decide_rule(session: Session, *, proposal_id: UUID, user: User, decision: Li
     if role not in user.roles:
         raise NotAnApprover(f"Step {step} of proposal {proposal_id} needs role {role}; {user.id} has {user.roles}")
     payload = proposal.payload
-    proposals.record_decision(proposal_id, user=user, decision=decision, note=note)
     if decision == "rejected":
+        proposals.record_decision(proposal_id, user=user, decision=decision, note=note)
         return RuleRejected(proposal_id=proposal_id, rule_key=payload["rule_key"], rejected_by_role=role)
-    if step < len(proposal.required_approver_roles):
+    # phase 7.8, D2: with REQUIRE_FOUR_EYES off, one person who holds the next roles too decides them all in one go
+    proposals.approve_my_steps(proposal_id, user=user, note=note)
+    if proposals.get(proposal_id).status == "pending":
         if notifier is not None:
             for checker in checkers:
                 notifier.notify(recipient=checker, subject=f"Rule waits for the checker: {payload['rule_key']} of {feed.code}",

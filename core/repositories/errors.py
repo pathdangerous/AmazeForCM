@@ -74,6 +74,23 @@ class FeedNotRegistered(RepositoryError):
     """Loads arrive only for registered feeds."""
 
 
+class FeedHasProduct(RepositoryError):
+    """A registered feed's visibility is revised only before its product exists (migration 0026): the product
+    keeps the visibility of the registration it was created under."""
+
+
+class UploadNotFound(RepositoryError, LookupError):
+    """No uploaded file is stored under this upload id (phase 7.8, task 2.4)."""
+
+
+class NotADropzoneFeed(RepositoryError):
+    """A file was re-uploaded for a feed that does not read a drop folder (phase 7.8, task 4.4)."""
+
+
+class UploadSourceNotFound(RepositoryError, LookupError):
+    """No upload source has this code."""
+
+
 class DuplicateFeedSource(RepositoryError):
     """Another feed already reads this source: one feed per source (phase 3 plan, assumption 11)."""
 
@@ -177,6 +194,10 @@ class GlossaryRunNotFound(RepositoryError, LookupError):
     """No glossary run has this id."""
 
 
+class SourceFieldNotMapped(RepositoryError):
+    """The column has no mapping on the feed, so it cannot be transformed (phase 7.8, task 4.1)."""
+
+
 # ---- loads and products
 
 
@@ -218,6 +239,14 @@ class ConfigurationChangedMeanwhile(RepositoryError):
     """While the agent answered, the feed's current mappings changed (steps 09 and 11): the answer is discarded."""
 
 
+class NothingToTransform(RepositoryError):
+    """The feed has no mapped column left that is not already transformed or waiting for a decision (step 10)."""
+
+
+class TransformationAlreadyProposed(RepositoryError):
+    """While the agent answered, a column got a pending transformation proposal: the answer is discarded."""
+
+
 class LoadNotReceived(RepositoryError):
     """The load is no longer received (another run finished it): the engine writes nothing."""
 
@@ -248,3 +277,51 @@ class DuplicateProductCode(RepositoryError):
 
 class ConsumerRequestNotFound(RepositoryError, LookupError):
     """The requester has no request with this id (it may not exist, or it may be someone else's)."""
+
+
+# ---- onboarding sessions and proposal edits (phase 7.8, migration 0024)
+
+
+class OnboardingNotFound(RepositoryError, LookupError):
+    """No onboarding session has this id."""
+
+
+class OnboardingAlreadyExists(RepositoryError):
+    """The feed already has an onboarding session (one per feed)."""
+
+
+class JobSuperseded(RepositoryError):
+    """The onboarding job is no longer running on this attempt (its lease was taken again, or it was discarded)."""
+
+
+class ProposalEditRefused(RepositoryError):
+    """The database refused an edit of a proposal (migration 0024): nothing changed, the old proposal is still pending."""
+
+
+# ---- the onboarding workspace (phase 7.8, task 5.3); the API answers each with 409
+
+
+class DecisionNeeded(RepositoryError):
+    """Approve & next is refused: an item of the step needs a person's decision first (accept, edit or reject it).
+    `items` are the workspace items that wait."""
+
+    def __init__(self, message: str, items: list | None = None):
+        super().__init__(message)
+        self.items = items or []
+
+
+class BackNotAllowed(RepositoryError):
+    """Back is refused: the owner approved go-live, the feed is registered (profile and upload stay), or the step is
+    not one the session has reached."""
+
+
+class StepNotEnterable(RepositoryError):
+    """Only the current step is entered (again); a finished session enters nothing."""
+
+
+class StepJobActive(RepositoryError):
+    """The session's agent is already working on a step (one queued or running job per session)."""
+
+
+class StepNotReady(RepositoryError):
+    """Approve & next needs a step whose agent has answered: it is waiting, working or failed."""

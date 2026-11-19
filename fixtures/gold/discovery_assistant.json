@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "description": "Gold set for the discovery_assistant prompt (step 17 suggestions): six invented searches. Only element keys from the input glossary may be suggested; a word that matches nothing gets no suggestion.",
+  "cases": [
+    {
+      "id": "redemption_is_maturity",
+      "input": {
+        "query": "bond coupon and redemption date",
+        "unmatched_terms": ["redemption"],
+        "glossary": [
+          {"key": "maturity_date", "name": "Maturity date", "aliases": ["maturity", "redemption_date"]},
+          {"key": "issue_date", "name": "Issue date", "aliases": ["issuance_date", "date_of_issue"]},
+          {"key": "coupon_rate", "name": "Coupon rate", "aliases": ["coupon", "interest_rate"]}
+        ]
+      },
+      "checks": [
+        {"check": "contains", "path": "suggestions.*.element_key", "value": "maturity_date"},
+        {"check": "in", "path": "suggestions.*.element_key", "values": ["maturity_date", "issue_date", "coupon_rate"]}
+      ]
+    },
+    {
+      "id": "closing_is_close_price",
+      "input": {
+        "query": "closing prices for last week",
+        "unmatched_terms": ["closing"],
+        "glossary": [
+          {"key": "close_price", "name": "Close price", "aliases": ["closing_price", "close"]},
+          {"key": "open_price", "name": "Open price", "aliases": ["opening_price", "open"]},
+          {"key": "price_date", "name": "Price date", "aliases": ["pricing_date", "as_of_date"]}
+        ]
+      },
+      "checks": [
+        {"check": "contains", "path": "suggestions.*.element_key", "value": "close_price"},
+        {"check": "in", "path": "suggestions.*.element_key", "values": ["close_price", "open_price", "price_date"]}
+      ]
+    },
+    {
+      "id": "trading_symbol_is_ticker",
+      "input": {
+        "query": "trading symbol of each stock",
+        "unmatched_terms": ["trading symbol"],
+        "glossary": [
+          {"key": "ticker", "name": "Ticker", "aliases": ["ticker_symbol", "trading_symbol"]},
+          {"key": "isin", "name": "ISIN", "aliases": ["isin_code", "isin_id"]},
+          {"key": "figi", "name": "FIGI", "aliases": ["figi_code", "figi_id"]}
+        ]
+      },
+      "checks": [
+        {"check": "contains", "path": "suggestions.*.element_key", "value": "ticker"},
+        {"check": "in", "path": "suggestions.*.element_key", "values": ["ticker", "isin", "figi"]}
+      ]
+    },
+    {
+      "id": "offer_is_ask_price",
+      "input": {
+        "query": "bid and offer quotes",
+        "unmatched_terms": ["offer"],
+        "glossary": [
+          {"key": "ask_price", "name": "Ask price", "aliases": ["ask", "offer_price", "offer"]},
+          {"key": "bid_price", "name": "Bid price", "aliases": ["bid", "bid_quote"]},
+          {"key": "mid_price", "name": "Mid price", "aliases": ["mid", "mid_quote"]}
+        ]
+      },
+      "checks": [
+        {"check": "contains", "path": "suggestions.*.element_key", "value": "ask_price"},
+        {"check": "in", "path": "suggestions.*.element_key", "values": ["ask_price", "bid_price", "mid_price"]}
+      ]
+    },
+    {
+      "id": "nothing_matches",
+      "input": {
+        "query": "weather forecast for the trading floor",
+        "unmatched_terms": ["weather forecast"],
+        "glossary": [
+          {"key": "close_price", "name": "Close price", "aliases": ["closing_price", "close"]},
+          {"key": "isin", "name": "ISIN", "aliases": ["isin_code", "isin_id"]},
+          {"key": "currency", "name": "Currency", "aliases": ["denomination_currency", "ccy"]}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "suggestions", "value": []}
+      ]
+    },
+    {
+      "id": "one_term_matches_one_does_not",
+      "input": {
+        "query": "ccy and weather of each listing",
+        "unmatched_terms": ["ccy", "weather"],
+        "glossary": [
+          {"key": "currency", "name": "Currency", "aliases": ["denomination_currency", "ccy"]},
+          {"key": "volume", "name": "Volume", "aliases": ["traded_volume", "trade_volume"]}
+        ]
+      },
+      "checks": [
+        {"check": "contains", "path": "suggestions.*.element_key", "value": "currency"},
+        {"check": "not_contains", "path": "suggestions.*.term", "value": "weather"},
+        {"check": "in", "path": "suggestions.*.element_key", "values": ["currency", "volume"]}
+      ]
+    }
+  ]
+}

@@ -25,8 +25,9 @@ from core.domain.go_live import GoLive
 from core.domain.load import Load, LoadCertification, LoadStage
 from core.domain.mapping import GlossaryRun
 from core.domain.product import Product
-from core.domain.profiling import FeedProfile, FeedSignoff
+from core.domain.profiling import FeedProfile, FeedSignoff, ProfileIssue
 from core.domain.proposal import Approval
+from core.domain.transformation import Transformation
 from core.domain.sourcing import SourceFetch, SourceSummary
 from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.configuration import MappingRepository, RuleRepository
@@ -43,8 +44,10 @@ from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.repositories.transformations import TransformationRepository
 from core.steps.candidates import candidate_list, covered_by, new_columns
-from core.steps.s02_profile import ProfileSummary, summary_of
+from core.steps.s02_profile import ProfileSummary, _key_part, summary_of
+from core.steps.s10_transform import EffectiveKeyPolicy, effective_key_policy
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
 
 FeedAction = Literal["profile", "summarise", "sign_off", "register"]
@@ -118,6 +121,17 @@ class ProposalOnPage(BaseModel):
     decisions: list[Approval]
 
 
+class TransformationsOnPage(BaseModel):
+    """Phase 7.8, task 4.3: the approved transformations (the highest version per mapped column), the transformation
+    proposals waiting for the data steward (newest first) and what a load does with duplicated keys now."""
+
+    model_config = ConfigDict(frozen=True)
+
+    current: list[Transformation]
+    pending: list[ProposalOnPage]
+    key_policy: EffectiveKeyPolicy
+
+
 class FeedPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -143,6 +157,10 @@ class FeedPage(BaseModel):
     parked_columns: list[str] = []  # phase 7: step 12's new columns, not mapped yet
     # phase 7.5, P11: the title of every requirement in the latest profile's coverage, selecting the feed or not
     coverage_titles: dict[UUID, str] = {}
+    # phase 7.8, task 3.1: what code found in the latest profile's file (read only; the UI shows it later)
+    issues: list[ProfileIssue] = []
+    # phase 7.8, task 4.3: step 10 (set by feed_page(); the default keeps a hand-built page valid)
+    transformations: TransformationsOnPage | None = None
 
 
 class RuleOnPage(BaseModel):
@@ -228,6 +246,14 @@ def _rules_on_page(session: Session, feed: Feed) -> RulesOnPage:
                      reverse=True)
     return RulesOnPage(current=current, pending=[proposal_on_page(session, p.id) for p in pending],
                        rejected_keys=sorted(rules.rejected_keys(feed.id)))
+
+
+def _transformations_on_page(session: Session, feed: Feed) -> TransformationsOnPage:
+    pending = sorted(ProposalRepository(session).list_for_feed(feed.id, "transformation", status="pending"),
+                     key=lambda p: (p.created_at, str(p.id)), reverse=True)
+    return TransformationsOnPage(current=TransformationRepository(session).current_for_feed(feed.id),
+                                 pending=[proposal_on_page(session, p.id) for p in pending],
+                                 key_policy=effective_key_policy(session, feed.id))
 
 
 def _go_live_on_page(session: Session, feed: Feed, today: date) -> GoLiveOnPage:
@@ -336,7 +362,8 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
     proposal = summary_of(session, feed_id=feed.id, profile_id=latest.id) if latest else None
     summary = None if proposal is None else ProfileSummary(
         proposal_id=proposal.id, log_id=proposal.proposal_log_id, profile_id=latest.id, **{
-            k: proposal.payload[k] for k in ("summary", "recommended_outcome", "gaps", "reasons")})
+            k: proposal.payload[k] for k in ("summary", "recommended_outcome", "gaps", "reasons")},
+        **_key_part(proposal.payload))
     signoffs = FeedSignoffRepository(session).history(feed.id)
     last_file = SourceFetchRepository(session).latest(feed.id)
     has_file = SourceFetchRepository(session).latest_fetched(feed.id) is not None
@@ -362,7 +389,8 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         loads=[load_on_page(session, load) for load in LoadRepository(session).list_for_feed(feed.id)[:LOADS_ON_PAGE]],
         product=ProductRepository(session).for_feed(feed.id), parked_columns=parked_columns(session, feed.id),
         coverage_titles={c.requirement_id: requirements.get(c.requirement_id).title
-                         for c in (latest.coverage if latest else [])})
+                         for c in (latest.coverage if latest else [])},
+        issues=latest.issues if latest else [], transformations=_transformations_on_page(session, feed))
 
 
 FeedPage.model_rebuild()  # its phase 6 sections are declared below it

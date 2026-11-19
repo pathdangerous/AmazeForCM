@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "description": "Gold set for the transformation prompt (step 10 cleaning steps): six invented feeds. The right steps follow the facts code found: the detected date format, the listed placeholder spellings, and no step for a clean column.",
+  "cases": [
+    {
+      "id": "text_date_dd_mm_yyyy",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000501", "feed_code": "syn_gold_clean_a",
+        "columns": [
+          {"source_field": "TRADE_DT", "element_key": "price_date", "element_type": "date", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 100,
+           "placeholder_values": [], "placeholder_count": 0, "text_date_format": "DD-MM-YYYY", "date_format_ambiguous": false, "all_empty": false, "constant": false}
+        ]
+      },
+      "checks": [
+        {"check": "op_present", "column": "TRADE_DT", "op": "parse_date", "arg": "DD-MM-YYYY"}
+      ]
+    },
+    {
+      "id": "placeholders_in_a_number_column",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000502", "feed_code": "syn_gold_clean_b",
+        "columns": [
+          {"source_field": "VOLUME", "element_key": "volume", "element_type": "integer", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 100,
+           "placeholder_values": ["-", "N/A"], "placeholder_count": 12, "text_date_format": null, "date_format_ambiguous": false, "all_empty": false, "constant": false}
+        ]
+      },
+      "checks": [
+        {"check": "op_present", "column": "VOLUME", "op": "placeholder_to_null", "arg": "N/A"},
+        {"check": "op_present", "column": "VOLUME", "op": "placeholder_to_null", "arg": "-"}
+      ]
+    },
+    {
+      "id": "clean_text_column",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000503", "feed_code": "syn_gold_clean_c",
+        "columns": [
+          {"source_field": "ISIN", "element_key": "isin", "element_type": "string", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 100,
+           "placeholder_values": [], "placeholder_count": 0, "text_date_format": null, "date_format_ambiguous": false, "all_empty": false, "constant": false}
+        ]
+      },
+      "checks": [
+        {"check": "no_steps", "column": "ISIN"}
+      ]
+    },
+    {
+      "id": "ambiguous_date_lowers_confidence",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000504", "feed_code": "syn_gold_clean_d",
+        "columns": [
+          {"source_field": "ISSUED", "element_key": "issue_date", "element_type": "date", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 100,
+           "placeholder_values": [], "placeholder_count": 0, "text_date_format": "DD/MM/YYYY", "date_format_ambiguous": true, "all_empty": false, "constant": false}
+        ]
+      },
+      "checks": [
+        {"check": "op_present", "column": "ISSUED", "op": "parse_date", "arg": "DD/MM/YYYY"},
+        {"check": "number_at_most", "path": "columns.0.confidence", "value": 0.6}
+      ]
+    },
+    {
+      "id": "three_columns_each_its_own_answer",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000505", "feed_code": "syn_gold_clean_e",
+        "columns": [
+          {"source_field": "ISIN", "element_key": "isin", "element_type": "string", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 50,
+           "placeholder_values": [], "placeholder_count": 0, "text_date_format": null, "date_format_ambiguous": false, "all_empty": false, "constant": false},
+          {"source_field": "TRADE_DT", "element_key": "price_date", "element_type": "date", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 50,
+           "placeholder_values": [], "placeholder_count": 0, "text_date_format": "YYYYMMDD", "date_format_ambiguous": false, "all_empty": false, "constant": false},
+          {"source_field": "CLOSE", "element_key": "close_price", "element_type": "decimal", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 50,
+           "placeholder_values": ["NA"], "placeholder_count": 3, "text_date_format": null, "date_format_ambiguous": false, "all_empty": false, "constant": false}
+        ]
+      },
+      "checks": [
+        {"check": "no_steps", "column": "ISIN"},
+        {"check": "op_present", "column": "TRADE_DT", "op": "parse_date", "arg": "YYYYMMDD"},
+        {"check": "op_present", "column": "CLOSE", "op": "placeholder_to_null", "arg": "NA"},
+        {"check": "in", "path": "columns.*.steps.*.op", "values": ["trim", "placeholder_to_null", "parse_date", "cast", "rename"]}
+      ]
+    },
+    {
+      "id": "iso_date_and_no_rename",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000506", "feed_code": "syn_gold_clean_f",
+        "columns": [
+          {"source_field": "MATURITY", "element_key": "maturity_date", "element_type": "date", "duckdb_type": "VARCHAR", "null_count": 0, "row_count": 80,
+           "placeholder_values": [], "placeholder_count": 0, "text_date_format": "YYYY-MM-DD", "date_format_ambiguous": false, "all_empty": false, "constant": false}
+        ]
+      },
+      "checks": [
+        {"check": "op_present", "column": "MATURITY", "op": "parse_date", "arg": "YYYY-MM-DD"},
+        {"check": "op_absent", "column": "MATURITY", "op": "rename"}
+      ]
+    }
+  ]
+}

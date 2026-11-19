@@ -19,7 +19,7 @@ FeedStage = Literal["candidate", "registered", "rejected"]
 FEED_STAGES: tuple[str, ...] = get_args(FeedStage)
 
 # How a feed's source is read (phase 3): one of the source connectors in ports/connectors.
-Connector = Literal["local_file", "http"]
+Connector = Literal["local_file", "http", "dropzone"]  # dropzone: an uploaded file (0021; its connector comes in 4.4)
 CONNECTORS: tuple[str, ...] = get_args(Connector)
 
 

@@ -118,6 +118,13 @@ received is abandoned after `LOAD_STALE_MINUTES` (30). The Notifications tab of 
 told. On `amaze`, as Opal, Load now on Exchange daily volumes: the first load passes (no hash is stored for the
 phase 6 load), the second is quarantined; the six requirements waiting on it become Ready or are listed as not
 covered.
+
+REQUIRE_FOUR_EYES (phase 7.8): `false` (the default) lets one operator hold every role (`dev-operator`, Olive Operator)
+and approve every step of a proposal in one click; `true` keeps today's rules exactly (steward then checker, the named
+owner alone approves a go-live, the same person cannot decide two steps). The API writes the value to the append-only
+`amaze_settings` table at start-up (a new version only when it changed), and the database guards read that row; no row
+means `true`. `/api/health` shows it as `four_eyes`.
+
 `/api/health` returns 503 and lists `unavailable` adapters when any selected adapter is still an
 Azure stub.
 
@@ -178,7 +185,85 @@ Then, after every migration (the evaluation database must be at the same head), 
 ```
 
 Adapters are chosen in `.env` (`LLM_PROVIDER`, `STORAGE_PROVIDER`, ...). The local ones are the
-defaults; the Azure ones are stubs until the move and raise `NotImplementedError`.
+defaults; the Azure ones are stubs until the move and raise `NotImplementedError`, except the model
+adapter, which is real (phase 7.8).
+
+### Live evaluation (phase 7.8)
+
+Every agent prompt but mapping has a gold set, `fixtures/gold/<prompt_id>.json` (six invented cases; three for
+`table_extractor`), scored by fixed checks on the structured output. The command uses the same `amaze_eval` database
+and refusals as the mapping evaluation above, and the provider `LLM_PROVIDER` selects:
+
+```powershell
+.\.venv\Scripts\python -m agents.evaluate_agents --runs 2 --mappings   # all agents twice, plus the mapping gold set
+.\.venv\Scripts\python -m agents.evaluate_agents --agents intent,profiler --runs 2 --max-calls 50 --json eval.json
+```
+
+It counts the planned calls first (cases x runs, plus 4 mapping sources x runs) and refuses to start above
+`--max-calls` (default 200; `--runs 2 --mappings` plans 110). It prints counts and latency only, never a model
+answer: per agent and run the cases, passes, failures, mean latency and requests made (retries included), the failed
+case ids with the failed check's name, a `FLAG` line when two runs of an agent differ by more than one pass, and the
+total.
+
+### Real model (phase 7.8)
+
+`LLM_PROVIDER=azure_openai` uses the Azure OpenAI adapter. Put these in `.env` (never in the repository).
+`/api/health` lists `llm` as unavailable until the required ones are set.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `AZURE_OPENAI_ENDPOINT` | none | The resource endpoint (required). |
+| `AZURE_OPENAI_DEPLOYMENT` | none | The deployment every prompt uses (required). |
+| `AZURE_OPENAI_DEPLOYMENT_SMALL` | empty | A lighter deployment for the `intent` and `discovery_assistant` prompts; empty means use the main one. |
+| `AZURE_OPENAI_API_VERSION` | none | The API version to call (required). |
+| `AZURE_OPENAI_AUTH` | `key` | `key` uses the API key; `entra` uses `DefaultAzureCredential` and needs the `azure-identity` package. |
+| `AZURE_OPENAI_API_KEY` | none | The API key (required when `AZURE_OPENAI_AUTH` is `key` or empty). |
+| `LLM_TIMEOUT_SECONDS` | `60` | How long one model call may take before it counts as a timeout. |
+| `LLM_RETRY_AFTER_CAP_SECONDS` | `20` | The longest `Retry-After` the adapter waits on an HTTP 429 before retrying (at most twice); a longer one fails at once. |
+| `MAX_MODEL_CALLS_PER_ONBOARDING` | `60` | The cap on model calls in one onboarding (enforced from stage S5). |
+
+### Uploading a file (phase 7.8)
+
+The operator uploads a CSV, TSV, XLSX or table PDF in backend-ui ("Upload a file"); `UPLOAD_MAX_MB` (default 50)
+is the size limit. Measured on the development laptop (2026-11-19):
+
+| Format | Rows × columns | Time |
+|---|---|---|
+| CSV | 100,000 × 10 | about 3.1 s to inspect, confirm and profile (`tests/test_s00_intake.py`) |
+| XLSX | 5,000 × 10 | 0.9 s to read (`tests/test_intake_xlsx.py`, bound 10 s) |
+| XLSX | 20,000 × 10 | about 10 s to read (openpyxl reads about 20,000 cells a second here) |
+
+Excel is the slowest format; for a larger table, upload it as CSV.
+
+### Other settings added in phase 7.8
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `REQUIRE_FOUR_EYES` | `false` | `false`: one operator holds every role. `true`: steward, then checker, then owner, as before. Synced to the database at start-up; no row means `true`. |
+| `AUTO_ACCEPT_CONFIDENCE` | `0.85` | A proposal at or above this and not a tie is shown as pre-accepted in the workspace. |
+| `ONBOARDING_JOB_LEASE_SECONDS` | `300` | An onboarding job left running this long by a worker that died is claimed again. |
+| `DROPZONE_ROOT` | `data/dropzone` | The watched folder of uploaded feeds, `<root>/<feed code>/`. |
+| `SEND_SAMPLE_VALUES` | `false` | `true` sends at most 5 distinct non-empty values per column to a model. |
+| `UPLOAD_MAX_MB` | `50` | The largest upload. |
+
+`.env.example` cannot be edited by the file tools in this repository (`.claude/settings.json`), so these keys are listed
+here; add them to `.env.example` by hand if you want them there.
+
+### The operator story and the workspace shots (phase 7.8)
+
+One operator (Olive Operator) uploads `fixtures/synthetic/Synthetic_Security_Master.xlsx`, walks the nine steps of
+the workspace (one edited proposal; rules that flag rows rejected), the first load is released, and a consumer
+previews and downloads the product. Both runs start the API (mock provider, database `amaze_test`, schema
+`e2e_story`, its own drop folder) and both UIs themselves.
+
+```powershell
+cd e2e
+npx playwright test -c playwright.operator.config.ts   # the operator story; the config sets REQUIRE_FOUR_EYES=false
+npx playwright test                                    # the old story with four eyes on (D7); the config sets true
+$env:SHOTS_SET="final"; npx playwright test -c playwright.workspace.config.ts  # docs/phase78-screenshots/final/
+```
+
+The path is written once in `e2e/operator_flow.ts`; the story and the shots both use it.
 
 The database protects its own rules: append-only tables (`proposal_log`, `approvals`,
 `glossary_elements`, `mappings`, `rules`, and from phase 2 `product_elements`, `product_grants`,

@@ -21,10 +21,13 @@ The step flushes; the caller commits. core/steps never imports agents: the agent
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cache
+from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -36,9 +39,12 @@ from core.domain.mapping import (
     GLOSSARY_OUTCOMES,
     ElementOption,
     GlossaryBuilderInput,
+    GlossaryBuilderOutput,
     GlossaryProposalPayload,
     GlossaryRun,
     NewColumn,
+    SeededAnswer,
+    SeededOutput,
 )
 from core.repositories.configuration import MappingRepository
 from core.repositories.errors import (
@@ -60,9 +66,12 @@ from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.matching import words
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
+from core.steps.samples import samples_for_model
+from ports.config import Settings
 from ports.identity.base import User
 from ports.notify.base import Notifier
 
+UNITS_FILE = Path(__file__).resolve().parents[2] / "fixtures" / "glossary" / "units.json"
 SKIPPED = {"name": "covered_by_name", "mapping": "mapped", "asked": "already_asked"}
 LEFT = "left_to_step_06"
 NOT_VALID = "skipped"  # "skipped: <why>": the column's option was not valid (its name gives no alias)
@@ -164,10 +173,11 @@ def claim_run(session: Session, *, lease_seconds: int) -> GlossaryRun | None:
     return GlossaryRunRepository(session).claim(lease_seconds=lease_seconds)
 
 
-def builder_input(session: Session, run: GlossaryRun) -> BuilderPlan:
+def builder_input(session: Session, run: GlossaryRun, settings: Settings | None = None) -> BuilderPlan:
     """Read only. The new columns (assumption 8) of the run's own profile (the feed's latest when the run
     was queued; 0017 checks it is the feed's), less those covered (assumption 9). A structure_change run (phase 7,
-    step 12) looks only at its own columns, and none of them is sent back."""
+    step 12) looks only at its own columns, and none of them is sent back. Sample values (D3) reach the input only
+    through samples_for_model(): none unless SEND_SAMPLE_VALUES is on, and then only for the columns asked."""
     feed = FeedRepository(session).get(run.feed_id)
     profile = FeedProfileRepository(session).get(run.profile_id)
     glossary = GlossaryRepository(session).list_current()
@@ -193,9 +203,33 @@ def builder_input(session: Session, run: GlossaryRun) -> BuilderPlan:
     declared = Counter(by_key[k] for k in profile.spec.elements if k in by_key)
     domains = sorted({e.domain for e in glossary})
     source_domain = min(declared, key=lambda d: (-declared[d], d)) if declared else domains[0]
+    asked = {c.name for c in columns}
+    samples = samples_for_model([c for c in profile.columns if c.name in asked],
+                                settings or Settings(_env_file=None, send_sample_values=False))
     return BuilderPlan(run=run, skipped=skipped, agent_input=GlossaryBuilderInput(
         run_id=run.id, feed_id=feed.id, source_code=feed.source_code or feed.code, source_name=feed.name,
-        source_domain=source_domain, domains=domains, columns=columns))
+        source_domain=source_domain, domains=domains, columns=columns, samples=samples))
+
+
+@cache
+def unit_seed() -> dict[str, str]:
+    """fixtures/glossary/units.json (phase 7.8 plan, assumption 42): by element key, the unit of each ratio or
+    percentage estimate, which the model cannot know from a column name. Read once."""
+    return dict(json.loads(UNITS_FILE.read_text(encoding="utf-8"))["units"])
+
+
+def seed_units(output: GlossaryBuilderOutput) -> SeededOutput:
+    """after_answer (Agent.run, phase 6 plan, assumption 9): a copy of the answer in which a new element with no
+    unit whose key the seed names gets the seed's unit, marked unit_source "seed". A unit the model gave is never
+    overwritten. The call row keeps what the model said; only the proposals are made from this copy."""
+    seed, answers = unit_seed(), []
+    for answer in output.answers:
+        element, source = answer.new_element, None
+        if element is not None and element.unit is None and element.key in seed:
+            element, source = element.model_copy(update={"unit": seed[element.key]}), "seed"
+        answers.append(SeededAnswer(column=answer.column, same_as=answer.same_as, new_element=element,
+                                    reason=answer.reason, unit_source=source))
+    return SeededOutput(answers=answers)
 
 
 def _still_running(session: Session, run: GlossaryRun) -> None:
@@ -219,7 +253,8 @@ def record_run(session: Session, *, plan: BuilderPlan, agent: RunsAgent | None, 
     if plan.agent_input is None:  # nothing to ask: no call, no log row (assumption 12)
         _still_running(session, run)
         return RunRecorded(run=runs.finish(run.id, results=dict(plan.skipped), proposal_log_id=None), results=[])
-    called = agent.run(session, plan.agent_input, before_write=lambda s: _still_running(s, run))
+    called = agent.run(session, plan.agent_input, before_write=lambda s: _still_running(s, run),
+                       after_answer=seed_units)
     results = [_result(p) for p in called.proposals]
     outcomes = {r.column: r.outcome for r in results}
     _, not_valid = glossary_payloads(plan.agent_input, called.output)  # as the agent read the answer
@@ -300,7 +335,7 @@ def decide_element(session: Session, *, proposal_id: UUID, user: User, decision:
             raise AliasAlreadyOnElement(f"{last.key} (version {last.version}) already has the name {option.alias}; "
                                         "there is nothing to add")
         draft = GlossaryElementDraft(key=last.key, name=last.name, domain=last.domain, data_type=last.data_type,
-                                     definition=last.definition, aliases=[*last.aliases, option.alias])
+                                     definition=last.definition, aliases=[*last.aliases, option.alias], unit=last.unit)
     taken = glossary.phrases_taken(draft)
     if taken or (option.kind == "new_element" and glossary.exists(draft.key)):
         named = ", ".join(f"{phrase} ({key})" for phrase, key in taken) or draft.key

@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "description": "Gold set for the rule_recommender prompt (step 09): six invented feeds. The offered template that fits is used (by its template name), a key already taken or rejected is not proposed again, and every rule is one plain SELECT. The back-test is not part of this evaluation.",
+  "cases": [
+    {
+      "id": "price_not_negative",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000601", "feed_code": "syn_gold_rules_a", "source_name": "Gold rules feed A",
+        "elements": [
+          {"source_field": "CLOSE", "key": "close_price", "data_type": "decimal", "null_rate": 0.0, "distinct_count": 90,
+           "templates": [
+             {"template": "not_negative", "rule_key": "close_price_not_negative", "description": "Close price is not negative.",
+              "sql": "SELECT _row FROM curated WHERE \"close_price\" < 0", "element_keys": ["close_price"]}
+           ]}
+        ],
+        "feed_templates": [], "existing_keys": [], "rejected_keys": [], "mapping_ids": [], "connector": null, "history": []
+      },
+      "checks": [
+        {"check": "contains", "path": "rules.*.template", "value": "not_negative"},
+        {"check": "matches", "path": "rules.*.sql", "pattern": "^\\s*select\\b"},
+        {"check": "not_matches", "path": "rules.*.sql", "pattern": "\\b(delete|drop|insert|update|copy|pragma|attach)\\b"}
+      ]
+    },
+    {
+      "id": "timestamp_not_in_future",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000602", "feed_code": "syn_gold_rules_b", "source_name": "Gold rules feed B",
+        "elements": [
+          {"source_field": "TRADED_AT", "key": "traded_at", "data_type": "datetime", "null_rate": 0.0, "distinct_count": 100,
+           "templates": [
+             {"template": "present", "rule_key": "traded_at_present", "description": "Traded at is present.",
+              "sql": "SELECT _row FROM curated WHERE \"traded_at\" IS NULL", "element_keys": ["traded_at"]},
+             {"template": "not_in_future", "rule_key": "traded_at_not_in_future", "description": "Traded at is not in the future.",
+              "sql": "SELECT _row FROM curated WHERE \"traded_at\" > CAST(current_timestamp AS TIMESTAMP)", "element_keys": ["traded_at"]}
+           ]}
+        ],
+        "feed_templates": [], "existing_keys": [], "rejected_keys": [], "mapping_ids": [], "connector": null, "history": []
+      },
+      "checks": [
+        {"check": "contains", "path": "rules.*.template", "value": "not_in_future"},
+        {"check": "matches", "path": "rules.*.sql", "pattern": "^\\s*select\\b"}
+      ]
+    },
+    {
+      "id": "repeated_key_gets_one_row_per_key",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000603", "feed_code": "syn_gold_rules_c", "source_name": "Gold rules feed C",
+        "elements": [
+          {"source_field": "ISIN", "key": "isin", "data_type": "string", "null_rate": 0.0, "distinct_count": 40,
+           "templates": [
+             {"template": "present", "rule_key": "isin_present", "description": "Isin is present.",
+              "sql": "SELECT _row FROM curated WHERE \"isin\" IS NULL", "element_keys": ["isin"]}
+           ]},
+          {"source_field": "PRICE_DATE", "key": "price_date", "data_type": "date", "null_rate": 0.0, "distinct_count": 3,
+           "templates": [
+             {"template": "present", "rule_key": "price_date_present", "description": "Price date is present.",
+              "sql": "SELECT _row FROM curated WHERE \"price_date\" IS NULL", "element_keys": ["price_date"]}
+           ]}
+        ],
+        "feed_templates": [
+          {"template": "one_row_per_key", "rule_key": "one_row_per_isin_and_price_date",
+           "description": "Each isin and price date appears once.",
+           "sql": "SELECT _row FROM (SELECT _row, count(*) OVER (PARTITION BY \"isin\", \"price_date\") AS n FROM curated) WHERE n > 1",
+           "element_keys": ["isin", "price_date"]}
+        ],
+        "existing_keys": [], "rejected_keys": [], "mapping_ids": [], "connector": null, "history": []
+      },
+      "checks": [
+        {"check": "contains", "path": "rules.*.template", "value": "one_row_per_key"},
+        {"check": "matches", "path": "rules.*.sql", "pattern": "^\\s*select\\b"}
+      ]
+    },
+    {
+      "id": "existing_key_is_not_proposed_again",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000604", "feed_code": "syn_gold_rules_d", "source_name": "Gold rules feed D",
+        "elements": [
+          {"source_field": "CLOSE", "key": "close_price", "data_type": "decimal", "null_rate": 0.0, "distinct_count": 90,
+           "templates": [
+             {"template": "not_negative", "rule_key": "close_price_not_negative", "description": "Close price is not negative.",
+              "sql": "SELECT _row FROM curated WHERE \"close_price\" < 0", "element_keys": ["close_price"]}
+           ]}
+        ],
+        "feed_templates": [], "existing_keys": ["close_price_not_negative"], "rejected_keys": [], "mapping_ids": [],
+        "connector": null, "history": []
+      },
+      "checks": [
+        {"check": "not_contains", "path": "rules.*.rule_key", "value": "close_price_not_negative"}
+      ]
+    },
+    {
+      "id": "rejected_key_is_not_proposed_again",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000605", "feed_code": "syn_gold_rules_e", "source_name": "Gold rules feed E",
+        "elements": [
+          {"source_field": "VOL", "key": "volume", "data_type": "integer", "null_rate": 0.0, "distinct_count": 70,
+           "templates": [
+             {"template": "not_negative", "rule_key": "volume_not_negative", "description": "Volume is not negative.",
+              "sql": "SELECT _row FROM curated WHERE \"volume\" < 0", "element_keys": ["volume"]},
+             {"template": "in_whole_lots", "rule_key": "volume_in_whole_lots", "description": "Volume is a multiple of 100.",
+              "sql": "SELECT _row FROM curated WHERE \"volume\" % 100 <> 0", "element_keys": ["volume"]}
+           ]}
+        ],
+        "feed_templates": [], "existing_keys": [], "rejected_keys": ["volume_in_whole_lots"], "mapping_ids": [],
+        "connector": null, "history": []
+      },
+      "checks": [
+        {"check": "not_contains", "path": "rules.*.rule_key", "value": "volume_in_whole_lots"},
+        {"check": "not_contains", "path": "rules.*.template", "value": "in_whole_lots"}
+      ]
+    },
+    {
+      "id": "volume_in_whole_lots",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000606", "feed_code": "syn_gold_rules_f", "source_name": "Gold rules feed F",
+        "elements": [
+          {"source_field": "VOL", "key": "volume", "data_type": "integer", "null_rate": 0.0, "distinct_count": 70,
+           "templates": [
+             {"template": "in_whole_lots", "rule_key": "volume_in_whole_lots", "description": "Volume is a multiple of 100.",
+              "sql": "SELECT _row FROM curated WHERE \"volume\" % 100 <> 0", "element_keys": ["volume"]}
+           ]}
+        ],
+        "feed_templates": [], "existing_keys": [], "rejected_keys": [], "mapping_ids": [], "connector": null, "history": []
+      },
+      "checks": [
+        {"check": "contains", "path": "rules.*.template", "value": "in_whole_lots"},
+        {"check": "in", "path": "rules.*.element_keys.*", "values": ["volume"]},
+        {"check": "not_matches", "path": "rules.*.sql", "pattern": "\\b(delete|drop|insert|update|copy|pragma|attach)\\b"}
+      ]
+    }
+  ]
+}

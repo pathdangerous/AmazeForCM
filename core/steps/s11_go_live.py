@@ -67,6 +67,7 @@ from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.repositories.transformations import TransformationRepository
 from core.steps.errors import BackToStepNeeded, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
@@ -208,7 +209,7 @@ def summary_input(session: Session, *, feed_id: UUID, load_id: UUID) -> ReviewSu
     return ReviewSummaryInput(
         feed_id=feed_id, feed_code=feed.code, source_name=feed.name, owner_id=registration.owner_id,
         licence=registration.licence, permitted_use=registration.permitted_use,
-        redistribution=registration.redistribution, visibility=registration.visibility, mapped=mapped,
+        redistribution=registration.redistribution, mapped=mapped,
         unmapped_columns=[c.name for c in profile.columns if c.name not in mapped_fields], rejected_glossary=rejected,
         rules=rule_facts,
         test_load=TestLoadFacts(load_id=load_id, rows=stages[0].rows_in if stages else 0,
@@ -218,7 +219,9 @@ def summary_input(session: Session, *, feed_id: UUID, load_id: UUID) -> ReviewSu
         pending=PendingCounts(glossary=len(proposals.list_for_feed(feed_id, "glossary_element", "pending")),
                               mapping=len(proposals.list_for_feed(feed_id, "mapping", "pending")),
                               rule=len(proposals.list_for_feed(feed_id, "rule", "pending"))),
-        mapping_ids=sorted(m.id for m in mappings), rule_ids=sorted(r.id for r in rules), test_load_id=load_id)
+        mapping_ids=sorted(m.id for m in mappings), rule_ids=sorted(r.id for r in rules),
+        transformation_ids=sorted(t.id for t in TransformationRepository(session).current_for_feed(feed_id)),
+        test_load_id=load_id)
 
 
 def _still_as_input(session: Session, agent_input: ReviewSummaryInput) -> None:
@@ -227,9 +230,11 @@ def _still_as_input(session: Session, agent_input: ReviewSummaryInput) -> None:
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} became {feed.stage} while the agent answered")
     if (sorted(m.id for m in MappingRepository(session).current_for_feed(feed.id)) != sorted(agent_input.mapping_ids)
-            or sorted(r.id for r in RuleRepository(session).current_for_feed(feed.id)) != sorted(agent_input.rule_ids)):
-        raise ConfigurationChangedMeanwhile(f"The mappings or rules of feed {feed.code!r} changed while the agent "
-                                            "answered")
+            or sorted(r.id for r in RuleRepository(session).current_for_feed(feed.id)) != sorted(agent_input.rule_ids)
+            or sorted(t.id for t in TransformationRepository(session).current_for_feed(feed.id))
+            != sorted(agent_input.transformation_ids)):
+        raise ConfigurationChangedMeanwhile(f"The mappings, rules or transformations of feed {feed.code!r} changed "
+                                            "while the agent answered")
     if ProposalRepository(session).list_for_feed(feed.id, "review_summary", "pending"):
         raise GoLiveAlreadyProposed(f"Feed {feed.code!r} got a go-live summary while the agent answered")
 
@@ -274,15 +279,19 @@ def decide_go_live(session: Session, *, proposal_id: UUID, user: User, decision:
     payload = proposal.payload
     current_mappings = sorted(str(m.id) for m in MappingRepository(session).current_for_feed(feed.id))
     current_rules = sorted(str(r.id) for r in RuleRepository(session).current_for_feed(feed.id))
-    if current_mappings != sorted(payload["mapping_ids"]) or current_rules != sorted(payload["rule_ids"]):
-        raise ConfigurationChangedSinceSummary(f"The mappings or rules of feed {feed.code!r} changed after the "
-                                               "summary was written: reject it instead")
+    current_transformations = sorted(str(t.id) for t in TransformationRepository(session).current_for_feed(feed.id))
+    pinned_transformations = sorted(payload.get("transformation_ids") or [])
+    if (current_mappings != sorted(payload["mapping_ids"]) or current_rules != sorted(payload["rule_ids"])
+            or current_transformations != pinned_transformations):
+        raise ConfigurationChangedSinceSummary(f"The mappings, rules or transformations of feed {feed.code!r} "
+                                               "changed after the summary was written: reject it instead")
     proposals.record_decision(proposal_id, user=user, decision="approved", note=note)
     until = today + timedelta(days=hypercare_days)
     live = GoLiveRepository(session).add_version(
         feed_id=feed.id, proposal_id=proposal_id, approved_by=user.id,
         mapping_ids=[UUID(i) for i in payload["mapping_ids"]], rule_ids=[UUID(i) for i in payload["rule_ids"]],
-        test_load_id=UUID(payload["test_load_id"]), hypercare_until=until)
+        test_load_id=UUID(payload["test_load_id"]), hypercare_until=until,
+        transformation_ids=[UUID(i) for i in pinned_transformations])
     for person in [*backend_team, *operations]:
         notifier.notify(recipient=person, subject=f"Feed goes live: {feed.code}",
                         body=f"{user.display_name} approved the go-live of {feed.code}. It is loaded every day at "

@@ -70,6 +70,17 @@ def test_the_glossary_builder_gets_at_most_ten_candidates_per_column(db_session,
     assert 1 <= len(column.candidates) <= 10
 
 
+def test_the_transformation_agent_gets_no_glossary_only_the_element_key_and_type_of_each_mapped_column(
+        db_session, big_glossary, tmp_path):
+    from core.steps.s10_transform import transform_input
+    from tests.test_agent_transformation import MAPPED, master_mapped
+
+    agent_input = transform_input(db_session, feed_id=master_mapped(db_session, tmp_path))
+    assert len(agent_input.columns) == len(MAPPED)  # one entry per mapped column, none per glossary element
+    assert "closing_prices_x" not in agent_input.model_dump_json()
+    assert sorted(agent_input.model_dump()) == ["columns", "feed_code", "feed_id", "samples"]
+
+
 def test_the_mapping_agent_gets_at_most_ten_candidates_per_column(db_session, lookalike_feed):
     from core.steps.s06_map import mapping_input
 

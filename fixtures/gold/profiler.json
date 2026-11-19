@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "description": "Gold set for the profiler prompt (step 02 summary, key columns and recommended outcome): six invented profiles. Checks read the recommended outcome and key columns only (agents/evaluate_agents.py).",
+  "cases": [
+    {
+      "id": "distinct_identifier_is_the_key",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000301",
+        "feed_code": "syn_gold_profile_prices",
+        "profile_id": "00000000-0000-4000-8000-000000000311",
+        "outcome": "profiled",
+        "row_count": 100,
+        "columns": [
+          {"name": "ISIN", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 100},
+          {"name": "CLOSE_PRICE", "type": "DOUBLE", "null_count": 0, "null_rate": 0.0, "distinct_count": 97},
+          {"name": "CCY", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 3}
+        ],
+        "detail": null,
+        "spec": {"source_code": "syn_gold_profile_prices", "elements": ["isin", "close_price"], "other_fields": [],
+                 "columns": {"ISIN": "isin", "CLOSE_PRICE": "close_price"}},
+        "coverage": [
+          {"requirement_id": "00000000-0000-4000-8000-000000000321",
+           "items": [
+             {"item": "isin", "kind": "element", "declared": true, "column": "ISIN", "in_file": true, "null_rate": 0.0, "distinct_count": 100},
+             {"item": "close_price", "kind": "element", "declared": true, "column": "CLOSE_PRICE", "in_file": true, "null_rate": 0.0, "distinct_count": 97}
+           ],
+           "missing": []}
+        ],
+        "requirement_titles": {"00000000-0000-4000-8000-000000000321": "Latest close price per instrument"}
+      },
+      "checks": [
+        {"check": "equals", "path": "recommended_outcome", "value": "meets"},
+        {"check": "contains", "path": "key_columns", "value": "ISIN"},
+        {"check": "in", "path": "key_columns.*", "values": ["ISIN", "CLOSE_PRICE", "CCY"]}
+      ]
+    },
+    {
+      "id": "nothing_requested_is_in_the_file",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000302",
+        "feed_code": "syn_gold_profile_weather",
+        "profile_id": "00000000-0000-4000-8000-000000000312",
+        "outcome": "profiled",
+        "row_count": 365,
+        "columns": [
+          {"name": "STATION_ID", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 5},
+          {"name": "TEMPERATURE", "type": "DOUBLE", "null_count": 0, "null_rate": 0.0, "distinct_count": 210},
+          {"name": "RAINFALL", "type": "DOUBLE", "null_count": 0, "null_rate": 0.0, "distinct_count": 90}
+        ],
+        "detail": null,
+        "spec": {"source_code": "syn_gold_profile_weather", "elements": [], "other_fields": ["temperature", "rainfall"],
+                 "columns": {"TEMPERATURE": "temperature", "RAINFALL": "rainfall"}},
+        "coverage": [
+          {"requirement_id": "00000000-0000-4000-8000-000000000322",
+           "items": [
+             {"item": "close_price", "kind": "element", "declared": false, "column": null, "in_file": false, "null_rate": null, "distinct_count": null},
+             {"item": "volume", "kind": "element", "declared": false, "column": null, "in_file": false, "null_rate": null, "distinct_count": null}
+           ],
+           "missing": ["close_price", "volume"]}
+        ],
+        "requirement_titles": {"00000000-0000-4000-8000-000000000322": "Daily close price and volume"}
+      },
+      "checks": [
+        {"check": "equals", "path": "recommended_outcome", "value": "rejected"},
+        {"check": "nonempty", "path": "reasons"}
+      ]
+    },
+    {
+      "id": "one_requested_item_missing",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000303",
+        "feed_code": "syn_gold_profile_quotes",
+        "profile_id": "00000000-0000-4000-8000-000000000313",
+        "outcome": "profiled",
+        "row_count": 200,
+        "columns": [
+          {"name": "INSTRUMENT", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 200},
+          {"name": "BID", "type": "DOUBLE", "null_count": 0, "null_rate": 0.0, "distinct_count": 180},
+          {"name": "ASK", "type": "DOUBLE", "null_count": 0, "null_rate": 0.0, "distinct_count": 181},
+          {"name": "QUOTE_DATE", "type": "DATE", "null_count": 0, "null_rate": 0.0, "distinct_count": 1}
+        ],
+        "detail": null,
+        "spec": {"source_code": "syn_gold_profile_quotes", "elements": ["bid_price", "ask_price"], "other_fields": [],
+                 "columns": {"BID": "bid_price", "ASK": "ask_price"}},
+        "coverage": [
+          {"requirement_id": "00000000-0000-4000-8000-000000000323",
+           "items": [
+             {"item": "bid_price", "kind": "element", "declared": true, "column": "BID", "in_file": true, "null_rate": 0.0, "distinct_count": 180},
+             {"item": "ask_price", "kind": "element", "declared": true, "column": "ASK", "in_file": true, "null_rate": 0.0, "distinct_count": 181},
+             {"item": "mid_price", "kind": "element", "declared": false, "column": null, "in_file": false, "null_rate": null, "distinct_count": null},
+             {"item": "volume", "kind": "element", "declared": false, "column": null, "in_file": false, "null_rate": null, "distinct_count": null}
+           ],
+           "missing": ["mid_price", "volume"]}
+        ],
+        "requirement_titles": {"00000000-0000-4000-8000-000000000323": "Bid, ask, mid and volume per instrument"}
+      },
+      "checks": [
+        {"check": "equals", "path": "recommended_outcome", "value": "meets_with_gaps"},
+        {"check": "nonempty", "path": "gaps"}
+      ]
+    },
+    {
+      "id": "spec_only_no_file_read",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000304",
+        "feed_code": "syn_gold_profile_down",
+        "profile_id": "00000000-0000-4000-8000-000000000314",
+        "outcome": "spec_only_low_confidence",
+        "row_count": null,
+        "columns": [],
+        "detail": "The source was down when the file was fetched; no file was read.",
+        "spec": {"source_code": "syn_gold_profile_down", "elements": ["close_price", "volume"], "other_fields": [],
+                 "columns": {"PX": "close_price", "VOL": "volume"}},
+        "coverage": [
+          {"requirement_id": "00000000-0000-4000-8000-000000000324",
+           "items": [
+             {"item": "close_price", "kind": "element", "declared": true, "column": "PX", "in_file": null, "null_rate": null, "distinct_count": null},
+             {"item": "volume", "kind": "element", "declared": true, "column": "VOL", "in_file": null, "null_rate": null, "distinct_count": null}
+           ],
+           "missing": []}
+        ],
+        "requirement_titles": {"00000000-0000-4000-8000-000000000324": "Close price and volume"}
+      },
+      "checks": [
+        {"check": "in", "path": "recommended_outcome", "values": ["meets_with_gaps", "rejected"]},
+        {"check": "number_at_most", "path": "confidence", "value": 0.6}
+      ]
+    },
+    {
+      "id": "two_columns_make_the_key",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000305",
+        "feed_code": "syn_gold_profile_history",
+        "profile_id": "00000000-0000-4000-8000-000000000315",
+        "outcome": "profiled",
+        "row_count": 100,
+        "columns": [
+          {"name": "INSTRUMENT_ID", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 5},
+          {"name": "PRICE_DATE", "type": "DATE", "null_count": 0, "null_rate": 0.0, "distinct_count": 20},
+          {"name": "CLOSE_PRICE", "type": "DOUBLE", "null_count": 0, "null_rate": 0.0, "distinct_count": 92}
+        ],
+        "detail": null,
+        "spec": {"source_code": "syn_gold_profile_history", "elements": ["instrument_id", "price_date", "close_price"],
+                 "other_fields": [],
+                 "columns": {"INSTRUMENT_ID": "instrument_id", "PRICE_DATE": "price_date", "CLOSE_PRICE": "close_price"}},
+        "coverage": [
+          {"requirement_id": "00000000-0000-4000-8000-000000000325",
+           "items": [
+             {"item": "close_price", "kind": "element", "declared": true, "column": "CLOSE_PRICE", "in_file": true, "null_rate": 0.0, "distinct_count": 92}
+           ],
+           "missing": []}
+        ],
+        "requirement_titles": {"00000000-0000-4000-8000-000000000325": "Price history per instrument"}
+      },
+      "checks": [
+        {"check": "equals", "path": "recommended_outcome", "value": "meets"},
+        {"check": "contains", "path": "key_columns", "value": "INSTRUMENT_ID"},
+        {"check": "contains", "path": "key_columns", "value": "PRICE_DATE"},
+        {"check": "not_contains", "path": "key_columns", "value": "CLOSE_PRICE"}
+      ]
+    },
+    {
+      "id": "requested_item_mostly_empty",
+      "input": {
+        "feed_id": "00000000-0000-4000-8000-000000000306",
+        "feed_code": "syn_gold_profile_sparse",
+        "profile_id": "00000000-0000-4000-8000-000000000316",
+        "outcome": "profiled",
+        "row_count": 100,
+        "columns": [
+          {"name": "SEDOL", "type": "VARCHAR", "null_count": 0, "null_rate": 0.0, "distinct_count": 100},
+          {"name": "COUPON", "type": "DOUBLE", "null_count": 95, "null_rate": 0.95, "distinct_count": 4}
+        ],
+        "detail": null,
+        "spec": {"source_code": "syn_gold_profile_sparse", "elements": ["sedol", "coupon_rate"], "other_fields": [],
+                 "columns": {"SEDOL": "sedol", "COUPON": "coupon_rate"}},
+        "coverage": [
+          {"requirement_id": "00000000-0000-4000-8000-000000000326",
+           "items": [
+             {"item": "sedol", "kind": "element", "declared": true, "column": "SEDOL", "in_file": true, "null_rate": 0.0, "distinct_count": 100},
+             {"item": "coupon_rate", "kind": "element", "declared": true, "column": "COUPON", "in_file": true, "null_rate": 0.95, "distinct_count": 4}
+           ],
+           "missing": []}
+        ],
+        "requirement_titles": {"00000000-0000-4000-8000-000000000326": "Coupon rate of every bond"}
+      },
+      "checks": [
+        {"check": "in", "path": "recommended_outcome", "values": ["meets_with_gaps", "rejected"]}
+      ]
+    }
+  ]
+}

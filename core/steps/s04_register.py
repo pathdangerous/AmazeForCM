@@ -28,11 +28,20 @@ from pydantic import Field
 from sqlalchemy.orm import Session
 
 from core.domain.feed import Feed, FeedRegistration, FeedVisibility
-from core.repositories.errors import FeedNotACandidate, FeedNotRegistered, FeedNotSignedOff, RequirementNotInStatus
+from core.repositories.errors import (
+    FeedHasProduct,
+    FeedNotACandidate,
+    FeedNotRegistered,
+    FeedNotSignedOff,
+    NotAnApprover,
+    RequirementNotInStatus,
+)
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feed_signoffs import FeedSignoffRepository
 from core.repositories.feeds import FeedRepository
+from core.repositories.glossary_runs import GlossaryRunRepository
+from core.repositories.products import ProductRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.steps.result import StepResult
@@ -93,6 +102,34 @@ def register_feed(session: Session, *, feed_id: UUID, user: User, owner_id: str 
                     body=f"Feed {feed.code} ({feed.name}) is registered, {visibility}, under {conditions.licence}. "
                          "You are its owner.")
     return Registered(feed=registered, registration=registration, glossary_run_id=run.id)
+
+
+def revise_visibility(session: Session, *, feed_id: UUID, user: User, visibility: FeedVisibility) -> Registered:
+    """Phase 7.8, task 7.3a: the owner chooses the visibility at go-live, after the feed is registered. A different
+    visibility is a new registration version (migration 0026: same owner, licence, permitted use, redistribution and
+    sign-off, before the feed has a product); the same visibility writes nothing and returns the latest. The feed row
+    is locked first, and the latest version is read after the lock. Only the latest registration's owner may revise:
+    any other user (a backend user, another data owner) gets NotAnApprover, also when the visibility is the same, and
+    nothing is written. FeedNotRegistered, FeedHasProduct, NotAnApprover. No new glossary run: nothing about the
+    columns changed, so `glossary_run_id` is the feed's latest run."""
+    feed = FeedRepository(session).lock(feed_id)
+    if feed.stage != "registered":
+        raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}, not registered")
+    registrations = FeedRegistrationRepository(session)
+    latest = registrations.current(feed.id)
+    if latest is None:
+        raise FeedNotRegistered(f"Feed {feed.code!r} has no registration")
+    if user.id != latest.owner_id:
+        raise NotAnApprover(f"Only the owner of feed {feed.code!r} ({latest.owner_id}) chooses its visibility")
+    if latest.visibility != visibility:
+        if ProductRepository(session).for_feed(feed.id) is not None:
+            raise FeedHasProduct(f"Feed {feed.code!r} has a product: its visibility ({latest.visibility}) is fixed")
+        latest = registrations.add_version(
+            feed_id=feed.id, signoff_id=latest.signoff_id, owner_id=latest.owner_id, licence=latest.licence,
+            permitted_use=latest.permitted_use, redistribution=latest.redistribution, visibility=visibility,
+            registered_by=user.id)
+    run = GlossaryRunRepository(session).latest(feed.id)
+    return Registered(feed=feed, registration=latest, glossary_run_id=run.id)
 
 
 def link_to_registered_feed(session: Session, *, requirement_id: UUID, feed_id: UUID, notifier: Notifier,

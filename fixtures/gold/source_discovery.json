@@ -1,0 +1,164 @@
+{
+  "version": 1,
+  "description": "Gold set for the source_discovery prompt (S2 ranking): six invented requests over invented catalogue sources (codes start with syn_). The source that covers the most requested items is ranked first; only codes from the input may be named.",
+  "cases": [
+    {
+      "id": "full_cover_beats_partial",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000201",
+        "requested_elements": ["close_price", "volume", "price_currency"],
+        "requested_terms": [],
+        "scope_visibility": "public",
+        "where_to_search": ["market_data_vendors"],
+        "candidates": [
+          {"code": "syn_gold_vendor_eod", "name": "Gold vendor end-of-day prices", "provider": "Invented Vendor One",
+           "description": "End-of-day close price, volume and price currency per instrument and day.",
+           "elements": ["close_price", "volume", "price_currency", "price_date"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["close_price", "volume", "price_currency"], "terms": [], "missing": []}},
+          {"code": "syn_gold_vendor_fx", "name": "Gold vendor currency list", "provider": "Invented Vendor Two",
+           "description": "A list of currency codes with their names.",
+           "elements": ["price_currency"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["price_currency"], "terms": [], "missing": ["close_price", "volume"]}}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "ranked.0.source_code", "value": "syn_gold_vendor_eod"},
+        {"check": "in", "path": "ranked.*.source_code", "values": ["syn_gold_vendor_eod", "syn_gold_vendor_fx"]},
+        {"check": "nonempty", "path": "ranked.*.reason"}
+      ]
+    },
+    {
+      "id": "full_cover_listed_second",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000202",
+        "requested_elements": ["close_price", "volume", "price_currency"],
+        "requested_terms": [],
+        "scope_visibility": "public",
+        "where_to_search": ["market_data_vendors"],
+        "candidates": [
+          {"code": "syn_gold_vendor_fx", "name": "Gold vendor currency list", "provider": "Invented Vendor Two",
+           "description": "A list of currency codes with their names.",
+           "elements": ["price_currency"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["price_currency"], "terms": [], "missing": ["close_price", "volume"]}},
+          {"code": "syn_gold_vendor_eod", "name": "Gold vendor end-of-day prices", "provider": "Invented Vendor One",
+           "description": "End-of-day close price, volume and price currency per instrument and day.",
+           "elements": ["close_price", "volume", "price_currency", "price_date"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["close_price", "volume", "price_currency"], "terms": [], "missing": []}}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "ranked.0.source_code", "value": "syn_gold_vendor_eod"},
+        {"check": "in", "path": "ranked.*.source_code", "values": ["syn_gold_vendor_eod", "syn_gold_vendor_fx"]}
+      ]
+    },
+    {
+      "id": "single_full_candidate",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000203",
+        "requested_elements": ["maturity_date", "coupon_rate"],
+        "requested_terms": [],
+        "scope_visibility": "public",
+        "where_to_search": ["exchanges"],
+        "candidates": [
+          {"code": "syn_gold_exchange_bonds", "name": "Gold exchange bond terms", "provider": "Invented Exchange",
+           "description": "Terms of bonds listed on the exchange: maturity date and coupon rate.",
+           "elements": ["maturity_date", "coupon_rate", "issue_date"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["maturity_date", "coupon_rate"], "terms": [], "missing": []}}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "ranked.0.source_code", "value": "syn_gold_exchange_bonds"},
+        {"check": "count_at_most", "path": "ranked", "n": 1},
+        {"check": "nonempty", "path": "ranked.*.reason"}
+      ]
+    },
+    {
+      "id": "three_candidates_best_first",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000204",
+        "requested_elements": ["bid_price", "ask_price", "mid_price"],
+        "requested_terms": [],
+        "scope_visibility": "public",
+        "where_to_search": ["market_data_vendors"],
+        "candidates": [
+          {"code": "syn_gold_quotes_bid_only", "name": "Gold bid quotes", "provider": "Invented Vendor Three",
+           "description": "Bid quotes only.",
+           "elements": ["bid_price"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["bid_price"], "terms": [], "missing": ["ask_price", "mid_price"]}},
+          {"code": "syn_gold_quotes_two", "name": "Gold bid and ask quotes", "provider": "Invented Vendor Three",
+           "description": "Bid and ask quotes.",
+           "elements": ["bid_price", "ask_price"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["bid_price", "ask_price"], "terms": [], "missing": ["mid_price"]}},
+          {"code": "syn_gold_quotes_all", "name": "Gold bid, ask and mid quotes", "provider": "Invented Vendor Four",
+           "description": "Bid, ask and mid quotes.",
+           "elements": ["bid_price", "ask_price", "mid_price"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["bid_price", "ask_price", "mid_price"], "terms": [], "missing": []}}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "ranked.0.source_code", "value": "syn_gold_quotes_all"},
+        {"check": "in", "path": "ranked.*.source_code", "values": ["syn_gold_quotes_bid_only", "syn_gold_quotes_two", "syn_gold_quotes_all"]}
+      ]
+    },
+    {
+      "id": "private_scope_internal_source",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000205",
+        "requested_elements": ["instrument_id", "volume"],
+        "requested_terms": [],
+        "scope_visibility": "private",
+        "where_to_search": ["internal_systems"],
+        "candidates": [
+          {"code": "syn_gold_internal_audit", "name": "Gold internal audit log", "provider": "Invented Internal Team A",
+           "description": "A log of who opened which instrument record.",
+           "elements": ["instrument_id"], "other_fields": [],
+           "conditions": {"licence": "Internal", "permitted_use": "Audit", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["instrument_id"], "terms": [], "missing": ["volume"]}},
+          {"code": "syn_gold_internal_orders", "name": "Gold internal order book", "provider": "Invented Internal Team B",
+           "description": "Orders per instrument with the volume traded.",
+           "elements": ["instrument_id", "volume"], "other_fields": [],
+           "conditions": {"licence": "Internal", "permitted_use": "Internal analytics", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["instrument_id", "volume"], "terms": [], "missing": []}}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "ranked.0.source_code", "value": "syn_gold_internal_orders"},
+        {"check": "in", "path": "ranked.*.source_code", "values": ["syn_gold_internal_audit", "syn_gold_internal_orders"]}
+      ]
+    },
+    {
+      "id": "term_coverage_decides",
+      "input": {
+        "requirement_id": "00000000-0000-4000-8000-000000000206",
+        "requested_elements": ["close_price"],
+        "requested_terms": ["dividend_yield"],
+        "scope_visibility": "public",
+        "where_to_search": ["market_data_vendors"],
+        "candidates": [
+          {"code": "syn_gold_prices_only", "name": "Gold prices only", "provider": "Invented Vendor Five",
+           "description": "Close prices.",
+           "elements": ["close_price"], "other_fields": [],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["close_price"], "terms": [], "missing": ["dividend_yield"]}},
+          {"code": "syn_gold_prices_yield", "name": "Gold prices with dividend yield", "provider": "Invented Vendor Five",
+           "description": "Close prices and the dividend yield per share.",
+           "elements": ["close_price"], "other_fields": ["dividend_yield"],
+           "conditions": {"licence": "Synthetic licence", "permitted_use": "Internal research", "redistribution": "Not allowed", "external_approvals": []},
+           "coverage": {"elements": ["close_price"], "terms": ["dividend_yield"], "missing": []}}
+        ]
+      },
+      "checks": [
+        {"check": "equals", "path": "ranked.0.source_code", "value": "syn_gold_prices_yield"},
+        {"check": "in", "path": "ranked.*.source_code", "values": ["syn_gold_prices_only", "syn_gold_prices_yield"]}
+      ]
+    }
+  ]
+}

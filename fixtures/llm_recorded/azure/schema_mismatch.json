@@ -1,0 +1,18 @@
+{
+  "id": "chatcmpl-synthetic-0005",
+  "object": "chat.completion",
+  "created": 1790000004,
+  "model": "gpt-4o-2026-08-06",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "{\"summary\": \"SYNTHETIC-MISMATCH\", \"recommended_outcome\": \"maybe\"}",
+        "refusal": null
+      }
+    }
+  ],
+  "usage": {"prompt_tokens": 210, "completion_tokens": 12, "total_tokens": 222}
+}

@@ -163,7 +163,8 @@ def _daily(engine, tmp_path, factory):
     from ports.storage.local import LocalBlobStore
 
     return DailyFetch(session_factory=get_sessionmaker(engine), blob_store=LocalBlobStore(tmp_path / "blob"),
-                      connector_factory=factory, backend_team=lambda: ["dev-backend-team"])
+                      # the whole backend team, as the API path tells it (dev-operator joined it in phase 7.8)
+                      connector_factory=factory, backend_team=lambda: ["dev-backend-team", "dev-operator"])
 
 
 def test_no_connection_is_held_during_the_connector_call(own_schema, tmp_path):
@@ -202,9 +203,16 @@ async def test_a_release_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_s
     class WaitingFetches(SourceFetchRepository):
         def record(self, **kwargs):
             row = super().record(**kwargs)
+            pid = self._session.connection().exec_driver_sql("SELECT pg_backend_pid()").scalar()
             feed_locked.set()  # record_fetch holds the feed row lock now
             release_sent.wait(timeout=5)
-            time.sleep(0.5)  # the release reaches its insert meanwhile
+            # the release has reached its insert when it has committed its row, or when it waits on this backend's lock
+            # (the old deadlock shape); no fixed sleep
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if committed(own_schema, "SELECT 1 FROM source_choices WHERE action = 'released'") \
+                        or _wait_for_lock_on(own_schema, pid, timeout=0.05):
+                    break
             return row
 
     _selected_volume(own_schema)
@@ -260,7 +268,9 @@ def test_the_first_fetch_and_the_daily_job_at_once_send_one_notification(own_sch
     api.join(timeout=30)
     assert errors == [] and job_result == {"syn_exchange_volumes": "fetched"}
     assert committed(own_schema, "SELECT count(*) FROM source_fetches") == [(2,)]
-    assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'File ready%'") == [(1,)]
+    # one notification per member of the backend team (since phase 7.8 dev-operator is one too), never two
+    assert committed(own_schema, "SELECT recipient, count(*) FROM notifications WHERE subject LIKE 'File ready%' "
+                                 "GROUP BY recipient ORDER BY recipient") == [("dev-backend-team", 1), ("dev-operator", 1)]
 
 
 # ---------------------------------------------------------------- fix 2
@@ -292,6 +302,69 @@ async def test_no_connection_is_held_during_any_model_call(own_schema, flow):
     # IntentAgent x3, SourceDiscoveryAgent, DiscoveryAssistant, ProfilerAgent, MappingAgent, RuleRecommenderAgent,
     # ReviewSummariserAgent
     assert provider.checked_out == [0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+
+async def test_no_connection_is_held_during_the_transformation_agents_call(own_schema, flow):
+    """Phase 7.8, task 4.3: read, end the transaction, call, lock, write."""
+    from tests.test_commit_visibility import messy_feed
+
+    feed_id = messy_feed(own_schema)
+    provider = WatchingProvider(own_schema)
+    async with flow() as f:
+        use_provider(provider)
+        await amaze_post(f.client, f"feeds/{feed_id}/transformations/propose", {})
+    assert provider.checked_out == [0]
+
+
+async def test_a_proposal_made_during_the_transformation_call_gives_409_and_a_discard_row(own_schema, flow):
+    from ports.db import get_sessionmaker
+    from tests.configured import transformation_proposal
+    from tests.test_commit_visibility import messy_feed
+
+    feed_id = messy_feed(own_schema)
+
+    def someone_else_proposes():  # on its own session, while the model answers
+        with get_sessionmaker(own_schema)() as session:
+            transformation_proposal(session, uuid.UUID(feed_id), "instr_id", [{"op": "trim"}])
+            session.commit()
+
+    async with flow() as f:
+        use_provider(WatchingProvider(own_schema, during_call=someone_else_proposes))
+        response = await f.client.post(f"/api/amaze/feeds/{feed_id}/transformations/propose", headers=SAM, json={})
+    assert response.status_code == 409, response.text
+    [(reason,)] = committed(own_schema, "SELECT reason FROM proposal_log_discards")
+    assert reason.startswith("TransformationAlreadyProposed")
+    assert committed(own_schema, "SELECT count(*) FROM proposals WHERE kind = 'transformation'") == [(1,)]  # theirs
+
+
+async def test_no_connection_is_held_while_code_counts_the_proposed_keys_duplicates(own_schema, flow, monkeypatch):
+    """Phase 7.8, task 3.2: the ProfilerAgent's after_answer reads the file (BlobStore.get) and counts duplicates
+    with DuckDB after the call row is committed and before any write, holding no connection."""
+    import core.steps.s02_profile as step_02
+    from ports.storage.local import LocalBlobStore as Blobs
+
+    seen = {"get": [], "duplicate_key_found": []}
+    real_get, real_count = Blobs.get, step_02.duplicate_key_found
+
+    def watched_get(self, ref):
+        seen["get"].append(own_schema.pool.checkedout())
+        return real_get(self, ref)
+
+    def watched_count(path, columns):
+        seen["duplicate_key_found"].append(own_schema.pool.checkedout())
+        return real_count(path, columns)
+
+    provider = WatchingProvider(own_schema)
+    async with flow() as f:
+        use_provider(provider)
+        await f.raised("volume", ("volume",))
+        await f.step("find-source")
+        await f.amaze("syn_exchange_volumes", "profile")
+        monkeypatch.setattr(Blobs, "get", watched_get)
+        monkeypatch.setattr(step_02, "duplicate_key_found", watched_count)
+        await f.amaze("syn_exchange_volumes", "profile/summary")
+    assert seen["get"] and seen["duplicate_key_found"]
+    assert set(seen["get"]) == {0} and set(seen["duplicate_key_found"]) == {0}
 
 
 async def test_a_new_profile_during_the_summary_gives_409_and_a_discard_row(own_schema, flow):
@@ -569,25 +642,72 @@ def test_two_signoffs_at_once_give_one_success_and_one_409(own_schema, tmp_path,
     assert committed(own_schema, "SELECT version, outcome FROM feed_signoffs") == [(1, "meets")]
 
 
-def _slow(monkeypatch, cls, method, seconds=0.3, *, after=False) -> threading.Event:
+def _slow(monkeypatch, cls, method, cap=5.0, *, after=False) -> threading.Event:
     """Make one read slow, so two requests that are not kept apart by a lock both pass it before either writes.
-    after: sleep after the read, so what it read can go stale before the write. Returns an event set inside
-    the slowed read (just before the sleep): whoever calls it first is there, holding its locks."""
+    The window is open until an event shows the other side is there (no fixed sleep): a second thread has entered
+    the same method, or another backend is waiting on a lock this backend holds. `cap` is the longest it stays open
+    when neither happens (the test then goes on, as the old fixed sleep did). after: hold after the read, so what it
+    read can go stale before the write. Returns an event set inside the slowed read: whoever calls it first is
+    there, holding its locks."""
     original = getattr(cls, method)
     entered = threading.Event()
+    threads: set[int] = set()
+
+    def window(self):
+        threads.add(threading.get_ident())
+        entered.set()
+        bind = self._session.get_bind()
+        engine = getattr(bind, "engine", bind)
+        pid = self._session.connection().exec_driver_sql("SELECT pg_backend_pid()").scalar()
+        deadline = time.monotonic() + cap
+        while time.monotonic() < deadline:
+            if len(threads) >= 2 or _wait_for_lock_on(engine, pid, timeout=0.05):
+                return
+        pytest.fail("window closed: the other side never arrived")
 
     def slow(self, *args, **kwargs):
         if not after:
-            entered.set()
-            time.sleep(seconds)
+            window(self)
         result = original(self, *args, **kwargs)
         if after:
-            entered.set()
-            time.sleep(seconds)
+            window(self)
         return result
 
     monkeypatch.setattr(cls, method, slow)
     return entered
+
+
+def _held(monkeypatch, cls, name):
+    """Hold one method until the test releases it (no fixed sleep). Returns (entered, release, holder): `entered` is
+    set inside the held call, holder["pid"] is the backend pid of the session it runs in, and the call then waits on
+    `release` (15 s at most, then it raises, so a test that never releases fails loudly)."""
+    original = getattr(cls, name)
+    entered, release, holder = threading.Event(), threading.Event(), {}
+
+    def held(self, *args, **kwargs):
+        holder["pid"] = self._session.connection().exec_driver_sql("SELECT pg_backend_pid()").scalar()
+        entered.set()
+        if not release.wait(15):
+            raise AssertionError(f"{cls.__name__}.{name} was never released")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, name, held)
+    return entered, release, holder
+
+
+def _wait_for_lock_on(engine, pid: int, timeout: float = 10.0) -> bool:
+    """Poll pg_stat_activity (own autocommit connection, every 50 ms) until another backend waits on a lock that
+    backend `pid` holds. False after the timeout."""
+    deadline = time.monotonic() + timeout
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        while time.monotonic() < deadline:
+            waiting = conn.exec_driver_sql(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+                "AND %s = ANY(pg_blocking_pids(pid))", (pid,)).scalar()
+            if waiting:
+                return True
+            time.sleep(0.05)
+    return False
 
 
 def _first_then_second(first, second, entered: threading.Event):
@@ -663,7 +783,7 @@ async def test_a_pick_and_a_rejection_of_one_source_at_once_leave_nobody_on_a_re
         later = (await f.listed("open price again"))[vendor_code]
         await f.amaze(vendor_code, "profile")
     _summarise_for_rejection(own_schema, f.feed_id)
-    entered = _slow(monkeypatch, FeedProfileRepository, "latest", seconds=0.5)
+    entered = _slow(monkeypatch, FeedProfileRepository, "latest")
     pick = _in_session(own_schema, lambda s: pick_source(
         s, requirement_id=uuid.UUID(f.id), user=dev_user_for("requester"), proposal_id=uuid.UUID(later["proposal_id"]),
         accepted_conditions=_conditions(later), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).outcome)
@@ -723,7 +843,7 @@ async def test_a_pick_and_a_rejection_at_once_through_the_api_give_no_500(own_sc
         later = (await f.listed("open price again"))[vendor_code]
         await f.amaze(vendor_code, "profile")
         await f.amaze(vendor_code, "profile/summary")
-        entered = _slow(monkeypatch, FeedProfileRepository, "latest", seconds=0.5)
+        entered = _slow(monkeypatch, FeedProfileRepository, "latest")
 
         def reject():
             return f.client.post(f"/api/amaze/feeds/{f.feed_id}/signoff", headers=BLAKE,
@@ -768,7 +888,7 @@ async def test_a_rejection_and_the_daily_fetch_of_one_feed_at_once_do_not_deadlo
         await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
         await f.amaze(vendor_code, "profile")
     _summarise_for_rejection(own_schema, f.feed_id)
-    entered = _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)  # record_fetch: after the feed lock
+    entered = _slow(monkeypatch, SourceFetchRepository, "latest")  # record_fetch: after the feed lock
     out = _first_then_second(_daily_fetch(own_schema, tmp_path), _reject(own_schema, f.feed_id), entered)
     assert out == {"first": {vendor_code: "fetched"}, "second": "rejected", "overlap": True}, out
     # released by the rejection; the backup is still listed
@@ -792,7 +912,7 @@ async def test_a_rejection_and_a_requester_release_of_one_requirement_at_once_do
         feeds = (await f.client.get("/api/amaze/feeds", headers=BLAKE)).json()
     feed_id = next(x["id"] for x in feeds if x["code"] == backup_code)
     _summarise_for_rejection(own_schema, feed_id)  # a profile on a fetched row written for the test
-    entered = _slow(monkeypatch, SourceChoiceRepository, "record_release", seconds=0.5)
+    entered = _slow(monkeypatch, SourceChoiceRepository, "record_release")
     release = _in_session(own_schema, lambda s: release_source(
         s, requirement_id=uuid.UUID(f.id), reason="requester_asked", user=dev_user_for("requester"),
         catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE), notifier=InAppNotifier(s),
@@ -851,12 +971,35 @@ async def test_a_pick_and_a_fetch_of_the_same_feed_at_once_both_succeed(own_sche
         vendor = (await f.listed())[vendor_code]
         await f.step("pick", {"proposal_id": vendor["proposal_id"], "accepted_conditions": vendor["source"]["conditions"]})
         later = (await f.listed("open price again"))[vendor_code]
-    entered = _slow(monkeypatch, SourceFetchRepository, "latest", seconds=0.5)
+    # The pick does not wait for the fetch (FOR KEY SHARE), so the fetch is held until the pick's rows are committed,
+    # seen from another connection; no sleep decides the order.
+    entered, release, _ = _held(monkeypatch, SourceFetchRepository, "latest")
+    count_sql = "SELECT count(*) FROM source_choices WHERE requirement_id = :id"
+    [(choices_before,)] = committed(own_schema, count_sql, id=f.id)
     pick = _in_session(own_schema, lambda s: pick_source(
         s, requirement_id=uuid.UUID(f.id), user=dev_user_for("requester"), proposal_id=uuid.UUID(later["proposal_id"]),
         accepted_conditions=_conditions(later), catalogue=SourceCatalogue.load(DEFAULT_CATALOGUE)).outcome)
+    pick_committed = {}
+
+    def release_when_the_pick_has_committed():
+        try:
+            if not entered.wait(10):
+                return
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if committed(own_schema, count_sql, id=f.id) != [(choices_before,)]:
+                    pick_committed["yes"] = True
+                    return
+                time.sleep(0.05)
+        finally:
+            release.set()
+
+    releaser = threading.Thread(target=release_when_the_pick_has_committed)
+    releaser.start()
     started = time.monotonic()
     out = _first_then_second(_daily_fetch(own_schema, tmp_path), pick, entered)
+    releaser.join(timeout=30)
+    assert pick_committed, "the pick never committed while the fetch was held"
     assert out == {"first": {vendor_code: "fetched"}, "second": "source_picked", "overlap": True}, out
     # the pick committed while the fetch waited; the fetch then read who selects the feed, so it is onboarding
     assert committed(own_schema, "SELECT status FROM requirements WHERE id = :id", id=f.id) == [("onboarding",)]
@@ -1278,7 +1421,7 @@ async def test_the_owners_approval_and_the_checkers_rule_approval_at_once_never_
                                              "'volume_not_negative'")
         await call(p.client, f"proposals/{rule_id}/decision", {"decision": "approved"}, headers=SAM)  # step 1
         summary_id = await go_live(p, approve=False)  # pins the rule set as it is now: no rule
-    entered = _slow(monkeypatch, RuleRepository, "add_version", seconds=0.8)  # inside the checker's decision
+    entered = _slow(monkeypatch, RuleRepository, "add_version")  # inside the checker's decision
     checker = _in_session(own_schema, lambda s: decide_rule(s, proposal_id=rule_id, user=dev_user_for("checker"),
                                                             decision="approved", note=None))
     owner = _in_session(own_schema, lambda s: decide_go_live(
@@ -1364,7 +1507,7 @@ async def test_a_writer_inside_its_finish_is_not_abandoned_by_a_stale_clear(own_
     async with p6() as p:
         await go_live(p)
         p.daily.load_stale_minutes = 0
-        entered = _slow(monkeypatch, LoadCertificationRepository, "add", seconds=0.8)
+        entered = _slow(monkeypatch, LoadCertificationRepository, "add")
         feed = uuid.UUID(p.feed)
         out = await asyncio.to_thread(_first_then_second, lambda: p.daily.load_feed(feed),
                                       lambda: p.daily.load_feed(feed), entered)
@@ -1391,10 +1534,17 @@ async def test_two_stale_clears_of_one_load_give_one_new_load_and_a_409(own_sche
                                            go_live_id=go_live_id,
                                            received_at=datetime.now(UTC) - timedelta(minutes=45))
             session.commit()
-        entered = _slow(monkeypatch, LoadRepository, "create", seconds=0.8)  # after the clear, holding the feed row
+        # held after the clear, holding the feed row, until the POST is seen waiting for a lock the job holds
+        entered, release, holder = _held(monkeypatch, LoadRepository, "create")
         thread, job = _in_thread(lambda: p.daily.load_feed(uuid.UUID(p.feed)))
-        assert await asyncio.to_thread(entered.wait, 10), "the job never reached its create"
-        now = await p.client.post(f"/api/amaze/feeds/{p.feed}/loads", headers=OPAL, json={})
+        try:
+            assert await asyncio.to_thread(entered.wait, 10), "the job never reached its create"
+            post = asyncio.create_task(p.client.post(f"/api/amaze/feeds/{p.feed}/loads", headers=OPAL, json={}))
+            waiting = await asyncio.to_thread(_wait_for_lock_on, own_schema, holder["pid"])
+        finally:
+            release.set()
+        assert waiting, "the second request never waited for a lock held by the job"
+        now = await post
         thread.join(timeout=30)
     assert now.status_code == 409 and "load in progress" in now.json()["detail"], now.text
     assert job == {"result": "released"}
@@ -1457,3 +1607,43 @@ async def test_no_connection_is_held_during_a_load_run(own_schema, p6, monkeypat
     assert gets_after_load - gets_before == 2  # the scheduled load: step 12's read of the file, then the engine's
     assert len(seen["get"]) - gets_after_load >= 1  # the propose call's load_history read
     assert len(seen["profile_csv"]) == 1  # step 12 profiled the one scheduled delivery
+
+
+async def test_the_image_extraction_holds_no_connection_during_the_call_and_commits_its_rows(own_schema, tmp_path):
+    """Phase 7.8, task 2.3: POST .../extract renders the pages and calls the TableExtractorAgent with
+    pool.checkedout() == 0; the proposal and its call row are committed; confirm approves it and creates the feed
+    in one committed transaction (the commit-visibility check of both endpoints, on the app's real sessions)."""
+    from apps.api.deps import get_blob_store_port
+    from apps.api.main import app
+    from ports.config import Settings
+    from ports.storage.local import LocalBlobStore
+    from tests.conftest import running_app
+    from tests.test_commit_visibility import committed as committed_rows
+    from tests.test_intake_pdf import image_pdf
+
+    blobs = LocalBlobStore(tmp_path / "blob")
+    operator = {"X-Dev-User": "dev-operator"}
+    provider = WatchingProvider(own_schema)
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None, dropzone_root=tmp_path / "dz")
+                           ) as client:
+        app.dependency_overrides[get_blob_store_port] = lambda: blobs
+        use_provider(provider)
+        stored = await client.post("/api/amaze/uploads", params={"filename": "scan.pdf"},
+                                   headers={**operator, "Content-Type": "application/octet-stream"},
+                                   content=image_pdf(1))
+        assert stored.json()["outcome"] == "needs_image_extraction", stored.text
+        upload_id = stored.json()["upload_id"]
+        extracted = await client.post(f"/api/amaze/uploads/{upload_id}/extract", headers=operator,
+                                      json={"filename": "scan.pdf"})
+        assert extracted.status_code == 200, extracted.text
+        assert committed_rows(own_schema, "SELECT kind, status, feed_id FROM proposals") == [
+            ("extracted_table", "pending", None)]
+        confirmed = await client.post(
+            f"/api/amaze/uploads/{upload_id}/confirm", headers=operator,
+            json={"filename": "scan.pdf", "feed_code": "scan_a", "feed_name": "Scan A", "sheet": None,
+                  "header_row": None, "extracted_proposal_id": extracted.json()["proposal_id"]})
+        assert confirmed.status_code == 200, confirmed.text
+    assert provider.checked_out == [0]
+    assert committed_rows(own_schema, "SELECT agent_name FROM proposal_log") == [("TableExtractorAgent",)]
+    assert committed_rows(own_schema, "SELECT status FROM proposals") == [("approved",)]
+    assert committed_rows(own_schema, "SELECT code, connector FROM feeds") == [("scan_a", "dropzone")]

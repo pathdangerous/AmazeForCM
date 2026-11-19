@@ -24,6 +24,7 @@ from agents.mapping import MappingAgent
 from agents.profiler import ProfilerAgent
 from agents.review_summariser import ReviewSummariserAgent
 from agents.rule_recommender import RuleRecommenderAgent
+from agents.transformation import TransformationAgent
 from apps.api.deps import (
     backend_team_user,
     backend_user,
@@ -41,16 +42,19 @@ from apps.api.deps import (
     get_review_summariser,
     get_rule_agent,
     get_source_catalogue,
+    get_transformation_agent,
     glossary_run_user,
     operations_user,
 )
 from apps.api.jobs import DAILY_FETCH_HOUR, DailyFetch
 from apps.api.transactions import in_transaction, read
+from core.domain.common import NonBlank
 from core.domain.feed import Feed, FeedStage
 from core.domain.glossary import GlossaryElement
 from core.domain.mapping import GlossaryRun
 from core.domain.proposal import ProposalStatus
 from core.domain.load import StandardRecord
+from core.domain.transformation import KeyColumns, KeyPolicyName
 from core.engine.run import execute_load, plan_load, record_load
 from core.repositories.errors import OwnerNotADataOwner, ProposalNotFound, UnknownGlossaryElement
 from core.repositories.feeds import FeedRepository
@@ -77,6 +81,17 @@ from core.steps.s09_rules import (
     decide_rule,
     record_rules,
     rules_input,
+)
+from core.steps.s10_transform import (
+    EffectiveKeyPolicy,
+    TransformationRejected,
+    TransformationStored,
+    TransformResult,
+    decide_transformation,
+    effective_key_policy,
+    propose_transformations,
+    set_key_policy,
+    transform_input,
 )
 from core.steps.s11_go_live import (
     ApprovedScheduled,
@@ -118,6 +133,7 @@ GlossaryRunner = Annotated[User, Depends(glossary_run_user)]
 Steward = Annotated[User, Depends(data_steward_user)]
 Operations = Annotated[User, Depends(operations_user)]
 RuleAgent = Annotated[RuleRecommenderAgent, Depends(get_rule_agent)]
+Transformer = Annotated[TransformationAgent, Depends(get_transformation_agent)]
 Summariser = Annotated[ReviewSummariserAgent, Depends(get_review_summariser)]
 Connectors = Annotated[Callable[[str], SourceConnector], Depends(get_connector_factory)]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
@@ -260,9 +276,10 @@ def profile(feed_id: UUID, session: DbSession, user: BackendTeam, catalogue: Cat
 
 @router.post("/feeds/{feed_id}/profile/summary", response_model=SummaryResponse)
 def summarise(feed_id: UUID, session: DbSession, user: BackendTeam, catalogue: Catalogue,
-              agent: Profiler) -> SummaryResponse:
-    agent_input = read(session, lambda: summary_input(session, feed_id=feed_id))
-    summary = in_transaction(session, lambda: record_summary(session, agent=agent, agent_input=agent_input))
+              agent: Profiler, blobs: Blobs, settings: AppSettings) -> SummaryResponse:
+    agent_input = read(session, lambda: summary_input(session, feed_id=feed_id, settings=settings))
+    summary = in_transaction(session, lambda: record_summary(session, agent=agent, agent_input=agent_input,
+                                                             blob_store=blobs))
     return SummaryResponse(summary=summary, feed=_page(session, feed_id, catalogue))
 
 
@@ -317,7 +334,7 @@ class DecisionBody(BaseModel):
 
 class DecisionResponse(BaseModel):
     result: (Mapped | MappingRejected | ElementDecided | RuleAwaitsChecker | RuleStored | RuleRejected
-             | ApprovedScheduled | RejectedBackToStep)
+             | ApprovedScheduled | RejectedBackToStep | TransformationStored | TransformationRejected)
     proposal: ProposalOnPage
 
 
@@ -346,7 +363,8 @@ def glossary_run(feed_id: UUID, session: DbSession, user: GlossaryRunner, kick: 
 
 
 @router.get("/proposals", response_model=list[ProposalOnPage])
-def proposals(session: DbSession, kind: Literal["glossary_element", "mapping", "rule", "review_summary"] | None = None,
+def proposals(session: DbSession,
+              kind: Literal["glossary_element", "mapping", "rule", "review_summary", "transformation"] | None = None,
               status: ProposalStatus | None = None, feed_id: UUID | None = None) -> list[ProposalOnPage]:
     return read(session, lambda: configuration_proposals(session, kind=kind, status=status, feed_id=feed_id))
 
@@ -369,32 +387,40 @@ def propose_mappings(feed_id: UUID, body: ProposeBody, session: DbSession, user:
 @router.post("/proposals/{proposal_id}/decision", response_model=DecisionResponse)
 def decide(proposal_id: UUID, body: DecisionBody, session: DbSession, user: Annotated[User, Depends(backend_user)],
            identity: IdentityPort, notifier: RequestNotifier, settings: AppSettings) -> DecisionResponse:
-    def work():
-        kind = ProposalRepository(session).get(proposal_id).kind
-        if kind == "glossary_element":
-            if isinstance(body.choice, str):
-                raise ChoiceNotOffered("A glossary proposal's choice is the index of one of its options")
-            return decide_element(session, proposal_id=proposal_id, user=user, decision=body.decision,
-                                  choice=body.choice, note=body.note, notifier=notifier,
-                                  stewards=_users_with(identity, "data_steward"))
-        if kind == "mapping":
-            if isinstance(body.choice, int):
-                raise ChoiceNotOffered("A mapping proposal's choice is one of its candidate element keys")
-            return decide_mapping(session, proposal_id=proposal_id, user=user, decision=body.decision,
-                                  choice=body.choice, note=body.note)
-        if kind == "rule":  # phase 6: the steward, then the checker
-            return decide_rule(session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note,
-                               notifier=notifier, checkers=_users_with(identity, "checker"))
-        if kind == "review_summary":  # phase 6: the feed's owner
-            return decide_go_live(
-                session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note,
-                back_to_step=body.back_to_step, today=date.today(), hypercare_days=settings.hypercare_days,
-                daily_run_utc=f"{DAILY_FETCH_HOUR:02d}:00", notifier=notifier, backend_team=_backend_team(identity),
-                operations=_users_with(identity, "operations"), role_holders=lambda role: _users_with(identity, role))
-        raise ProposalNotFound(f"No glossary, mapping, rule or go-live proposal with id {proposal_id}")
-
-    result = in_transaction(session, work)
+    result = in_transaction(session, lambda: decide_proposal(session, proposal_id=proposal_id, body=body, user=user,
+                                                             identity=identity, notifier=notifier, settings=settings))
     return DecisionResponse(result=result, proposal=read(session, lambda: proposal_on_page(session, proposal_id)))
+
+
+def decide_proposal(session: Session, *, proposal_id: UUID, body: DecisionBody, user: User, identity: Identity,
+                    notifier: Notifier, settings: Settings):
+    """One person's decision on one configuration proposal, by its kind's own step function; the caller owns the
+    transaction. Also the onboarding workspace's item decision (phase 7.8, task 5.4), so the two never differ."""
+    kind = ProposalRepository(session).get(proposal_id).kind
+    if kind == "glossary_element":
+        if isinstance(body.choice, str):
+            raise ChoiceNotOffered("A glossary proposal's choice is the index of one of its options")
+        return decide_element(session, proposal_id=proposal_id, user=user, decision=body.decision,
+                              choice=body.choice, note=body.note, notifier=notifier,
+                              stewards=_users_with(identity, "data_steward"))
+    if kind == "mapping":
+        if isinstance(body.choice, int):
+            raise ChoiceNotOffered("A mapping proposal's choice is one of its candidate element keys")
+        return decide_mapping(session, proposal_id=proposal_id, user=user, decision=body.decision,
+                              choice=body.choice, note=body.note)
+    if kind == "rule":  # phase 6: the steward, then the checker
+        return decide_rule(session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note,
+                           notifier=notifier, checkers=_users_with(identity, "checker"))
+    if kind == "review_summary":  # phase 6: the feed's owner
+        return decide_go_live(
+            session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note,
+            back_to_step=body.back_to_step, today=date.today(), hypercare_days=settings.hypercare_days,
+            daily_run_utc=f"{DAILY_FETCH_HOUR:02d}:00", notifier=notifier, backend_team=_backend_team(identity),
+            operations=_users_with(identity, "operations"), role_holders=lambda role: _users_with(identity, role))
+    if kind == "transformation":  # phase 7.8, task 4.3: the data steward
+        return decide_transformation(session, proposal_id=proposal_id, user=user, decision=body.decision,
+                                     note=body.note)
+    raise ProposalNotFound(f"No glossary, mapping, rule, transformation or go-live proposal with id {proposal_id}")
 
 
 # ---- phase 6: steps 09, 11 and 13 (plan, section 9)
@@ -438,6 +464,49 @@ def propose_rules(feed_id: UUID, body: ProposeRulesBody, session: DbSession, use
     result = in_transaction(session, lambda: record_rules(session, agent=agent, agent_input=agent_input,
                                                            backtest=backtest))
     return ProposeRulesResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+# ---- phase 7.8, task 4.3: step 10, the transformations and the key policy
+
+
+class ProposeTransformationsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProposeTransformationsResponse(BaseModel):
+    result: TransformResult
+    feed: FeedPage
+
+
+class KeyPolicyBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy: KeyPolicyName
+    key_columns: KeyColumns
+    reason: Annotated[NonBlank, StringConstraints(max_length=500)]
+
+
+class KeyPolicyResponse(BaseModel):
+    key_policy: EffectiveKeyPolicy
+    feed: FeedPage
+
+
+@router.post("/feeds/{feed_id}/transformations/propose", response_model=ProposeTransformationsResponse)
+def propose_feed_transformations(feed_id: UUID, body: ProposeTransformationsBody, session: DbSession,
+                                 user: Steward, catalogue: Catalogue, agent: Transformer,
+                                 settings: AppSettings) -> ProposeTransformationsResponse:
+    agent_input = read(session, lambda: transform_input(session, feed_id=feed_id, settings=settings))
+    result = in_transaction(session, lambda: propose_transformations(session, agent=agent, agent_input=agent_input))
+    return ProposeTransformationsResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+@router.put("/feeds/{feed_id}/key-policy", response_model=KeyPolicyResponse)
+def put_key_policy(feed_id: UUID, body: KeyPolicyBody, session: DbSession, user: Steward,
+                   catalogue: Catalogue) -> KeyPolicyResponse:
+    in_transaction(session, lambda: set_key_policy(session, feed_id=feed_id, user=user, policy=body.policy,
+                                                    key_columns=body.key_columns, reason=body.reason))
+    return KeyPolicyResponse(key_policy=read(session, lambda: effective_key_policy(session, feed_id)),
+                             feed=_page(session, feed_id, catalogue))
 
 
 @router.post("/feeds/{feed_id}/go-live/summary", response_model=GoLiveResponse)

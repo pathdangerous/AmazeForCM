@@ -204,3 +204,55 @@ def test_a_relative_catalogue_path_is_read_from_the_repository_not_the_current_f
     """As .env.example writes it; the API and the tests may run from another folder."""
     monkeypatch.chdir(tmp_path)
     assert Settings(_env_file=None, source_catalogue=relative).source_catalogue == DEFAULT_CATALOGUE
+
+
+# ---------------------------------------------------------------- phase 7.8, task 2.4: uploads as catalogue entries
+
+UPLOAD = {
+    "code": "upl_prices", "name": "Prices", "provider": "Uploaded by Blake Backend", "description": "Uploaded.",
+    "visibility": "private", "channel": "uploads", "known": True,
+    "conditions": {"licence": "Internal use only", "permitted_use": "Internal analysis", "redistribution": "None"},
+    "elements": [], "other_fields": [], "connector": "dropzone", "source_ref": "dropzone/prices", "columns": {},
+}
+
+
+def test_with_uploads_finds_them_by_code_and_lists_none_of_them(catalogue):
+    from ports.connectors.catalogue import SourceEntry
+
+    entry = SourceEntry.model_validate(UPLOAD)
+    combined = catalogue.with_uploads([entry])
+    assert combined.get("upl_prices") == entry and combined.get("syn_exchange_volumes").code == "syn_exchange_volumes"
+    # an uploaded file is never offered to a requester as a source: every listing S1 to S3 use ignores it
+    assert "upl_prices" not in [e.code for e in combined.entries]
+    assert [e.code for e in combined.known()] == [e.code for e in catalogue.known()]
+    assert combined.channels() == catalogue.channels() and ("uploads", "private") not in combined.channels()
+    with pytest.raises(UnknownSource):
+        catalogue.get("upl_prices")  # the file catalogue itself is unchanged
+
+
+def test_with_uploads_refuses_a_code_that_is_already_listed(catalogue):
+    from ports.connectors.catalogue import SourceEntry
+
+    entry = SourceEntry.model_validate(UPLOAD)
+    with pytest.raises(ValueError, match="upl_prices"):
+        catalogue.with_uploads([entry, entry])
+    with pytest.raises(ValueError, match="upl_"):
+        catalogue.with_uploads([SourceEntry.model_validate({**ENTRY, "known": True})])  # a file entry is not an upload
+
+
+@pytest.mark.parametrize("change", [
+    {"code": "syn_prices"},  # a dropzone source is an upl_ source
+    {"connector": "local_file"},  # and an upl_ source is a dropzone source
+    {"known": False}, {"visibility": "public"}, {"channel": "exchanges"},
+    {"elements": ["volume"], "columns": {"qty": "volume"}},
+])
+def test_an_upload_entry_has_a_fixed_shape(change):
+    from ports.connectors.catalogue import SourceEntry
+
+    with pytest.raises((ValueError, ValidationError)):
+        SourceEntry.model_validate({**UPLOAD, **change})
+
+
+def test_the_file_catalogue_loader_still_refuses_upload_entries(tmp_path):
+    with pytest.raises((ValueError, ValidationError), match="syn_|dropzone|upl_"):
+        SourceCatalogue.load(write(tmp_path, UPLOAD))

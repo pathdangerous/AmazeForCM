@@ -781,3 +781,158 @@ def test_the_notify_calls_differ_from_main_only_by_the_link_argument():
         dumps, linked = notify_calls((root / path).read_text(encoding="utf-8"))
         assert (len(dumps), hashlib.sha256("\n".join(dumps).encode()).hexdigest()) == (count, digest), path
         assert linked == LINKED_CALLS[path], path
+
+
+# ---------------------------------------------------------------- phase 7.8, task 4.4: the drop folder
+
+
+@pytest.fixture
+def dropzone(tmp_path):
+    return tmp_path / "dropzone"
+
+
+@pytest.fixture
+def drop_job(daily, dropzone):
+    """The daily job reading the drop folder, and telling operations."""
+    import dataclasses
+
+    from ports.connectors.dropzone import DropzoneConnector
+
+    return dataclasses.replace(daily(lambda name: DropzoneConnector(dropzone)), operations=lambda: ["dev-operations"])
+
+
+@pytest.fixture
+def live_upload(db_session, live):
+    """A registered uploaded feed (connector dropzone) with the three mappings and a go-live, as `live` makes a file
+    feed; with an upload source holding the intake options when asked."""
+    from core.domain.profiling import FileColumn
+    from core.repositories.feeds import FeedRepository
+    from core.repositories.upload_sources import UploadSourceRepository
+    from tests.configured import approved_mapping, go_live
+
+    def _live_upload(options=None):
+        feed = FeedRepository(db_session).create_candidate(
+            code="upload_vol", name="Uploaded volumes", source_code="upl_upload_vol", connector="dropzone",
+            source_ref="dropzone/upload_vol")
+        registered_feed(db_session, feed.id, columns=[
+            FileColumn(name=n, type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=1)
+            for n in ("instr_id", "trade_date", "traded_qty")])
+        if options is not None:
+            UploadSourceRepository(db_session).create(
+                code="upl_upload_vol", feed_id=feed.id, name="Uploaded volumes", provider="Uploaded by a test",
+                description="Synthetic", licence="Internal use only", permitted_use="Internal analysis",
+                redistribution="None", original_name="first.xlsx", original_ref="uploads/x/first.xlsx",
+                manifest_ref="raw/upload_vol/x/manifest.json", manifest={}, intake_options=options,
+                created_by="dev-operator")
+        for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"), ("traded_qty", "volume")):
+            approved_mapping(db_session, feed.id, field, key)
+        go_live(db_session, feed.id)
+        db_session.commit()
+        return feed
+
+    return _live_upload
+
+
+def drop(root, name, data, mtime):
+    import os
+
+    folder = root / "upload_vol"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_bytes(data)
+    os.utime(folder / name, (mtime, mtime))
+
+
+GOOD = b"instr_id,trade_date,traded_qty\nsyn-0001,2026-11-02,120500\n"
+
+
+def test_the_newest_file_in_the_drop_folder_is_made_canonical_and_loaded(db_session, drop_job, live_upload, dropzone):
+    feed = live_upload()
+    drop(dropzone, "old.csv", b"instr_id,trade_date\nx,y\n", 1_700_000_000)  # an older, broken file is not read
+    drop(dropzone, "new.csv", b"instr_id;trade_date;traded_qty\r\nsyn-0001;2026-11-02;120500\r\n", 1_700_000_900)
+    assert drop_job.run() == {"upload_vol": "fetched"}
+    fetch = SourceFetchRepository(db_session).latest_fetched(feed.id)
+    assert fetch.blob_ref.endswith("/new.csv")
+    assert drop_job.blob_store.get(fetch.blob_ref) == GOOD  # the canonical CSV: comma-delimited, LF, no BOM
+    (scheduled, _test) = loads_of(db_session, feed)
+    assert (scheduled.purpose, scheduled.status, scheduled.arrival_outcome) == ("scheduled", "released",
+                                                                                 "on_time_complete")
+
+
+def test_a_workbook_is_read_with_the_sheet_and_header_row_of_the_upload(db_session, drop_job, live_upload, dropzone):
+    import io
+
+    import openpyxl
+
+    feed = live_upload(options={"sheet": "Data", "header_row": 2})
+    wb = openpyxl.Workbook()
+    wb.active.title = "Notes"
+    wb.active.append(["not the data"])
+    data = wb.create_sheet("Data")
+    data.append(["Daily volumes"])
+    data.append(["instr_id", "trade_date", "traded_qty"])
+    data.append(["syn-0001", "2026-11-02", "120500"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    drop(dropzone, "week.xlsx", buf.getvalue(), 1_700_000_000)
+    assert drop_job.run() == {"upload_vol": "fetched"}
+    fetch = SourceFetchRepository(db_session).latest_fetched(feed.id)
+    assert drop_job.blob_store.get(fetch.blob_ref) == GOOD and fetch.blob_ref.endswith("/week.csv")
+    assert loads_of(db_session, feed)[0].status == "released"
+
+
+def test_the_same_file_again_is_quarantined(db_session, drop_job, live_upload, dropzone):
+    feed = live_upload()
+    drop(dropzone, "a.csv", GOOD, 1_700_000_000)
+    drop_job.run()
+    drop(dropzone, "b.csv", GOOD.replace(b"\n", b"\r\n"), 1_700_000_900)  # another name, the same table
+    drop_job.run()
+    newest, *_ = loads_of(db_session, feed)
+    assert (newest.status, newest.arrival_outcome) == ("quarantined", "resent_quarantined")
+    assert "Delivery resent: upload_vol" in subjects(db_session, "dev-operations")
+
+
+def test_a_file_missing_a_column_is_held(db_session, drop_job, live_upload, dropzone):
+    feed = live_upload()
+    drop(dropzone, "a.csv", b"instr_id,trade_date\nsyn-1,2026-11-02\n", 1_700_000_000)
+    drop_job.run()
+    (held, _test) = loads_of(db_session, feed)
+    assert (held.status, held.arrival_outcome) == ("held", "breaking_held")
+    assert "Delivery held: upload_vol" in subjects(db_session, "dev-operations")
+
+
+def test_a_new_column_is_parked_and_the_load_goes_on(db_session, drop_job, live_upload, dropzone):
+    feed = live_upload()
+    drop(dropzone, "a.csv", b"instr_id,trade_date,traded_qty,rating\nsyn-1,2026-11-02,5,AA\n", 1_700_000_000)
+    drop_job.run()
+    (scheduled, _test) = loads_of(db_session, feed)
+    assert (scheduled.status, scheduled.arrival_outcome) == ("released", "additive_parked")
+
+
+def test_an_empty_drop_folder_is_source_down_with_a_late_alert_for_a_live_feed(db_session, drop_job, live_upload,
+                                                                               dropzone):
+    """No file in the folder is the existing source_down behaviour: the fetch is recorded as source_down with the
+    reason, no load is made, and a live feed gets the step 12 late alert."""
+    feed = live_upload()
+    assert drop_job.run() == {"upload_vol": "source_down"}
+    assert SourceFetchRepository(db_session).latest(feed.id).detail == "no file in the drop folder"
+    assert subjects(db_session, "dev-operations") == ["Delivery late: upload_vol"]
+    assert [load.purpose for load in loads_of(db_session, feed)] == ["go_live_test"]
+
+
+def test_a_file_that_is_not_a_table_is_source_down_with_the_reason(db_session, drop_job, live_upload, dropzone):
+    feed = live_upload()
+    drop(dropzone, "broken.xlsx", b"this is not a workbook", 1_700_000_000)
+    assert drop_job.run() == {"upload_vol": "source_down"}
+    detail = SourceFetchRepository(db_session).latest(feed.id).detail
+    assert detail and "broken.xlsx" in detail
+    assert [load.purpose for load in loads_of(db_session, feed)] == ["go_live_test"]
+
+
+def test_load_now_takes_the_newest_file_of_the_drop_folder(db_session, drop_job, live_upload, dropzone):
+    feed = live_upload()
+    drop(dropzone, "a.csv", GOOD, 1_700_000_000)
+    assert drop_job.fetch_and_load(feed.id) == {"fetch": "fetched", "load": "released"}
+    drop(dropzone, "b.csv", b"instr_id,trade_date,traded_qty\nsyn-0002,2026-11-03,7\n", 1_700_000_900)
+    assert drop_job.fetch_and_load(feed.id) == {"fetch": "fetched", "load": "released"}
+    assert drop_job.blob_store.get(SourceFetchRepository(db_session).latest_fetched(feed.id).blob_ref).endswith(
+        b"syn-0002,2026-11-03,7\n")

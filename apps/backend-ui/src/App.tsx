@@ -5,26 +5,42 @@ import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
 import NotificationsView, { useInbox } from "./views/NotificationsView";
+import OnboardingsView from "./views/OnboardingsView";
 import RunBanner from "./views/RunBanner";
+import WorkspaceView from "./views/WorkspaceView";
 import StatusView from "./views/StatusView";
+import UploadView from "./views/UploadView";
 
 const TITLE = "Amaze Backend Workbench";
 const STORAGE_KEY = "amaze.backend-ui.devUser";
 
 // Views, chosen by the URL hash (#/status). No router library (plan, assumption 17).
 const VIEWS = {
-  status: "Status",
+  onboardings: "Onboardings",
+  feeds: "Feeds",
   glossary: "Glossary",
-  feeds: "Feed registry",
+  status: "Status",
   notifications: "Notifications",
 } as const;
-type View = keyof typeof VIEWS;
+type View = keyof typeof VIEWS | "onboard" | "onboarding";
 
 function viewFromHash(): View {
   const name = window.location.hash.replace(/^#\/?/, "");
   if (name.startsWith("feed/")) return "feeds"; // one feed's page belongs to the registry tab
-  return name in VIEWS ? (name as View) : "status";
+  if (name.startsWith("onboarding/")) return "onboarding";
+  if (name === "onboard" || name === "upload") return "onboard";
+  return name in VIEWS ? (name as View) : "onboardings";
 }
+
+function onboardingFromHash(): string | null {
+  const match = window.location.hash.match(/^#\/onboarding\/([0-9a-f-]{36})$/);
+  return match ? match[1] : null;
+}
+
+const NAV_OF: Record<View, keyof typeof VIEWS> = {
+  onboardings: "onboardings", onboard: "onboardings", onboarding: "onboardings", feeds: "feeds",
+  glossary: "glossary", status: "status", notifications: "notifications",
+};
 
 function feedFromHash(): string | null {
   const match = window.location.hash.match(/^#\/feed\/([0-9a-f-]{36})$/);
@@ -50,6 +66,7 @@ function remember(userId: string): void {
 export default function App() {
   const [view, setView] = useState<View>(viewFromHash);
   const [feedId, setFeedId] = useState<string | null>(feedFromHash);
+  const [onboardingId, setOnboardingId] = useState<string | null>(onboardingFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
@@ -64,6 +81,7 @@ export default function App() {
     const onHash = () => {
       setView(viewFromHash());
       setFeedId(feedFromHash());
+      setOnboardingId(onboardingFromHash());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -106,8 +124,8 @@ export default function App() {
         <div className="app-header-inner">
           <Title order={1}>{TITLE}</Title>
           <nav aria-label="Views" className="app-nav">
-            {(Object.keys(VIEWS) as View[]).map((name) => (
-              <Anchor key={name} href={`#/${name}`} aria-current={view === name ? "page" : undefined}>
+            {(Object.keys(VIEWS) as (keyof typeof VIEWS)[]).map((name) => (
+              <Anchor key={name} href={`#/${name}`} aria-current={NAV_OF[view] === name ? "page" : undefined}>
                 {VIEWS[name]}{name === "notifications" && inbox.unseen > 0 ? ` (${inbox.unseen})` : ""}
               </Anchor>
             ))}
@@ -117,8 +135,8 @@ export default function App() {
             <NativeSelect id="dev-user" data-testid="dev-user" value={selected} w={240} style={{ flex: "none" }}
                           onChange={(e) => setSelected(e.currentTarget.value)}
                           data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
-            <span data-testid="signed-in-as" className="who-name" title={me ? `Signed in as ${me.display_name}` : undefined}>
-              {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}
+            <span data-testid="signed-in-as" className="who-name" aria-label="Signed in user">
+              {me ? me.display_name : meError ? <span className="who-error">{meError}</span> : ""}
             </span>
           </div>
         </div>
@@ -133,7 +151,16 @@ export default function App() {
                         changed={changed} onChange={onChange} />
         )}
         {view === "notifications" && <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />}
-        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} people={people} />}
+        {view === "onboardings" && <OnboardingsView devUser={me ? selected : ""} />}
+        {view === "onboard" && (
+          <UploadView me={me} onUploaded={(id, sessionId) => {
+            window.location.hash = sessionId ? `#/onboarding/${sessionId}` : `#/feed/${id}`;
+          }} />
+        )}
+        {view === "onboarding" && onboardingId && (
+          <WorkspaceView id={onboardingId} devUser={me ? selected : ""} people={people} />
+        )}
+        {view === "feeds" && !feedId &&<FeedRegistryView devUser={me ? selected : ""} people={people} />}
         {view === "feeds" && feedId && (
           <FeedView feedId={feedId} devUser={me ? selected : ""} me={me} people={people}
                     canAct={!!me && me.roles.includes("backend_team")}

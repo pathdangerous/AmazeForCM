@@ -201,7 +201,8 @@ async def test_the_feed_page_dates_each_requirement_and_titles_each_coverage_car
 
 async def test_the_owners_are_the_data_owners(client):
     owners = (await client.get("/api/amaze/owners", headers=STEWARD)).json()
-    assert [(o["id"], o["display_name"]) for o in owners] == [("dev-data-owner", "Devon Owner")]
+    assert [(o["id"], o["display_name"]) for o in owners] == [("dev-data-owner", "Devon Owner"),
+                                                              ("dev-operator", "Olive Operator")]  # 7.8
 
 
 async def test_a_model_that_does_not_answer_gives_503_and_keeps_the_profile(client, db_session):

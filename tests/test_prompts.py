@@ -62,16 +62,25 @@ def test_every_current_version_has_its_file_and_loads():
 def test_every_agent_in_the_registry_names_a_current_prompt():
     assert set(registry.AGENT_PROMPTS) == {"IntentAgent", "SourceDiscoveryAgent", "DiscoveryAssistant", "ProfilerAgent",
                                            "GlossaryBuilderAgent", "MappingAgent", "MappingEvaluator",
-                                           "RuleRecommenderAgent", "ReviewSummariserAgent"}  # phase 6: steps 09, 11
+                                           "RuleRecommenderAgent", "ReviewSummariserAgent",  # phase 6: steps 09, 11
+                                           "TableExtractorAgent",  # phase 7.8, task 2.3
+                                           "TransformationAgent"}  # phase 7.8, task 4.3 (old: without it)
+    assert (registry.AGENT_PROMPTS["TransformationAgent"], registry.PROMPT_VERSIONS["transformation"]) == (
+        "transformation", "v1")
     assert registry.AGENT_PROMPTS["ReviewSummariserAgent"] == "review_summariser" and (
-        registry.PROMPT_VERSIONS["review_summariser"] == "v1")
+        registry.PROMPT_VERSIONS["review_summariser"] == "v2")  # old: v1; S8: v2 drops visibility
     assert (registry.AGENT_PROMPTS["RuleRecommenderAgent"], registry.PROMPT_VERSIONS["rule_recommender"]) == (
         "rule_recommender", "v1")
-    assert (registry.AGENT_PROMPTS["ProfilerAgent"], registry.PROMPT_VERSIONS["profiler"]) == ("profiler", "v1")
+    assert (registry.AGENT_PROMPTS["ProfilerAgent"], registry.PROMPT_VERSIONS["profiler"]) == ("profiler", "v2")
     # phase 5: the evaluator uses the mapping agent's prompt (assumption 37)
     assert [registry.AGENT_PROMPTS[a] for a in ("GlossaryBuilderAgent", "MappingAgent", "MappingEvaluator")] == [
         "glossary_builder", "mapping", "mapping"]
-    assert (registry.PROMPT_VERSIONS["glossary_builder"], registry.PROMPT_VERSIONS["mapping"]) == ("v1", "v1")
+    # old: ("v1", "v1"); phase 7.8 task 6.1: glossary_builder.v2 (units, plain names, samples); v1 stays on disk
+    assert (registry.PROMPT_VERSIONS["glossary_builder"], registry.PROMPT_VERSIONS["mapping"]) == ("v2", "v1")
+    assert {"glossary_builder.v1.yaml", "glossary_builder.v2.yaml"} <= set(registry.PROMPT_FILE_HASHES)
+    v2 = PromptLibrary().get("glossary_builder")
+    for word in ("unit", "times", "percent", "consensus estimate", "samples"):
+        assert word in v2.system, word
     for agent_name, prompt_id in registry.AGENT_PROMPTS.items():
         assert prompt_id in registry.PROMPT_VERSIONS, agent_name
 

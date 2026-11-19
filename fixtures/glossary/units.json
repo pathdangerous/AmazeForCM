@@ -1,0 +1,15 @@
+{
+  "description": "Synthetic. The unit of each ratio or percentage estimate of the security master, by glossary element key: the one thing the glossary builder cannot know from a column name. Step 05 fills a new element's empty unit from here (and marks the proposal unit_source seed); a unit the model gave is never overwritten. Amounts (best_sales, best_opp ...) are absent on purpose: their currency is not in the file.",
+  "units": {
+    "best_pe_ratio": "times",
+    "best_px_bps_ratio": "times",
+    "best_ev_to_best_ebitda": "times",
+    "best_div_yld": "percent",
+    "best_roe": "percent",
+    "best_gross_margin": "percent",
+    "best_eps_4_week_percent_change": "percent",
+    "best_eps_6_month_percent_change": "percent",
+    "best_eps_3_month_percent_change": "percent",
+    "best_eps_1_week_percent_change": "percent"
+  }
+}

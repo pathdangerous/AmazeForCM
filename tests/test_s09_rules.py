@@ -159,12 +159,67 @@ def test_the_back_test_includes_the_feeds_loaded_scheduled_loads(world):
     assert [d.rows for d in full.deliveries][-2:] == [1, 2]
 
 
+def test_the_back_test_reads_the_file_as_the_engine_would_with_the_approved_transformations(world):
+    """Phase 7.8, task 4.3, item 8: a rule on a column that an approved transformation cleans (a text date, a
+    placeholder) is back-tested on the cleaned values, as the engine would load them; without the transformations the
+    same delivery cannot be curated and is left out."""
+    from tests.configured import approved_transformation
+
+    a_scheduled_load(world, "released", "syn-1,31-12-2019,5\nsyn-2,15-01-2020,N/A\n", "text_dates")
+    approved_transformation(world.session, world.feed, "trade_date", [{"op": "parse_date", "format": "DD-MM-YYYY"}])
+    approved_transformation(world.session, world.feed, "traded_qty",
+                            [{"op": "placeholder_to_null", "values": ["N/A"]}])
+    agent_input = rules_input(world.session, feed_id=world.feed, catalogue=world.catalogue)
+    assert [t.source_field for t in agent_input.transformations] == ["trade_date", "traded_qty"]
+    assert "parse_date" not in agent_input.model_dump_json()  # the model is not told: code reads the file
+    loads_only = agent_input.model_copy(update={"history": [], "current_file": None})  # 5.3b: no profiled file here
+    sql = "SELECT _row FROM curated WHERE \"price_date\" < DATE '2020-01-01'"
+    back = _checked_backtest(world, loads_only, sql)
+    assert (back.status, back.total_rows, back.flagged_rows) == ("ran", 2, 1)
+    assert [d.excluded for d in back.deliveries] == [None]
+    bare = _checked_backtest(world, loads_only.model_copy(update={"transformations": []}), sql)
+    assert bare.status == "not_back_tested" and "do not cast" in bare.deliveries[0].excluded
+
+
 def test_a_load_whose_file_left_the_store_is_left_out_of_the_back_test_with_its_reason(world):
     a_scheduled_load(world, "released", "syn-1,2026-11-02,5\n", "present")
     agent_input = rules_input(world.session, feed_id=world.feed, catalogue=world.catalogue)
     gone = agent_input.load_history[0].model_copy(update={"file_ref": "raw/gone.csv"})  # left the store
     back = _checked_backtest(world, agent_input.model_copy(update={"load_history": [gone]}), "SELECT _row FROM curated")
     assert back.deliveries[-1].excluded == "file_missing"
+
+
+def test_the_back_test_also_runs_on_the_feeds_own_profiled_file_so_a_first_onboarding_has_history(world):
+    """Task 5.3b: the feed's latest fetched file is a delivery of the back-test ("current file"), read through the
+    current mappings and the approved transformations. A presence rule on a column that is empty, or that a
+    transformation nulls, flags the whole file and is returned; a presence rule on a filled column is proposed."""
+    from core.repositories.source_fetches import SourceFetchRepository
+    from tests.configured import approved_transformation
+
+    fetch = SourceFetchRepository(world.session).latest_fetched(world.feed)
+    rows = "".join(f"N/A,2026-11-0{n},\n" for n in range(1, 7))  # the id is a placeholder, the quantity is empty
+    world.blobs.put(fetch.blob_ref, (LOADED_HEADER + rows).encode())
+    approved_transformation(world.session, world.feed, "instr_id",
+                            [{"op": "placeholder_to_null", "values": ["N/A"]}])
+    agent_input = rules_input(world.session, feed_id=world.feed, catalogue=world.catalogue)
+    assert (agent_input.current_file.label, agent_input.current_file.file_ref) == ("current file", fetch.blob_ref)
+    end_read(world.session)
+    agent_input = agent_input.model_copy(update={"history": []})  # a first onboarding: no past load, no history
+    present = lambda element: f'SELECT _row FROM curated WHERE "{element}" IS NULL'  # noqa: E731
+    result = record_rules(
+        world.session, agent=agent_of(world, answer(("instrument_id_present", present("instrument_id")),
+                                                    ("volume_present", present("volume")),
+                                                    ("price_date_present", present("price_date")))),
+        agent_input=agent_input,
+        backtest=backtest_for(agent_input, connector_factory=world.connectors, blob_store=world.blobs,
+                              rule_timeout_seconds=5))
+    assert result.outcome == "rules_proposed"
+    assert sorted((r.rule_key, r.flagged_rows, r.total_rows) for r in result.returned) == [
+        ("instrument_id_present", 6, 6), ("volume_present", 6, 6)]
+    (proposal,) = pending(world)
+    assert proposal.payload["rule_key"] == "price_date_present"
+    assert [(d["label"], d["rows"], d["flagged"]) for d in proposal.payload["backtest"]["deliveries"]] == [
+        ("current file", 6, 0)]
 
 
 def _checked_backtest(world, agent_input, sql):
@@ -191,7 +246,8 @@ def test_rules_proposed_are_back_tested_and_wait_for_the_steward(world):
     back = proposals["volume_not_negative"].payload["backtest"]
     assert (back["status"], back["total_rows"], back["flagged_rows"], back["share"]) == ("ran", 50, 1, 0.02)
     assert [(d["label"], d["rows"], d["flagged"]) for d in back["deliveries"]] == [
-        (f"2026-10-{day}", 10, 1 if day == 28 else 0) for day in (26, 27, 28, 29, 30)]
+        (f"2026-10-{day}", 10, 1 if day == 28 else 0) for day in (26, 27, 28, 29, 30)] + [("current file", 0, 0)]
+    assert back["deliveries"][-1]["excluded"] == "file_missing"  # 5.3b: the test feed's fetched file is not in the store
     assert proposals["instrument_id_present"].payload["backtest"]["flagged_rows"] == 1  # the blank id of 10-29
     assert RuleRepository(world.session).current_for_feed(world.feed) == []  # nothing is a rule yet
 

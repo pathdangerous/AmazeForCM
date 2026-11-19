@@ -188,6 +188,60 @@ def test_the_test_load_is_not_a_scheduled_load(s, world):
                 NOT_A_TEST_LOAD)
 
 
+# ---------------------------------------------------------------- 0023: it pins the feed's current transformations
+
+GO_LIVE_T = GO_LIVE.replace("rule_ids, test_load_id", "rule_ids, transformation_ids, test_load_id").replace(
+    "CAST(:rules AS uuid[]), :load", "CAST(:rules AS uuid[]), CAST(:transformations AS uuid[]), :load")
+
+
+def transform_world(s, w):
+    """The feed gets a mapped column with two transformation versions; returns (old, current)."""
+    from tests.configured import approved_mapping, approved_transformation
+
+    approved_mapping(s, w.feed, "px", "close_price")
+    old = approved_transformation(s, w.feed, "px", [{"op": "trim"}])
+    return old, approved_transformation(s, w.feed, "px", [{"op": "trim"}, {"op": "cast", "type": "decimal"}])
+
+
+def t_params(w, proposal, ids, **over):
+    return go_live_params(w, proposal, transformations=ids, **over)
+
+
+def test_a_feed_with_no_transformations_pins_none(s, world):
+    proposal = summary_proposal(s, world)
+    s.execute(text(GO_LIVE_T), t_params(world, proposal, []))
+
+
+def test_pinning_the_current_transformations_passes(s, world):
+    w = world
+    old, current = transform_world(s, w)
+    proposal = summary_proposal(s, w, payload=summary_payload(w, transformation_ids=[str(current.id)]))
+    s.execute(text(GO_LIVE_T), t_params(w, proposal, [current.id]))
+
+
+@pytest.mark.parametrize("case", ["none", "an old version", "an extra id", "the current and an extra id"])
+def test_a_go_live_pins_exactly_the_current_transformations(s, world, case):
+    import uuid
+
+    w = world
+    old, current = transform_world(s, w)
+    ids = {"none": [], "an old version": [old.id], "an extra id": [uuid.uuid4()],
+           "the current and an extra id": [current.id, uuid.uuid4()]}[case]
+    proposal = summary_proposal(s, w, payload=summary_payload(w, transformation_ids=[str(i) for i in ids]))
+    answered_by(s, "are not the current transformations", GO_LIVE_T, t_params(w, proposal, ids),
+                guard("go-live: transformation_ids are not the current transformations of feed %"))
+
+
+@pytest.mark.parametrize("case", ["other ids", "no key"])
+def test_the_go_live_pins_the_transformation_ids_of_the_summary(s, world, case):
+    w = world
+    old, current = transform_world(s, w)
+    payload = summary_payload(w, transformation_ids=[str(old.id)]) if case == "other ids" else summary_payload(w)
+    proposal = summary_proposal(s, w, payload=payload)
+    answered_by(s, "transformation_ids are not those", GO_LIVE_T, t_params(w, proposal, [current.id]),
+                guard("go-live: transformation_ids are not those of proposal %"))
+
+
 # ---------------------------------------------------------------- the version is the feed's next
 
 

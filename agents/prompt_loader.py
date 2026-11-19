@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from ports.llm.base import Message
+from ports.llm.base import ImagePart, Message, TextPart
 
 PROMPTS_ROOT = Path(__file__).resolve().parent / "prompts"
 INPUT_MARKER = "{input_json}"
@@ -37,9 +37,13 @@ def normalised_sha256(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
+IMAGES_FIELD = "page_images"  # an input with this field (base64 PNG strings) sends them as image parts
+
+
 def render_input(agent_input: BaseModel) -> str:
-    """The input as the fenced JSON block that ends every user message."""
-    return "```json\n" + json.dumps(agent_input.model_dump(mode="json"), sort_keys=True) + "\n```"
+    """The input as the fenced JSON block that ends every user message. Image data is never in the block."""
+    exclude = {IMAGES_FIELD} if IMAGES_FIELD in type(agent_input).model_fields else set()
+    return "```json\n" + json.dumps(agent_input.model_dump(mode="json", exclude=exclude), sort_keys=True) + "\n```"
 
 
 class Prompt(BaseModel):
@@ -51,8 +55,12 @@ class Prompt(BaseModel):
     user: str
 
     def render(self, agent_input: BaseModel) -> list[Message]:
-        return [Message(role="system", content=self.system.strip()),
-                Message(role="user", content=self.user.replace(INPUT_MARKER, render_input(agent_input)))]
+        text = self.user.replace(INPUT_MARKER, render_input(agent_input))
+        images = getattr(agent_input, IMAGES_FIELD, None)
+        # With images the user message is parts: the images in page order, then the text, which ends with the block
+        content: str | list[ImagePart | TextPart] = (
+            [*(ImagePart(data_b64=data) for data in images), TextPart(text=text)] if images else text)
+        return [Message(role="system", content=self.system.strip()), Message(role="user", content=content)]
 
 
 def load_prompt(path: Path) -> Prompt:

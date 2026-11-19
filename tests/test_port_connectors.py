@@ -20,6 +20,97 @@ def sources(tmp_path):
     return tmp_path
 
 
+# ---- drop folder (phase 7.8, task 4.4)
+
+
+def _drop(root, feed, name, data=CSV, mtime=None):
+    import os
+
+    folder = root / feed
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / name
+    path.write_bytes(data)
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_dropzone_takes_the_newest_file_by_modification_time(tmp_path):
+    from ports.connectors.dropzone import DropzoneConnector
+
+    _drop(tmp_path, "prices", "z_old.csv", b"a\n1\n", mtime=1_700_000_000)
+    _drop(tmp_path, "prices", "a_new.csv", b"a\n2\n", mtime=1_700_000_500)
+    fetched = DropzoneConnector(tmp_path).fetch("dropzone/prices")
+    assert (fetched.source_ref, fetched.filename, fetched.content) == ("dropzone/prices", "a_new.csv", b"a\n2\n")
+    assert DropzoneConnector.name == "dropzone"
+
+
+def test_dropzone_breaks_a_tie_by_name_last(tmp_path):
+    from ports.connectors.dropzone import DropzoneConnector
+
+    _drop(tmp_path, "prices", "a.csv", b"a\n1\n", mtime=1_700_000_000)
+    _drop(tmp_path, "prices", "b.csv", b"a\n2\n", mtime=1_700_000_000)
+    assert DropzoneConnector(tmp_path).fetch("dropzone/prices").filename == "b.csv"
+
+
+def test_dropzone_ignores_hidden_part_tmp_files_and_folders(tmp_path):
+    from ports.connectors.dropzone import DropzoneConnector
+
+    _drop(tmp_path, "prices", "real.csv", mtime=1_700_000_000)
+    _drop(tmp_path, "prices", ".hidden.csv", mtime=1_700_000_900)
+    _drop(tmp_path, "prices", "x.csv.part", mtime=1_700_000_900)
+    _drop(tmp_path, "prices", "x.tmp", mtime=1_700_000_900)
+    (tmp_path / "prices" / "sub").mkdir()
+    assert DropzoneConnector(tmp_path).fetch("dropzone/prices").filename == "real.csv"
+
+
+def test_dropzone_with_no_file_or_no_folder_is_unavailable(tmp_path):
+    from ports.connectors.dropzone import DropzoneConnector
+
+    (tmp_path / "empty").mkdir()
+    _drop(tmp_path, "only_part", "x.csv.part")
+    for ref in ("dropzone/empty", "dropzone/only_part", "dropzone/missing"):
+        with pytest.raises(SourceUnavailable, match="no file in the drop folder"):
+            DropzoneConnector(tmp_path).fetch(ref)
+
+
+@pytest.mark.parametrize("ref", ["dropzone/../outside", "dropzone/..", "dropzone/Prices", "dropzone/a/b",
+                                 "other/prices", "dropzone/", "dropzone/9x", "dropzone/a-b"])
+def test_dropzone_refuses_a_bad_feed_code_and_a_path_out_of_the_root(tmp_path, ref):
+    from ports.connectors.dropzone import DropzoneConnector
+
+    (tmp_path.parent / "outside").mkdir(exist_ok=True)
+    (tmp_path.parent / "outside" / "x.csv").write_bytes(CSV)
+    with pytest.raises(SourceUnavailable):
+        DropzoneConnector(tmp_path).fetch(ref)
+
+
+def test_get_connector_builds_the_dropzone_connector_on_the_configured_root(tmp_path):
+    from ports.config import Settings
+    from ports.connectors import get_connector
+
+    _drop(tmp_path, "prices", "a.csv")
+    with get_connector("dropzone", Settings(_env_file=None, dropzone_root=tmp_path)) as connector:
+        assert connector.fetch("dropzone/prices").content == CSV
+
+
+def test_a_relative_dropzone_root_is_read_from_the_repository():
+    from ports.config import REPO_ROOT, Settings
+
+    assert Settings(_env_file=None).dropzone_root == REPO_ROOT / "data" / "dropzone"
+    assert Settings(_env_file=None, dropzone_root="data/other").dropzone_root == (REPO_ROOT / "data" / "other").resolve()
+
+
+def test_write_to_dropzone_is_atomic_named_by_time_and_found_by_the_connector(tmp_path):
+    from ports.connectors.dropzone import DropzoneConnector, write_to_dropzone
+
+    first = write_to_dropzone(tmp_path, "prices", "My Prices.csv", b"a\n1\n")
+    second = write_to_dropzone(tmp_path, "prices", "My Prices.csv", b"a\n2\n")
+    assert first != second and first.endswith("_My_Prices.csv")
+    assert sorted(p.name for p in (tmp_path / "prices").iterdir()) == sorted([first, second])  # no .part left
+    assert DropzoneConnector(tmp_path).fetch("dropzone/prices").content == b"a\n2\n"
+
+
 def test_local_fetch(sources):
     fetched = LocalFileConnector(sources).fetch("vendor_a/prices.csv")
     assert isinstance(fetched, FetchedFile)

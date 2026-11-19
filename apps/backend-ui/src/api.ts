@@ -6,6 +6,7 @@ export type Health = {
   database: "ok" | "unreachable" | "not_configured";
   adapters: Record<string, string>;
   unavailable: string[]; // selected adapters that are still Azure stubs
+  four_eyes?: boolean; // REQUIRE_FOUR_EYES as the database says it (phase 7.8)
 };
 
 export type User = {
@@ -241,6 +242,188 @@ export async function apiPost<T>(path: string, body: unknown, devUser: string): 
   });
   if (!response.ok) throw await failure(path, response);
   return (await response.json()) as T;
+}
+
+// ---- phase 7.8, task 2.5: a file uploaded straight to a new feed (POST /api/amaze/uploads...)
+
+export type InspectedUpload = {
+  outcome: "inspected"; upload_id: string; filename: string; format: "csv" | "xlsx" | "pdf"; sheets: string[];
+  sheet: string | null; header_row: number; encoding: string | null; delimiter: string | null; columns: string[];
+  row_count: number; preview: (string | null)[][]; skipped: Record<string, number>;
+};
+export type NeedsImageExtraction = { outcome: "needs_image_extraction"; upload_id: string; pages: number[] };
+export type UploadRefusal = {
+  outcome: "too_large" | "unsupported_format" | "not_a_table"; detail: string; upload_id?: string | null;
+};
+export type UploadAnswer = InspectedUpload | NeedsImageExtraction | UploadRefusal;
+export type UploadedFeed = {
+  outcome: "uploaded"; feed_id: string; feed_code: string; fetch_id: string; row_count: number; columns: string[];
+  onboarding_id?: string; // the workspace session the confirm started (task 5.4)
+};
+export type UploadConditions = { licence?: string; permitted_use?: string; redistribution?: string; description?: string };
+export type ReadOptions = { sheet?: string | null; header_row?: number | null };
+
+const REFUSALS = ["too_large", "unsupported_format", "not_a_table"];
+
+// The API answers a refused file with 413 or 422 and the outcome in the body: that is an answer, not a failure.
+async function uploadAnswer(path: string, response: Response): Promise<UploadAnswer> {
+  if (response.ok) return (await response.json()) as UploadAnswer;
+  if (response.status === 413 || response.status === 422) {
+    const body = (await response.clone().json().catch(() => null)) as { outcome?: string } | null;
+    if (body && typeof body.outcome === "string" && REFUSALS.includes(body.outcome)) return body as UploadRefusal;
+  }
+  throw await failure(path, response);
+}
+
+// The file goes up as the raw body; the first read may name a sheet and a header row.
+export async function uploadFile(file: File, devUser: string, opts: ReadOptions = {}): Promise<UploadAnswer> {
+  const query = new URLSearchParams({ filename: file.name });
+  if (opts.sheet) query.set("sheet", opts.sheet);
+  if (opts.header_row) query.set("header_row", String(opts.header_row));
+  const path = `/api/amaze/uploads?${query.toString().replaceAll("+", "%20")}`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/octet-stream", "X-Dev-User": devUser },
+    body: file,
+  });
+  return uploadAnswer(path, response);
+}
+
+// The stored original, read again with another sheet or header row.
+export async function reinspect(uploadId: string, filename: string, devUser: string, opts: ReadOptions): Promise<UploadAnswer> {
+  const path = `/api/amaze/uploads/${uploadId}/inspect`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "X-Dev-User": devUser },
+    body: JSON.stringify({ filename, sheet: opts.sheet ?? null, header_row: opts.header_row ?? null }),
+  });
+  return uploadAnswer(path, response);
+}
+
+// Creates the feed. A 409 (feed code taken) throws an ApiError; a table that no longer reads is a refusal answer.
+export async function confirmUpload(uploadId: string, devUser: string, body: {
+  filename: string; feed_code: string; feed_name: string } & ReadOptions & UploadConditions): Promise<UploadedFeed | UploadRefusal> {
+  const path = `/api/amaze/uploads/${uploadId}/confirm`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "X-Dev-User": devUser },
+    body: JSON.stringify(body),
+  });
+  const answer = await uploadAnswer(path, response);
+  return answer as UploadedFeed | UploadRefusal;
+}
+
+// ---- phase 7.8, task 7.2: the onboarding workspace (/api/amaze/onboardings)
+
+export const ONBOARDING_STEPS = ["upload", "profile", "glossary", "mapping", "transformations", "rules", "go_live",
+                                 "first_load", "product_ready"] as const;
+export type StepName = (typeof ONBOARDING_STEPS)[number];
+export type StepState = "waiting" | "agent_working" | "needs_decision" | "ready" | "done" | "stale" | "failed";
+
+export type OnboardingRow = {
+  id: string; feed_id: string; feed_code: string; feed_name: string; current_step: StepName;
+  step_states: Record<string, StepState>; status: "active" | "done"; created_by: string; created_at: string;
+  updated_at: string; model_calls: number; model_call_cap: number;
+};
+export type OnboardingItem = {
+  proposal_id: string; kind: string; column: string | null; summary: string; status: string; confidence: number | null;
+  pre_accepted: boolean; needs_decision: boolean; waiting_for: string | null; edited: boolean; edited_by: string | null;
+  edited_from: string | null; reason: string | null; payload: Record<string, unknown>;
+  decided_by: string | null; decided_at: string | null; // the latest approval decision; null while pending
+};
+export type AgentNote = {
+  proposal_id: string; agent: string; provider: string; model: string; model_version: string; prompt_id: string;
+  prompt_version: string; latency_ms: number; input_ref: string; reasoning: string | null;
+};
+export type OnboardingJob = {
+  id: string; session_id: string; step: StepName; status: "queued" | "running" | "done" | "failed" | "discarded";
+  error: string | null;
+};
+export type StepView = { name: StepName; state: StepState; detail: string | null };
+export type ProfileIssue = {
+  kind: "duplicate_key" | "placeholder_only" | "placeholders" | "date_as_text" | "all_empty" | "constant";
+  columns: string[]; count: number; detail: string;
+};
+export type InputFact = { label: string; value: string };
+// "Inputs it saw": counts, names and flags from the database; never a sample value.
+export type StepInputs = {
+  row_count: number | null; column_count: number | null; columns: string[]; issues: ProfileIssue[];
+  key_columns: string[]; duplicate_key_count: number | null; candidate_counts: Record<string, number>;
+  facts: InputFact[];
+};
+export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
+export type Visibility = "open" | "restricted";
+export type Workspace = {
+  session: { id: string; feed_id: string; current_step: StepName; step_states: Record<string, StepState>;
+             status: "active" | "done"; updated_at: string; model_calls: number };
+  feed_code: string; steps: StepView[]; current_step: StepName; viewed_step: StepName; visibility: Visibility | null;
+  inputs: StepInputs | null; items: OnboardingItem[]; job: OnboardingJob | null;
+  progress: string | null; agent_notes: AgentNote[]; key_policy: KeyPolicy | null;
+  model_calls: number; model_call_cap: number; can_approve: boolean; blocked_by: string | null;
+};
+export type StepAdvance = { moved: boolean; current_step: StepName; approved: string[]; waiting_for: string | null };
+export type TimelineEntry = {
+  at: string; kind: "event" | "proposal" | "edit" | "approval"; actor: string; step: string | null; title: string;
+  proposal_id: string | null; detail: Record<string, unknown>;
+};
+
+// Approve & next refused: these items need a person's decision first (HTTP 409 decision_needed).
+export class DecisionNeeded extends Error {
+  items: OnboardingItem[];
+  constructor(message: string, items: OnboardingItem[]) {
+    super(message);
+    this.items = items;
+  }
+}
+
+const ONBOARDINGS = "/api/amaze/onboardings";
+
+export const getOnboardings = (devUser: string) => apiGet<OnboardingRow[]>(ONBOARDINGS, devUser);
+// step: view another step than the current one, read only (the API answers its items, notes and inputs)
+export const getWorkspace = (id: string, devUser: string, step?: StepName) =>
+  apiGet<Workspace>(step ? `${ONBOARDINGS}/${id}?step=${step}` : `${ONBOARDINGS}/${id}`, devUser);
+export const getTimeline = (id: string, devUser: string) => apiGet<TimelineEntry[]>(`${ONBOARDINGS}/${id}/timeline`, devUser);
+export const enterStep = (id: string, step: StepName, devUser: string) =>
+  apiPost<Workspace>(`${ONBOARDINGS}/${id}/steps/${step}/enter`, {}, devUser);
+export const goBack = (id: string, toStep: StepName, devUser: string) =>
+  apiPost<Workspace>(`${ONBOARDINGS}/${id}/back`, { to_step: toStep }, devUser);
+// choice: a glossary conflict's option index, or a mapping tie's element key; none: the recommended one
+export const decideItem = (id: string, proposalId: string, decision: "approved" | "rejected", devUser: string,
+                           choice?: number | string, note?: string) =>
+  apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/decision`,
+                                    { decision, ...(choice === undefined ? {} : { choice }), ...(note ? { note } : {}) }, devUser);
+export const editItem = (id: string, proposalId: string, payload: Record<string, unknown>, devUser: string) =>
+  apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/edit`, { payload }, devUser);
+
+export async function setKeyPolicy(id: string, body: KeyPolicy, devUser: string): Promise<{ workspace: Workspace }> {
+  const path = `${ONBOARDINGS}/${id}/key-policy`;
+  const response = await fetch(path, {
+    method: "PUT",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "X-Dev-User": devUser },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await failure(path, response);
+  return (await response.json()) as { workspace: Workspace };
+}
+
+// visibility is sent at go-live only (task 7.3a); any other step sends an empty body
+export async function approveStep(id: string, visibility: Visibility | undefined, devUser: string):
+    Promise<{ advance: StepAdvance; workspace: Workspace }> {
+  const path = `${ONBOARDINGS}/${id}/approve`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "X-Dev-User": devUser },
+    body: JSON.stringify(visibility ? { visibility } : {}),
+  });
+  if (response.status === 409) {
+    const body = (await response.clone().json().catch(() => null)) as
+      { detail?: { outcome?: string; message?: string; items?: OnboardingItem[] } } | null;
+    if (body?.detail?.outcome === "decision_needed") {
+      throw new DecisionNeeded(body.detail.message ?? "Decide the marked items first", body.detail.items ?? []);
+    }
+  }
+  if (!response.ok) throw await failure(path, response);
+  return (await response.json()) as { advance: StepAdvance; workspace: Workspace };
 }
 
 // A sentence for the person, never a bare status code.

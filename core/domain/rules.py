@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.domain.common import NonBlank, SnakeName
 from core.domain.glossary import DataType
+from core.domain.transformation import Transformation
 
 Verdict = Literal["kept", "returned", "refused"]
 MAX_TEMPLATES = 5  # per element
@@ -70,6 +71,12 @@ class RuleRecommenderInput(BaseModel):
     history: list[str]  # source refs of the synthetic past deliveries (empty: not back-tested)
     # Phase 7: the feed's newest scheduled loads that completed all four stages, read from the blob store.
     load_history: list[LoadHistoryItem] = Field(default_factory=list)
+    # Phase 7.8, task 5.3b: the feed's latest fetched file (the one the profile was made from), so that a first
+    # onboarding, with no past load, still has history to back-test on.
+    current_file: LoadHistoryItem | None = None
+    # Phase 7.8, task 4.3: the feed's approved transformations. Code reads the history through them (as the engine
+    # would load it); the model is not told, so the field is left out of what it is sent and what is stored.
+    transformations: list[Transformation] = Field(default_factory=list, exclude=True)
 
 
 class Delivery(BaseModel):

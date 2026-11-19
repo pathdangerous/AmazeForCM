@@ -25,5 +25,5 @@ class ReviewSummariserAgent(Agent):
             summary=output.summary, highlights=output.highlights, risks=output.risks,
             unmapped_columns=agent_input.unmapped_columns, rejected_glossary=agent_input.rejected_glossary,
             mapping_ids=sorted(agent_input.mapping_ids), rule_ids=sorted(agent_input.rule_ids),
-            test_load_id=agent_input.test_load_id)
+            transformation_ids=sorted(agent_input.transformation_ids), test_load_id=agent_input.test_load_id)
         return [AgentProposal(kind="review_summary", feed_id=agent_input.feed_id, payload=payload.model_dump(mode="json"))]

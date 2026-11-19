@@ -84,7 +84,6 @@ class ReviewSummaryInput(BaseModel):
     licence: str
     permitted_use: str
     redistribution: str
-    visibility: str
     mapped: list[MappedFact]
     unmapped_columns: list[str]
     rejected_glossary: list[RejectedGlossaryFact]
@@ -94,6 +93,7 @@ class ReviewSummaryInput(BaseModel):
     mapping_ids: list[UUID]
     rule_ids: list[UUID]
     test_load_id: UUID
+    transformation_ids: list[UUID] = Field(default_factory=list)  # 0023
 
 
 class ReviewSummaryOutput(BaseModel):
@@ -118,6 +118,7 @@ class ReviewSummaryPayload(BaseModel):
     mapping_ids: list[UUID]
     rule_ids: list[UUID]
     test_load_id: UUID
+    transformation_ids: list[UUID] = Field(default_factory=list)  # 0023: the guard compares these too
 
 
 class GoLive(BaseModel):
@@ -133,3 +134,4 @@ class GoLive(BaseModel):
     rule_ids: list[UUID]
     test_load_id: UUID
     hypercare_until: date
+    transformation_ids: list[UUID] = Field(default_factory=list)  # 0023

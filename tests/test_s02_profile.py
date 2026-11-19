@@ -246,6 +246,26 @@ def test_the_summary_is_one_proposal_for_the_latest_profile(db_session, blobs, l
                                                                               str(profile_id))
 
 
+def test_the_security_master_summary_carries_the_key_and_its_duplicates_and_the_feed_page_shows_them(db_session, tmp_path):
+    from agents.profiler import ProfilerAgent
+    from core.steps.feed_page import feed_page
+    from ports.llm.mock import MockProvider
+    from tests.test_agent_profiler import master_feed
+    from tests.test_s00_intake import catalogue_for
+
+    store_ = LocalBlobStore(tmp_path / "master")
+    feed_id = master_feed(db_session, store_)
+    agent_input = summary_input(db_session, feed_id=feed_id)
+    end_read(db_session)
+    result = record_summary(db_session, agent=ProfilerAgent(provider=MockProvider(), blob_store=store_),
+                            agent_input=agent_input, blob_store=store_)
+    assert (result.key_columns, result.confidence) == (["TICKER_NAME"], 0.9)
+    assert result.duplicate_key.model_dump() == {"columns": ["TICKER_NAME"], "extra_rows": 1,
+                                                  "examples": ["100001 SY Equity"]}
+    page = feed_page(db_session, FeedRepository(db_session).get(feed_id), catalogue_for(db_session))
+    assert page.summary.key_columns == ["TICKER_NAME"] and page.summary.duplicate_key.extra_rows == 1
+
+
 def test_a_profile_is_summarised_once(db_session, blobs, lifecycle, tmp_path):
     feed, _ = lifecycle
     store(db_session, blobs, feed, (FILES / "instrument_lifecycle.csv").read_bytes())
@@ -274,7 +294,8 @@ def test_a_newer_profile_during_the_call_writes_no_proposal(db_session, blobs, l
         profile(session, blobs, feed)
 
     agent = StandInAgent(name="ProfilerAgent", output_schema=ProfilerOutput, during_call=newer_profile,
-                         output={"summary": "s", "recommended_outcome": "meets", "gaps": [], "reasons": []},
+                         output={"summary": "s", "recommended_outcome": "meets", "gaps": [], "reasons": [],
+                                 "key_columns": [], "key_reason": "r", "confidence": 0.3},
                          proposals=lambda i, o: [{"kind": "profile_summary", "feed_id": i.feed_id,
                                                   "payload": {"profile_id": str(i.profile_id)}}])
     agent_input = summary_input(db_session, feed_id=feed.id)

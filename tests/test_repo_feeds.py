@@ -84,6 +84,19 @@ def test_list_to_fetch_skips_feeds_without_a_connector_and_rejected_feeds(repo, 
     assert [f.id for f in repo.list_to_fetch()] == [with_source.id]
 
 
+def test_list_to_fetch_lists_a_registered_dropzone_feed(repo, db_session):
+    """Phase 7.8, task 4.4 (was: left a dropzone feed out until the connector existed, task 2.4): a registered
+    uploaded feed (connector dropzone) is fetched by the daily job like a registered file feed."""
+    file_feed = registered_feed(db_session, repo.create_candidate(code="feed_a", name="Feed A", **SOURCE).id)
+    uploaded = repo.create_candidate(code="upload_a", name="Upload A", source_code="upl_upload_a",
+                                     connector="dropzone", source_ref="dropzone/upload_a")
+    registered_feed(db_session, uploaded.id)
+    assert [f.id for f in repo.list_to_fetch()] == [file_feed.id, uploaded.id]
+    candidate = repo.create_candidate(code="upload_b", name="Upload B", source_code="upl_upload_b",
+                                      connector="dropzone", source_ref="dropzone/upload_b")
+    assert candidate.id not in [f.id for f in repo.list_to_fetch()]  # a candidate nobody selects stays idle
+
+
 def test_list_to_fetch_leaves_out_a_candidate_feed_no_requirement_selects(repo):
     repo.create_candidate(code="feed_a", name="Feed A", **SOURCE)
     assert repo.list_to_fetch() == []

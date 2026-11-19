@@ -25,6 +25,10 @@ def main() -> None:
     os.environ["SOURCE_CATALOGUE"] = str(SOURCES / "catalogue.json")
     os.environ["LOCAL_BLOB_ROOT"] = str(BLOB)
     os.environ["DAILY_JOB_ENABLED"] = "false"
+    os.environ["DROPZONE_ROOT"] = str(REPO_ROOT / "data" / "e2e" / "dropzone")  # never the real data/dropzone
+    os.environ["LLM_PROVIDER"] = "mock"  # the stories run on recorded responses, never the live model
+    os.environ.setdefault("REQUIRE_FOUR_EYES", "false")  # each Playwright config sets it: true for the poc story and screens, false for the operator story and workspace shots
+    print(f"e2e API: REQUIRE_FOUR_EYES={os.environ['REQUIRE_FOUR_EYES']}", flush=True)
     print(f"e2e API: database={make_url(url).database}", flush=True)
     print(f"e2e API: schema={SCHEMA}", flush=True)
     print(f"e2e API: DAILY_JOB_ENABLED={os.environ['DAILY_JOB_ENABLED']}", flush=True)

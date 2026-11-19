@@ -35,6 +35,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.repositories.upload_sources import UploadSourceRepository
 from core.steps.release import release_source
 from core.steps.result import StepResult
 from ports.connectors.base import SourceConnector, SourceUnavailable
@@ -103,6 +104,8 @@ class FetchPlan(BaseModel):
     source_ref: str
     fetch_id: UUID  # made first, so the blob key can carry it
     day: date
+    # A dropzone feed: how the operator confirmed its files be read (sheet, header_row), from its upload source.
+    intake_options: dict | None = None
 
 
 class FetchAttempt(BaseModel):
@@ -122,8 +125,12 @@ def fetch_plan(session: Session, *, feed_id: UUID, today: date | None = None) ->
     feed = FeedRepository(session).get(feed_id)
     if feed.connector is None or feed.source_ref is None:
         raise FeedHasNoSource(f"Feed {feed.code!r} has no connector; there is nothing to fetch")
+    options = None
+    if feed.connector == "dropzone":  # task 4.4: its files are read as the first one was confirmed
+        source = UploadSourceRepository(session).get_by_feed(feed.id)
+        options = dict(source.intake_options) if source is not None else {}
     return FetchPlan(feed_id=feed.id, feed_code=feed.code, connector=feed.connector, source_ref=feed.source_ref,
-                     fetch_id=uuid.uuid4(), day=today or datetime.now(UTC).date())
+                     fetch_id=uuid.uuid4(), day=today or datetime.now(UTC).date(), intake_options=options)
 
 
 def fetch_file(plan: FetchPlan, *, connector_factory: Callable[[str], SourceConnector],
@@ -136,9 +143,20 @@ def fetch_file(plan: FetchPlan, *, connector_factory: Callable[[str], SourceConn
             return FetchAttempt(plan=plan, detail=str(exc))
     if file.size == 0:
         return FetchAttempt(plan=plan, detail=f"{plan.source_ref} is empty")
-    key = blob_key(plan.feed_code, plan.day, plan.fetch_id, file.filename)
-    blob_store.put(key, file.content)
-    return FetchAttempt(plan=plan, blob_ref=key, size_bytes=file.size)
+    filename, content = file.filename, file.content
+    if plan.connector == "dropzone":
+        # Steps 12 and 13 read CSV: the file is stored as the canonical CSV, made by the code confirm_upload() uses.
+        # Imported here because s00_intake imports this module for blob_key().
+        from core.steps.s00_intake import NotATableResult, safe_name, to_canonical
+
+        converted = to_canonical(content, filename, plan.intake_options)
+        if isinstance(converted, NotATableResult):
+            return FetchAttempt(plan=plan, detail=f"{filename}: {converted.detail}")
+        content = converted[0]
+        filename = f"{safe_name(filename).rsplit('.', 1)[0] or 'upload'}.csv"
+    key = blob_key(plan.feed_code, plan.day, plan.fetch_id, filename)
+    blob_store.put(key, content)
+    return FetchAttempt(plan=plan, blob_ref=key, size_bytes=len(content))
 
 
 def record_fetch(session: Session, attempt: FetchAttempt, *, notifier: Notifier, backend_team: Sequence[str],
