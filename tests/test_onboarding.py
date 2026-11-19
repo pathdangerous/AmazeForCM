@@ -627,6 +627,10 @@ def a_first_load_that_is_held_fails_the_step_and_shows_the_outcome(w: World) -> 
     ws = view(w)
     assert "held" in ws.progress and "trust score" in ws.progress and ws.steps[7].detail == ws.progress
     assert not ws.can_approve
+    # follow-up item 2: the panel's facts and message are the latest load's; earlier loads are timeline lines
+    assert ws.inputs.load_summary and "held" in ws.inputs.load_summary
+    assert {f.label: f.value for f in ws.inputs.facts}["Load"] == "held"
+    assert [t.title for t in timeline(db_session, session_id=w.session_id) if t.step == "first_load" and t.title.startswith("load ")] == ["load held"]
     assert ProductRepository(db_session).for_feed(w.feed_id) is None
     [failed] = events(w, "agent_failed")
     assert failed.step == "first_load" and failed.detail["reason"] == "step_failed"

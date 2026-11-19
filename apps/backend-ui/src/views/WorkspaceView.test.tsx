@@ -202,6 +202,13 @@ test("a first load that did not release offers Back to Rules and Upload a new fi
   expect(JSON.parse(String(call[1]?.body))).toEqual({ to_step: "rules" });
 });
 
+test("the alert above a failed first load tells about the latest load, from the same data as the facts", async () => {
+  const held = HELD_LOAD();
+  stubFetch(base({ [GET]: { ...held, inputs: { ...held.inputs!, load_summary: "The latest load ended held: score 80.0." } } }));
+  show();
+  expect((await screen.findByRole("alert")).textContent).toBe("The latest load ended held: score 80.0.");
+});
+
 test("Upload a new file writes the file to the feed's drop folder, then loads again", async () => {
   const fetchStub = stubFetch(base({
     [GET]: HELD_LOAD(),

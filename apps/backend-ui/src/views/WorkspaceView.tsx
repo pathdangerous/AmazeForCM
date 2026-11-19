@@ -184,7 +184,9 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
     // a load that ran and did not release: not retried; back to the rules, or a new file (the panel offers both)
     main = (
       <div>
-        <Alert role="alert" color="red" mb="sm">{stepView?.detail ?? ws.job?.error ?? "The first load did not release."}</Alert>
+        <Alert role="alert" color="red" mb="sm">
+          {view.inputs?.load_summary ?? stepView?.detail ?? ws.job?.error ?? "The first load did not release."}
+        </Alert>
         <FirstLoadPanel ws={view} state={shownState} detail={null} busy={busy}
                         onBackToRules={() => void act(() => goBack(id, "rules", devUser))}
                         onUpload={(file) => void act(async () => {

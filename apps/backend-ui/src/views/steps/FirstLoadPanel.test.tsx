@@ -72,6 +72,15 @@ test.each(["held", "quarantined", "failed rolled back"])("a %s first load offers
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 });
 
+test("the message is the latest load's own sentence, not the stored job message", () => {
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({
+    facts: [{ label: "Load", value: "held" }], load_summary: "The latest load ended held: its trust score 80.0 is below 90.0." }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail="The first load ended held: an OLDER load." />);
+  const text = screen.getByTestId("first-load-detail").textContent ?? "";
+  expect(text).toContain("trust score 80.0");
+  expect(text).not.toContain("OLDER");
+});
+
 test("Back to Rules calls its handler; a chosen file goes to the upload handler", () => {
   const back = vi.fn(), upload = vi.fn();
   didNotRelease("held", { back, upload });

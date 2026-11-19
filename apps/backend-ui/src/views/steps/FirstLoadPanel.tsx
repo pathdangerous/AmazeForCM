@@ -30,7 +30,9 @@ export default function FirstLoadPanel({ ws, state, detail, onBackToRules, onUpl
             style={held ? { background: "var(--amz-warning)", color: "var(--amz-on-bright)", padding: "4px 10px", borderRadius: 4 } : undefined}>
         {outcome}
       </Text>
-      {(held || state === "failed") && detail && <Text mt="xs" data-testid="first-load-detail">{detail}</Text>}
+      {(held || state === "failed") && (ws.inputs?.load_summary ?? detail) && (
+        <Text mt="xs" data-testid="first-load-detail">{ws.inputs?.load_summary ?? detail}</Text>
+      )}
       {figures.length > 0 && (
         <div data-testid="first-load-figures" style={{ display: "flex", gap: 24, margin: "12px 0", flexWrap: "wrap" }}>
           {figures.map((label) => (

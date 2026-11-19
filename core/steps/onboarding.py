@@ -87,6 +87,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.go_lives import GoLiveRepository
+from core.steps.first_load_view import first_load_facts, latest_load_summary, load_timeline
 from core.repositories.loads import LoadRepository
 from core.repositories.onboarding import OnboardingJobRepository, OnboardingRepository
 from core.repositories.products import ProductRepository
@@ -950,6 +951,7 @@ def timeline(session: Session, *, session_id: UUID) -> list[TimelineEntry]:
                         at=a.created_at, kind="approval", actor=a.decided_by, step=STEP_OF_KIND[kind],
                         title=f"{kind} {a.decision} ({a.role}, step {a.step})", proposal_id=p.id,
                         detail={"decision": a.decision, "role": a.role, "step": a.step, "note": a.note}))
+    entries += load_timeline(session, sess.feed_id)  # every scheduled load, the latest too (follow-up item 2)
     return sorted(entries, key=lambda entry: entry.at)
 
 
@@ -1002,24 +1004,6 @@ def _fact(facts: list[InputFact], label: str, count: int | None, unit: str = "")
         facts.append(InputFact(label=label, value=f"{count}{unit}"))
 
 
-def _first_load_facts(session: Session, feed_id: UUID, facts: list[InputFact]) -> None:
-    """The feed's first scheduled load, from the database only; a fact that does not exist yet is left out."""
-    scheduled = [x for x in LoadRepository(session).list_for_feed(feed_id) if x.purpose == "scheduled"]
-    if not scheduled:
-        return
-    first = scheduled[-1]  # list_for_feed is newest first
-    facts.append(InputFact(label="Load", value=first.status.replace("_", " ")))
-    certification = LoadCertificationRepository(session).for_load(first.id)
-    if certification is not None:
-        facts.append(InputFact(label="Rows loaded", value=str(certification.rows)))
-        facts.append(InputFact(label="Rows flagged", value=str(certification.flagged_rows)))
-        facts.append(InputFact(label="Trust score", value=f"{certification.trust_score:.1f}"))
-        facts.append(InputFact(label="Outcome", value=certification.outcome.replace("_", " ")))
-    product = ProductRepository(session).for_feed(feed_id)
-    if product is not None:
-        facts.append(InputFact(label="Product", value=product.code))
-
-
 def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem]) -> StepInputs | None:
     """"Inputs it saw" for a step, from the database only: counts, names and flags, never a sample value."""
     profile = FeedProfileRepository(session).latest(sess.feed_id)
@@ -1055,7 +1039,8 @@ def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: li
             facts.append(InputFact(label="Test load",
                                    value=f"{test.status.replace('_', ' ')}" + (f", {rows} rows" if rows else "")))
     if step == "first_load":
-        _first_load_facts(session, feed_id, facts)
+        facts += first_load_facts(session, feed_id)
+        found["load_summary"] = latest_load_summary(session, feed_id)
     return StepInputs(**found, facts=facts)
 
 

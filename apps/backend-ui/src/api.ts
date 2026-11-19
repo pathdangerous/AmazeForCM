@@ -362,6 +362,7 @@ export type StepInputs = {
   row_count: number | null; column_count: number | null; columns: string[]; issues: ProfileIssue[];
   key_columns: string[]; duplicate_key_count: number | null; candidate_counts: Record<string, number>;
   facts: InputFact[];
+  load_summary?: string | null; // first load: one sentence about the latest scheduled load
 };
 export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
 export type Visibility = "open" | "restricted";

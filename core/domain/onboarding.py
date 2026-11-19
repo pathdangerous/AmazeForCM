@@ -190,6 +190,7 @@ class StepInputs(BaseModel):
     duplicate_key_count: int | None = None  # profile step: rows that repeat the proposed key
     candidate_counts: dict[str, int] = {}  # glossary and mapping steps: candidate elements per column
     facts: list[InputFact] = []
+    load_summary: str | None = None  # first load: one sentence about the latest scheduled load (same rows as the facts)
 
 
 class Workspace(BaseModel):
