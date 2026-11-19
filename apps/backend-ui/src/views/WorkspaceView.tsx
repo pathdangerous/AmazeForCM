@@ -2,7 +2,7 @@ import { Alert, Button, Loader, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import {
   apiGet, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline, getWorkspace,
-  goBack, ONBOARDING_STEPS, setKeyPolicy, type Health, type KeyPolicy, type OnboardingItem, type StepName,
+  goBack, ONBOARDING_STEPS, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
   type TimelineEntry, type Visibility, type Workspace,
 } from "../api";
 import AgentPanel from "./AgentPanel";
@@ -178,6 +178,19 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
       <div data-testid="workspace-working" style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <Loader size="sm" />
         <Text>{ws.progress ?? "The agent is working"}</Text>
+      </div>
+    );
+  } else if (atCurrent && state === "failed" && shown === "first_load" && (view.inputs?.facts ?? []).some((f) => f.label === "Load")) {
+    // a load that ran and did not release: not retried; back to the rules, or a new file (the panel offers both)
+    main = (
+      <div>
+        <Alert role="alert" color="red" mb="sm">{stepView?.detail ?? ws.job?.error ?? "The first load did not release."}</Alert>
+        <FirstLoadPanel ws={view} state={shownState} detail={null} busy={busy}
+                        onBackToRules={() => void act(() => goBack(id, "rules", devUser))}
+                        onUpload={(file) => void act(async () => {
+                          await uploadFeedFile(ws.session.feed_id, file, devUser);
+                          return enterStep(id, "first_load", devUser);
+                        })} />
       </div>
     );
   } else if (atCurrent && state === "failed") {

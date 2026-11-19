@@ -38,6 +38,7 @@ from core.repositories.errors import (
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feeds import FeedRepository
+from core.repositories.go_lives import GoLiveRepository
 from core.repositories.onboarding import OnboardingJobRepository, OnboardingRepository
 from core.repositories.products import ProductRepository
 from core.repositories.proposals import ProposalRepository
@@ -410,7 +411,9 @@ def test_the_security_master_goes_from_upload_to_product_ready_with_one_edit_and
         four_eyes_on_the_rules_wait_for_a_second_person_who_then_moves_the_step_on(w)
     with side_path(db_session):
         a_first_load_that_is_held_fails_the_step_and_shows_the_outcome(w)
-    assert current(w).current_step == "rules" and not events(w, "agent_failed")  # both undone
+    with side_path(db_session):
+        a_go_live_pins_the_configuration_until_the_first_load_has_failed(w)
+    assert current(w).current_step == "rules" and not events(w, "agent_failed")  # all undone
     assert FourEyesRepository(db_session).current() is False
 
     # rules, go-live: the rules need the steward then the checker (one person, four-eyes off); the owner decides
@@ -627,6 +630,39 @@ def a_first_load_that_is_held_fails_the_step_and_shows_the_outcome(w: World) -> 
     assert ProductRepository(db_session).for_feed(w.feed_id) is None
     [failed] = events(w, "agent_failed")
     assert failed.step == "first_load" and failed.detail["reason"] == "step_failed"
-    with pytest.raises(BackNotAllowed):  # go-live was approved: the configuration is pinned
-        back(db_session, session_id=w.session_id, to_step="rules", user=OPERATOR)
-    db_session.rollback()
+    # follow-up item 1: go-live pins the configuration, but a first load that did not release may go back to the
+    # rules, and to nothing else (the owner then approves a next go-live version)
+    for other in ("glossary", "mapping", "transformations", "go_live"):
+        with pytest.raises(BackNotAllowed):
+            back(db_session, session_id=w.session_id, to_step=other, user=OPERATOR)
+        db_session.rollback()
+    went = back(db_session, session_id=w.session_id, to_step="rules", user=OPERATOR)
+    db_session.commit()
+    assert went.current_step == "rules" and went.step_states["go_live"] == "stale"
+    assert went.step_states["first_load"] == "stale" and went.step_states["product_ready"] == "waiting"
+    last = events(w, "back")[-1]  # the walk went back once before (to the mapping)
+    assert (last.step, last.detail.get("from")) == ("rules", "first_load")
+    assert ProductRepository(db_session).for_feed(w.feed_id) is None
+
+    # and the way on works against the guards (versions, not edits): the rules again, a next go-live version, the load
+    work(w)  # the rules job answers again
+    settle(w, "rejected")  # this time the operator rejects the rules that flag rows
+    approve(w)
+    work(w)  # the go-live step: a test load and the summary
+    assert current(w).current_step == "go_live"
+    approve(w)
+    assert GoLiveRepository(db_session).latest(w.feed_id).version == 2  # a new version; version 1 is untouched
+    [again] = work(w)
+    assert (again.step, again.status) == ("first_load", "failed")  # the same file: step 12 quarantines it
+    assert "quarantined" in view(w).progress
+    assert ProductRepository(db_session).for_feed(w.feed_id) is None
+
+
+def a_go_live_pins_the_configuration_until_the_first_load_has_failed(w: World) -> None:
+    """Before the first load has run (or while it is ready to run) nothing goes back, as before."""
+    run_to(w, "go_live", flagged_rules="approved")
+    approve(w)  # the go-live is approved; the first load is now the current step and has not run
+    assert current(w).current_step == "first_load" and current(w).step_states["first_load"] != "failed"
+    with pytest.raises(BackNotAllowed):
+        back(w.session, session_id=w.session_id, to_step="rules", user=OPERATOR)
+    w.session.rollback()

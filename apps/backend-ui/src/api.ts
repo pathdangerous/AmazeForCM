@@ -289,6 +289,18 @@ export async function uploadFile(file: File, devUser: string, opts: ReadOptions 
   return uploadAnswer(path, response);
 }
 
+// A new file of an uploaded feed, written into its drop folder (it loads nothing; the first load step does).
+export async function uploadFeedFile(feedId: string, file: File, devUser: string): Promise<{ stored_as: string }> {
+  const path = `/api/amaze/feeds/${feedId}/files?filename=${encodeURIComponent(file.name)}`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/octet-stream", "X-Dev-User": devUser },
+    body: file,
+  });
+  if (!response.ok) throw await failure(path, response);
+  return (await response.json()) as { stored_as: string };
+}
+
 // The stored original, read again with another sheet or header row.
 export async function reinspect(uploadId: string, filename: string, devUser: string, opts: ReadOptions): Promise<UploadAnswer> {
   const path = `/api/amaze/uploads/${uploadId}/inspect`;

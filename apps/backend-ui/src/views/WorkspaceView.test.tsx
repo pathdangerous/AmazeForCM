@@ -183,6 +183,48 @@ test("an empty step offers to run the agent; a failed one offers to try again", 
   expect((screen.getByTestId("workspace-approve") as HTMLButtonElement).disabled).toBe(true);
 });
 
+const HELD_LOAD = () => workspace("first_load", "failed", {
+  items: [], inputs: stepInputs({ facts: [{ label: "Load", value: "held" }] }), can_approve: false, blocked_by: "The step failed",
+  steps: workspace("first_load", "failed").steps.map((s) => s.name === "first_load" ? { ...s, detail: "The first load ended held." } : s) });
+
+test("a first load that did not release offers Back to Rules and Upload a new file, and Back to Rules goes back", async () => {
+  const fetchStub = stubFetch(base({
+    [GET]: HELD_LOAD(),
+    [`POST ${WS_PATH}/back`]: workspace("rules", "ready", { items: [ruleItem()] }),
+  }));
+  show();
+  expect(await screen.findByText("The first load ended held.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Upload a new file" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Back to Rules" }));
+  await waitFor(() => expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/back"))).toBe(true));
+  const call = fetchStub.mock.calls.find(([u]) => String(u).endsWith("/back"))!;
+  expect(JSON.parse(String(call[1]?.body))).toEqual({ to_step: "rules" });
+});
+
+test("Upload a new file writes the file to the feed's drop folder, then loads again", async () => {
+  const fetchStub = stubFetch(base({
+    [GET]: HELD_LOAD(),
+    [`POST /api/amaze/feeds/${HELD_LOAD().session.feed_id}/files?filename=next.csv`]: { stored_as: "next.csv" },
+    [`POST ${WS_PATH}/steps/first_load/enter`]: workspace("first_load", "agent_working", { items: [] }),
+  }));
+  show();
+  await screen.findByText("The first load ended held.");
+  const file = new File(["a,b\n1,2\n"], "next.csv", { type: "text/csv" });
+  fireEvent.change(screen.getByTestId("first-load-file"), { target: { files: [file] } });
+  await waitFor(() => expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/steps/first_load/enter"))).toBe(true));
+  const urls = fetchStub.mock.calls.map(([u]) => String(u));
+  expect(urls.findIndex((u) => u.includes("/files?filename=next.csv"))).toBeLessThan(urls.findIndex((u) => u.endsWith("/steps/first_load/enter")));
+});
+
+test("a first file that was never fetched still offers Try again", async () => {
+  stubFetch(base({ [GET]: workspace("first_load", "failed", { items: [], can_approve: false, blocked_by: "The step failed",
+    steps: workspace("first_load", "failed").steps.map((s) => s.name === "first_load" ? { ...s, detail: "The first file was not fetched: source_down." } : s) }) }));
+  show();
+  expect(await screen.findByRole("button", { name: "Try again" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Back to Rules" })).toBeNull();
+});
+
 test("while the agent works it shows the progress and polls every 2 seconds, then stops", async () => {
   vi.useFakeTimers();
   const working = workspace("glossary", "agent_working", {

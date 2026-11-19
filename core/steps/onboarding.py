@@ -401,7 +401,13 @@ def back(session: Session, *, session_id: UUID, to_step: str, user: User) -> Onb
     if ONBOARDING_STEPS.index(to_step) > ONBOARDING_STEPS.index(sess.current_step):
         raise BackNotAllowed(f"{to_step} has not been reached; this onboarding is on {sess.current_step}")
     if GoLiveRepository(session).latest(sess.feed_id) is not None:
-        raise BackNotAllowed("The owner approved go-live: the configuration is pinned and nothing goes back")
+        # go-live pins the configuration. The one way out: the first load did not release (held, quarantined, failed)
+        # and the feed has no product yet; then the rules may be redone and the owner approves a next go-live version
+        unreleased = (sess.current_step == "first_load" and sess.step_states["first_load"] == "failed"
+                      and ProductRepository(session).for_feed(sess.feed_id) is None)
+        if to_step != "rules" or not unreleased:
+            raise BackNotAllowed("The owner approved go-live: the configuration is pinned and nothing goes back "
+                                 "(only a first load that did not release goes back, and only to the rules)")
     sessions, jobs = OnboardingRepository(session), OnboardingJobRepository(session)
     active = jobs.active_for_session(session_id)
     if active is not None:

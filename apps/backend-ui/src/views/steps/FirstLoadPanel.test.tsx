@@ -1,4 +1,4 @@
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { renderWithTheme, stepInputs, workspace } from "../../test/fixtures";
 import FirstLoadPanel from "./FirstLoadPanel";
@@ -54,4 +54,45 @@ test("a load not run yet says so; no row count of 0 is shown", () => {
   const { container } = renderWithTheme(<FirstLoadPanel ws={ws} state="ready" detail={null} />);
   expect(screen.getByTestId("first-load-outcome").textContent).toContain("Ready to load");
   expect(container.textContent ?? "").not.toContain("Rows in the file");
+});
+
+// Follow-up item 1: a load that did not release is not retried (the same file would give the same answer): the
+// operator goes back to the rules or uploads a new file.
+function didNotRelease(status: string, handlers: { back?: () => void; upload?: (f: File) => void } = {}) {
+  const facts = [{ label: "Load", value: status }];
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts }) });
+  return renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail={`The first load ended ${status}.`}
+                                         onBackToRules={handlers.back ?? vi.fn()} onUpload={handlers.upload ?? vi.fn()} busy={false} />);
+}
+
+test.each(["held", "quarantined", "failed rolled back"])("a %s first load offers Back to Rules and Upload a new file, not Try again", (status) => {
+  didNotRelease(status);
+  expect(screen.getByRole("button", { name: "Back to Rules" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Upload a new file" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+test("Back to Rules calls its handler; a chosen file goes to the upload handler", () => {
+  const back = vi.fn(), upload = vi.fn();
+  didNotRelease("held", { back, upload });
+  fireEvent.click(screen.getByRole("button", { name: "Back to Rules" }));
+  expect(back).toHaveBeenCalledTimes(1);
+  const file = new File(["a,b\n1,2\n"], "next.csv", { type: "text/csv" });
+  fireEvent.change(screen.getByTestId("first-load-file"), { target: { files: [file] } });
+  expect(upload).toHaveBeenCalledWith(file);
+});
+
+test("both buttons are disabled while a request runs", () => {
+  const facts = [{ label: "Load", value: "held" }];
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail="x" onBackToRules={vi.fn()} onUpload={vi.fn()} busy />);
+  expect((screen.getByRole("button", { name: "Back to Rules" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Upload a new file" }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test("a read-only view of the step offers neither", () => {
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts: [{ label: "Load", value: "held" }] }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail="x" />);
+  expect(screen.queryByRole("button", { name: "Back to Rules" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Upload a new file" })).toBeNull();
 });
