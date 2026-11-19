@@ -363,12 +363,14 @@ export type LoadBreakdown = {
   load_id: string; status: string; rows: number; flagged_rows: number; trust_score: string | null; threshold: string;
   below_threshold: boolean; rules: RuleFlags[]; next_action: string;
 };
+export type ExpectedScore = { rows: number; flagged_rows: number; trust_score: string; threshold: string; below_threshold: boolean };
 export type StepInputs = {
   row_count: number | null; column_count: number | null; columns: string[]; issues: ProfileIssue[];
   key_columns: string[]; duplicate_key_count: number | null; candidate_counts: Record<string, number>;
   facts: InputFact[];
   load_summary?: string | null; // first load: one sentence about the latest scheduled load
   load_breakdown?: LoadBreakdown | null; // first load: per rule, the score and the next action (computed)
+  expected_score?: ExpectedScore | null; // go-live: the score the test load predicts (computed)
 };
 export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
 export type Visibility = "open" | "restricted";

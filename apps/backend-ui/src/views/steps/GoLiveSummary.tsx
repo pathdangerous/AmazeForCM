@@ -17,6 +17,7 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
   const before = ONBOARDING_STEPS.slice(1, ONBOARDING_STEPS.indexOf("go_live"));
   const highlights = asList(p.highlights);
   const risks = asList(p.risks);
+  const expected = ws.inputs?.expected_score ?? null; // computed from the test load's records, not model text
   return (
     <div data-testid="summary-page">
       <Title order={3} size="h4" mb="xs">Summary before go-live</Title>
@@ -34,10 +35,20 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
           <ul>{highlights.map((h) => <li key={h}>{h}</li>)}</ul>
         </>
       )}
-      {risks.length > 0 && (
+      {(risks.length > 0 || expected) && (
         <>
           <Text fw={600}>Risks</Text>
-          <ul>{risks.map((r) => <li key={r}>{r}</li>)}</ul>
+          <ul>
+            {expected && (
+              <li data-testid="expected-score">
+                {`Expected trust score ${expected.trust_score} from the test load (${expected.flagged_rows} of ${expected.rows} rows flagged): `}
+                {expected.below_threshold
+                  ? `below the release threshold ${expected.threshold}, so the first load would be held and its consumers warned.`
+                  : `at or above the release threshold ${expected.threshold}, so the first load is expected to release.`}
+              </li>
+            )}
+            {risks.map((r) => <li key={r}>{r}</li>)}
+          </ul>
         </>
       )}
       {testLoad && <Text mb="xs">{`Test load: ${testLoad.value}`}</Text>}

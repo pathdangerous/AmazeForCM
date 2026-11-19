@@ -618,6 +618,8 @@ def a_first_load_that_is_held_fails_the_step_and_shows_the_outcome(w: World) -> 
     (task 5.3b), so they hold the first load."""
     db_session = w.session
     run_to(w, "go_live", flagged_rules="approved")
+    predicted = view(w).inputs.expected_score  # follow-up item 4: computed from the test load, not model text
+    assert predicted is not None and predicted.below_threshold and predicted.threshold == "90.0"
     approve(w)
     [ran] = work(w)
     assert (ran.step, ran.status) == ("first_load", "failed")
@@ -632,6 +634,7 @@ def a_first_load_that_is_held_fails_the_step_and_shows_the_outcome(w: World) -> 
     assert {f.label: f.value for f in ws.inputs.facts}["Load"] == "held"
     b = ws.inputs.load_breakdown  # item 3: per rule rows flagged of total, the score next to the threshold, the next step
     assert b.status == "held" and b.below_threshold and b.threshold == "90.0" and Decimal(b.trust_score) < 90
+    assert predicted.trust_score == b.trust_score  # the test load predicted what the first load scored (same file)
     assert b.rules and all(r.total_rows == b.rows and len(r.sample_rows) <= 5 for r in b.rules)
     assert any(r.flagged_rows > 0 and r.sample_rows for r in b.rules) and "Back to Rules" in b.next_action
     assert [t.title for t in timeline(db_session, session_id=w.session_id) if t.step == "first_load" and t.title.startswith("load ")] == ["load held"]

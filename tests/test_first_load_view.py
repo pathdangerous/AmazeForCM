@@ -10,13 +10,15 @@ from types import SimpleNamespace
 import pytest
 
 from core.repositories.loads import LoadRepository
-from core.steps.first_load_view import first_load_facts, latest_load_summary, load_breakdown, load_timeline
+from core.steps.first_load_view import (
+    expected_score, first_load_facts, latest_load_summary, load_breakdown, load_timeline,
+)
 from core.steps.s12_arrival import Recipients
 from core.steps.s20_create_product import FinishContext
 from ports.notify.inapp import InAppNotifier
 from ports.storage.local import LocalBlobStore
 from tests.configured import VOLUME_RULE, loadable_feed, volume_csv
-from tests.step_chains import arrive, run_scheduled
+from tests.step_chains import arrive, run_engine, run_scheduled
 
 
 @pytest.fixture
@@ -168,6 +170,35 @@ def test_a_failed_load_has_no_rules_and_says_what_to_do(world):
     b = broken_down(world)
     assert b.status == "failed_rolled_back" and b.rules == [] and b.trust_score is None
     assert "Upload a new file" in b.next_action
+
+
+def make_test_load(world, content: str):
+    """A go-live test load (the step before the owner approves): the engine runs it and keeps its records."""
+    world.n += 1
+    key = f"raw/syn_loadable/test{world.n}/f.csv"
+    world.blobs.put(key, content.encode())
+    return run_engine(world.session, world.blobs, world.feed, file_ref=key, purpose="go_live_test")
+
+
+def test_no_test_load_has_no_expected_score(world):
+    assert expected_score(world.session, world.feed, threshold=Decimal("90")) is None
+
+
+def test_the_expected_score_is_computed_from_the_test_loads_records_and_flags_a_score_below_the_threshold(world):
+    make_test_load(world, volume_csv(10, 3))  # 70.0
+    e = expected_score(world.session, world.feed, threshold=Decimal("90"))
+    assert (e.rows, e.flagged_rows, e.trust_score, e.threshold, e.below_threshold) == (10, 3, "70.0", "90.0", True)
+
+
+def test_a_test_load_at_the_threshold_is_not_below_it(world):
+    make_test_load(world, volume_csv(10, 1))  # 90.0
+    e = expected_score(world.session, world.feed, threshold=Decimal("90"))
+    assert (e.trust_score, e.below_threshold) == ("90.0", False)
+
+
+def test_a_scheduled_load_is_not_a_test_load(world):
+    deliver(world, volume_csv(10, 5))
+    assert expected_score(world.session, world.feed, threshold=Decimal("90")) is None
 
 
 def test_the_breakdown_is_the_latest_loads(world):

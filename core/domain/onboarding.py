@@ -205,6 +205,18 @@ class LoadBreakdown(BaseModel):
     next_action: str
 
 
+class ExpectedScore(BaseModel):
+    """The trust score the go-live test load predicts for the first load, computed from its stored records."""
+
+    model_config = ConfigDict(frozen=True)
+
+    rows: int
+    flagged_rows: int
+    trust_score: str
+    threshold: str
+    below_threshold: bool
+
+
 class StepInputs(BaseModel):
     """"Inputs it saw" for the viewed step, from the database only: counts, names and flags; never a sample value."""
 
@@ -220,6 +232,7 @@ class StepInputs(BaseModel):
     facts: list[InputFact] = []
     load_summary: str | None = None  # first load: one sentence about the latest scheduled load (same rows as the facts)
     load_breakdown: LoadBreakdown | None = None  # first load: per rule, the score and the next action
+    expected_score: ExpectedScore | None = None  # go-live: the score the test load predicts (computed)
 
 
 class Workspace(BaseModel):

@@ -87,7 +87,9 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.go_lives import GoLiveRepository
-from core.steps.first_load_view import first_load_facts, latest_load_summary, load_breakdown, load_timeline
+from core.steps.first_load_view import (
+    expected_score, first_load_facts, latest_load_summary, load_breakdown, load_timeline,
+)
 from core.repositories.loads import LoadRepository
 from core.repositories.onboarding import OnboardingJobRepository, OnboardingRepository
 from core.repositories.products import ProductRepository
@@ -1034,6 +1036,7 @@ def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: li
     if step == "go_live":
         _fact(facts, "Approved rules", len(RuleRepository(session).current_for_feed(feed_id)))
         _fact(facts, "Transformations", len(TransformationRepository(session).current_for_feed(feed_id)))
+        found["expected_score"] = expected_score(session, feed_id, threshold=settings.trust_release_threshold)
         test = next((x for x in LoadRepository(session).list_for_feed(feed_id) if x.purpose == "go_live_test"), None)
         if test is not None:
             rows = StandardRecordRepository(session).count(test.id)

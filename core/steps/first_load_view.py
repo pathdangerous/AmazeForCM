@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from core.domain.load import Load
-from core.domain.onboarding import InputFact, LoadBreakdown, RuleFlags, TimelineEntry
+from core.domain.onboarding import ExpectedScore, InputFact, LoadBreakdown, RuleFlags, TimelineEntry
 from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.products import ProductRepository
@@ -107,6 +107,21 @@ def load_breakdown(session: Session, feed_id: UUID, *, threshold: Decimal) -> Lo
         trust_score=None if score is None else f"{score:.1f}", threshold=f"{limit:.1f}",
         below_threshold=score is not None and score < limit, rules=rules,
         next_action=NEXT_ACTION.get(load.status, "Wait: the load is still running."))
+
+
+def expected_score(session: Session, feed_id: UUID, *, threshold: Decimal) -> ExpectedScore | None:
+    """The trust score the feed's latest go-live test load predicts (100 x unflagged / rows, as step 15 computes it),
+    and whether it is below the release threshold. None when there is no test load or it kept no record."""
+    test = next((x for x in LoadRepository(session).list_for_feed(feed_id) if x.purpose == "go_live_test"), None)
+    if test is None:
+        return None
+    records = StandardRecordRepository(session)
+    rows, flagged = records.count(test.id), records.count_flagged(test.id)
+    if rows == 0:
+        return None
+    score, limit = trust_score(rows, flagged), threshold.quantize(Decimal("0.1"))
+    return ExpectedScore(rows=rows, flagged_rows=flagged, trust_score=f"{score:.1f}", threshold=f"{limit:.1f}",
+                         below_threshold=score < limit)
 
 
 def load_timeline(session: Session, feed_id: UUID) -> list[TimelineEntry]:
