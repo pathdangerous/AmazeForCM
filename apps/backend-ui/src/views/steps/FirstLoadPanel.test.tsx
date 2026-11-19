@@ -81,6 +81,56 @@ test("the message is the latest load's own sentence, not the stored job message"
   expect(text).not.toContain("OLDER");
 });
 
+const BREAKDOWN = {
+  load_id: "l1", status: "held", rows: 10, flagged_rows: 2, trust_score: "80.0", threshold: "90.0", below_threshold: true,
+  rules: [{ rule_key: "volume_over_100000", flagged_rows: 2, total_rows: 10, sample_rows: [1, 2] },
+          { rule_key: "id_present", flagged_rows: 0, total_rows: 10, sample_rows: [] }],
+  next_action: "Use Back to Rules to reject or change the rules that flag too many rows, or Upload a new file.",
+};
+
+test("the breakdown lists each rule as rows flagged of total, with its first flagged rows", () => {
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts: [{ label: "Load", value: "held" }], load_breakdown: BREAKDOWN }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail={null} />);
+  const rules = screen.getByTestId("first-load-rules").textContent ?? "";
+  expect(rules).toContain("volume_over_100000");
+  expect(rules).toContain("2 of 10 rows flagged");
+  expect(rules).toContain("Rows 1, 2");
+  expect(rules).toContain("id_present");
+  expect(rules).toContain("0 of 10 rows flagged");
+});
+
+test("the trust score is shown next to the release threshold, and says when it is below", () => {
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts: [{ label: "Load", value: "held" }], load_breakdown: BREAKDOWN }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail={null} />);
+  const score = screen.getByTestId("first-load-score").textContent ?? "";
+  expect(score).toContain("80.0");
+  expect(score).toContain("90.0");
+  expect(score).toContain("below");
+});
+
+test("a score at or above the threshold does not say below", () => {
+  const ok = { ...BREAKDOWN, status: "released", trust_score: "95.0", below_threshold: false, next_action: "Nothing to do: the product is created." };
+  const ws = workspace("product_ready", "done", { viewed_step: "first_load", items: [], inputs: stepInputs({ load_breakdown: ok }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="done" detail={null} />);
+  expect(screen.getByTestId("first-load-score").textContent).not.toContain("below");
+});
+
+test("the next action is shown as the API gives it", () => {
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts: [{ label: "Load", value: "held" }], load_breakdown: BREAKDOWN }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail={null} />);
+  expect(screen.getByTestId("first-load-next").textContent).toContain("Back to Rules");
+});
+
+test("a load with no rules (quarantined) shows no score and no rule list, only the next action", () => {
+  const q = { ...BREAKDOWN, status: "quarantined", rows: 0, flagged_rows: 0, trust_score: null, below_threshold: false, rules: [],
+              next_action: "Use Upload a new file: this exact file was loaded before." };
+  const ws = workspace("first_load", "failed", { items: [], inputs: stepInputs({ facts: [{ label: "Load", value: "quarantined" }], load_breakdown: q }) });
+  renderWithTheme(<FirstLoadPanel ws={ws} state="failed" detail={null} />);
+  expect(screen.queryByTestId("first-load-score")).toBeNull();
+  expect(screen.queryByTestId("first-load-rules")).toBeNull();
+  expect(screen.getByTestId("first-load-next").textContent).toContain("Upload a new file");
+});
+
 test("Back to Rules calls its handler; a chosen file goes to the upload handler", () => {
   const back = vi.fn(), upload = vi.fn();
   didNotRelease("held", { back, upload });

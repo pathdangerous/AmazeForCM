@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import any_, func, select
 from sqlalchemy.orm import Session
 
 from core.domain.load import StandardRecord, StandardRecordDraft
@@ -30,6 +30,12 @@ class StandardRecordRepository:
         """The records of the load that at least one rule flagged."""
         return self._session.scalar(select(func.count()).select_from(Row).where(
             Row.load_id == load_id, func.cardinality(Row.flags) > 0)) or 0
+
+    def flagged_row_numbers(self, load_id: UUID, rule_key: str, limit: int = 5) -> list[int]:
+        """The first `limit` file row numbers the rule flagged in the load, ascending."""
+        query = (select(Row.row_number).where(Row.load_id == load_id, rule_key == any_(Row.flags))
+                 .order_by(Row.row_number).limit(limit))
+        return list(self._session.scalars(query))
 
     def iter_for_load(self, load_id: UUID, limit: int | None = None, batch: int = 1000) -> Iterator[StandardRecord]:
         """Every record of the load (or the first `limit`), by row number, read in batches."""

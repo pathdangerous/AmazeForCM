@@ -10,12 +10,12 @@ from types import SimpleNamespace
 import pytest
 
 from core.repositories.loads import LoadRepository
-from core.steps.first_load_view import first_load_facts, latest_load_summary, load_timeline
+from core.steps.first_load_view import first_load_facts, latest_load_summary, load_breakdown, load_timeline
 from core.steps.s12_arrival import Recipients
 from core.steps.s20_create_product import FinishContext
 from ports.notify.inapp import InAppNotifier
 from ports.storage.local import LocalBlobStore
-from tests.configured import loadable_feed, volume_csv
+from tests.configured import VOLUME_RULE, loadable_feed, volume_csv
 from tests.step_chains import arrive, run_scheduled
 
 
@@ -112,3 +112,66 @@ def test_every_scheduled_load_is_a_timeline_line_in_time_order(world):
     assert all(e.step == "first_load" and e.kind == "event" and e.actor == "system" for e in entries)
     held = entries[0].detail
     assert (held["rows"], held["flagged_rows"], held["trust_score"]) == (10, 5, "50.0")
+
+
+# ---------------------------------------------------------------- item 3: the deterministic breakdown
+
+
+def broken_down(world):
+    return load_breakdown(world.session, world.feed, threshold=Decimal("90"))
+
+
+def test_no_scheduled_load_has_no_breakdown(world):
+    assert broken_down(world) is None
+
+
+def test_a_held_loads_breakdown_is_per_rule_rows_flagged_of_total_with_the_score_and_the_next_action(world):
+    deliver(world, volume_csv(10, 2))  # 80.0
+    b = broken_down(world)
+    assert (b.status, b.rows, b.flagged_rows, b.trust_score, b.threshold, b.below_threshold) == (
+        "held", 10, 2, "80.0", "90.0", True)
+    [rule] = b.rules
+    assert (rule.rule_key, rule.flagged_rows, rule.total_rows, rule.sample_rows) == (VOLUME_RULE, 2, 10, [1, 2])
+    assert "Back to Rules" in b.next_action and "Upload a new file" in b.next_action
+
+
+def test_at_most_five_flagged_rows_are_listed_per_rule(world):
+    deliver(world, volume_csv(10, 8))
+    [rule] = broken_down(world).rules
+    assert rule.flagged_rows == 8 and rule.sample_rows == [1, 2, 3, 4, 5]
+
+
+def test_a_rule_that_flags_nothing_is_listed_with_zero(world):
+    deliver(world, volume_csv(4, 0))
+    b = broken_down(world)
+    assert [(r.rule_key, r.flagged_rows, r.total_rows, r.sample_rows) for r in b.rules] == [(VOLUME_RULE, 0, 4, [])]
+    assert b.below_threshold is False and b.trust_score == "100.0"
+
+
+def test_a_released_load_at_the_threshold_is_not_below_it_and_needs_no_action(world):
+    deliver(world, volume_csv(10, 1))  # 90.0 = the threshold
+    b = broken_down(world)
+    assert b.status == "released" and b.below_threshold is False
+    assert "product" in b.next_action.lower() and "Back to Rules" not in b.next_action
+
+
+def test_a_quarantined_load_has_no_rules_and_says_to_upload_a_new_file(world):
+    deliver(world, volume_csv(10, 0))
+    resend(world, volume_csv(10, 0))
+    b = broken_down(world)
+    assert b.status == "quarantined" and b.rules == [] and b.trust_score is None
+    assert "Upload a new file" in b.next_action
+
+
+def test_a_failed_load_has_no_rules_and_says_what_to_do(world):
+    deliver(world, "instr_id,trade_date,traded_qty\nsyn-1,not-a-date,5\n")
+    b = broken_down(world)
+    assert b.status == "failed_rolled_back" and b.rules == [] and b.trust_score is None
+    assert "Upload a new file" in b.next_action
+
+
+def test_the_breakdown_is_the_latest_loads(world):
+    deliver(world, volume_csv(10, 5))
+    deliver(world, volume_csv(10, 2))
+    b = broken_down(world)
+    assert (b.rows, b.flagged_rows, b.trust_score) == (10, 2, "80.0")

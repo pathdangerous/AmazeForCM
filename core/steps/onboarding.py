@@ -87,7 +87,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
 from core.repositories.go_lives import GoLiveRepository
-from core.steps.first_load_view import first_load_facts, latest_load_summary, load_timeline
+from core.steps.first_load_view import first_load_facts, latest_load_summary, load_breakdown, load_timeline
 from core.repositories.loads import LoadRepository
 from core.repositories.onboarding import OnboardingJobRepository, OnboardingRepository
 from core.repositories.products import ProductRepository
@@ -1004,7 +1004,8 @@ def _fact(facts: list[InputFact], label: str, count: int | None, unit: str = "")
         facts.append(InputFact(label=label, value=f"{count}{unit}"))
 
 
-def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem]) -> StepInputs | None:
+def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem],
+                 settings: Settings) -> StepInputs | None:
     """"Inputs it saw" for a step, from the database only: counts, names and flags, never a sample value."""
     profile = FeedProfileRepository(session).latest(sess.feed_id)
     if profile is None:
@@ -1041,6 +1042,7 @@ def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: li
     if step == "first_load":
         facts += first_load_facts(session, feed_id)
         found["load_summary"] = latest_load_summary(session, feed_id)
+        found["load_breakdown"] = load_breakdown(session, feed_id, threshold=settings.trust_release_threshold)
     return StepInputs(**found, facts=facts)
 
 
@@ -1111,7 +1113,7 @@ def workspace(session: Session, *, session_id: UUID, settings: Settings | None =
     registration = FeedRegistrationRepository(session).current(feed.id)
     return Workspace(session=sess, feed_code=feed.code, steps=views, current_step=step, viewed_step=viewed,
                      visibility=registration.visibility if registration else None,
-                     inputs=_step_inputs(session, sess, viewed, items), items=items, job=job,
+                     inputs=_step_inputs(session, sess, viewed, items, settings), items=items, job=job,
                      progress=progress, agent_notes=notes, key_policy=key_policy, model_calls=sess.model_calls,
                      model_call_cap=settings.max_model_calls_per_onboarding, can_approve=blocked is None,
                      blocked_by=blocked)

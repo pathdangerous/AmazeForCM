@@ -177,6 +177,34 @@ class InputFact(BaseModel):
     value: str
 
 
+class RuleFlags(BaseModel):
+    """One rule's result on one load: rows flagged of total, and up to five of the flagged row numbers."""
+
+    model_config = ConfigDict(frozen=True)
+
+    rule_key: str
+    flagged_rows: int
+    total_rows: int
+    sample_rows: list[int]  # file row numbers, ascending, at most 5
+
+
+class LoadBreakdown(BaseModel):
+    """What a scheduled load did, computed from its stored records and certification (no model call): per rule, the
+    trust score next to the release threshold, and what the operator can do next."""
+
+    model_config = ConfigDict(frozen=True)
+
+    load_id: UUID
+    status: str
+    rows: int
+    flagged_rows: int
+    trust_score: str | None  # None when no record was loaded (quarantined, failed)
+    threshold: str
+    below_threshold: bool
+    rules: list[RuleFlags]
+    next_action: str
+
+
 class StepInputs(BaseModel):
     """"Inputs it saw" for the viewed step, from the database only: counts, names and flags; never a sample value."""
 
@@ -191,6 +219,7 @@ class StepInputs(BaseModel):
     candidate_counts: dict[str, int] = {}  # glossary and mapping steps: candidate elements per column
     facts: list[InputFact] = []
     load_summary: str | None = None  # first load: one sentence about the latest scheduled load (same rows as the facts)
+    load_breakdown: LoadBreakdown | None = None  # first load: per rule, the score and the next action
 
 
 class Workspace(BaseModel):

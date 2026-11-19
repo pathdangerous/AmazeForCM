@@ -7,15 +7,18 @@ call, no file read. Reads only; the caller owns the transaction.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from core.domain.load import Load
-from core.domain.onboarding import InputFact, TimelineEntry
+from core.domain.onboarding import InputFact, LoadBreakdown, RuleFlags, TimelineEntry
 from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.products import ProductRepository
+from core.repositories.standard_records import StandardRecordRepository
+from core.steps.s15_certify import trust_score
 
 
 def scheduled_loads(session: Session, feed_id: UUID) -> list[Load]:
@@ -68,6 +71,42 @@ def latest_load_summary(session: Session, feed_id: UUID) -> str | None:
     if load.status == "abandoned":
         return "The latest load was abandoned: the process that ran it stopped before it finished."
     return f"The latest load is {load.status.replace('_', ' ')}."
+
+
+SAMPLE_ROWS = 5  # flagged rows listed per rule
+
+NEXT_ACTION = {
+    "held": "Use Back to Rules to reject or change the rules that flag too many rows, or Upload a new file with a "
+            "corrected file.",
+    "released": "Nothing to do: the product is created and consumers can find it.",
+    "quarantined": "Use Upload a new file: this exact file was loaded before, so it is not loaded again.",
+    "failed_rolled_back": "Use Upload a new file with the problem fixed, or Back to Rules if a rule or mapping caused it.",
+    "abandoned": "Use Upload a new file to load it again: the earlier run stopped before it finished.",
+}
+
+
+def load_breakdown(session: Session, feed_id: UUID, *, threshold: Decimal) -> LoadBreakdown | None:
+    """The latest scheduled load's per-rule breakdown, from stored records and its certification only. The rules are
+    those the engine ran (the validated stage's counts, zero included); the sample rows are the first five flagged."""
+    load = latest_scheduled_load(session, feed_id)
+    if load is None:
+        return None
+    records = StandardRecordRepository(session)
+    certification = LoadCertificationRepository(session).for_load(load.id)
+    rows = certification.rows if certification else records.count(load.id)
+    flagged = certification.flagged_rows if certification else records.count_flagged(load.id)
+    score = certification.trust_score if certification else (trust_score(rows, flagged) if rows else None)
+    limit = certification.threshold if certification else threshold.quantize(Decimal("0.1"))
+    validated = next((s for s in LoadRepository(session).stages(load.id) if s.stage == "validated"), None)
+    counts = dict(validated.detail.get("rules", {})) if validated else {}
+    rules = [RuleFlags(rule_key=key, flagged_rows=int(count), total_rows=rows,
+                       sample_rows=records.flagged_row_numbers(load.id, key, SAMPLE_ROWS) if count else [])
+             for key, count in counts.items()]
+    return LoadBreakdown(
+        load_id=load.id, status=load.status, rows=rows, flagged_rows=flagged,
+        trust_score=None if score is None else f"{score:.1f}", threshold=f"{limit:.1f}",
+        below_threshold=score is not None and score < limit, rules=rules,
+        next_action=NEXT_ACTION.get(load.status, "Wait: the load is still running."))
 
 
 def load_timeline(session: Session, feed_id: UUID) -> list[TimelineEntry]:

@@ -88,6 +88,12 @@ test("the Timeline tab lists who did what and when, with the editor", () => {
   expect(list.textContent).toContain("edited by Blake Backend");
 });
 
+test.each(["first_load", "product_ready"] as const)("step %s says no agent runs there", (step) => {
+  renderWithTheme(<AgentPanel step={step} items={[]} notes={[]} inputs={null} timeline={[]} people={{}} />);
+  expect(screen.getByText("No agent runs at this step: rules and the trust score are computed")).toBeTruthy();
+  expect(screen.queryByText("The agent has nothing to explain for this step yet.")).toBeNull();
+});
+
 test("with nothing to explain it says so", () => {
   renderWithTheme(<AgentPanel step="profile" items={[]} notes={[]} inputs={null} timeline={[]} people={{}} />);
   expect(screen.getByText("The agent has nothing to explain for this step yet.")).toBeTruthy();

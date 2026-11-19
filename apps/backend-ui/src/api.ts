@@ -358,11 +358,17 @@ export type ProfileIssue = {
 };
 export type InputFact = { label: string; value: string };
 // "Inputs it saw": counts, names and flags from the database; never a sample value.
+export type RuleFlags = { rule_key: string; flagged_rows: number; total_rows: number; sample_rows: number[] };
+export type LoadBreakdown = {
+  load_id: string; status: string; rows: number; flagged_rows: number; trust_score: string | null; threshold: string;
+  below_threshold: boolean; rules: RuleFlags[]; next_action: string;
+};
 export type StepInputs = {
   row_count: number | null; column_count: number | null; columns: string[]; issues: ProfileIssue[];
   key_columns: string[]; duplicate_key_count: number | null; candidate_counts: Record<string, number>;
   facts: InputFact[];
   load_summary?: string | null; // first load: one sentence about the latest scheduled load
+  load_breakdown?: LoadBreakdown | null; // first load: per rule, the score and the next action (computed)
 };
 export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
 export type Visibility = "open" | "restricted";

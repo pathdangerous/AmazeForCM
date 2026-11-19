@@ -630,6 +630,10 @@ def a_first_load_that_is_held_fails_the_step_and_shows_the_outcome(w: World) -> 
     # follow-up item 2: the panel's facts and message are the latest load's; earlier loads are timeline lines
     assert ws.inputs.load_summary and "held" in ws.inputs.load_summary
     assert {f.label: f.value for f in ws.inputs.facts}["Load"] == "held"
+    b = ws.inputs.load_breakdown  # item 3: per rule rows flagged of total, the score next to the threshold, the next step
+    assert b.status == "held" and b.below_threshold and b.threshold == "90.0" and Decimal(b.trust_score) < 90
+    assert b.rules and all(r.total_rows == b.rows and len(r.sample_rows) <= 5 for r in b.rules)
+    assert any(r.flagged_rows > 0 and r.sample_rows for r in b.rules) and "Back to Rules" in b.next_action
     assert [t.title for t in timeline(db_session, session_id=w.session_id) if t.step == "first_load" and t.title.startswith("load ")] == ["load held"]
     assert ProductRepository(db_session).for_feed(w.feed_id) is None
     [failed] = events(w, "agent_failed")

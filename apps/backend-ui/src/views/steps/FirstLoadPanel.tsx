@@ -14,6 +14,7 @@ export default function FirstLoadPanel({ ws, state, detail, onBackToRules, onUpl
 }) {
   const picker = useRef<HTMLInputElement>(null);
   const rows = ws.inputs?.row_count;
+  const breakdown = ws.inputs?.load_breakdown ?? null;
   const facts = ws.inputs?.facts ?? [];
   const fact = (label: string) => facts.find((f) => f.label === label)?.value;
   const figures = FIGURES.filter((label) => fact(label) !== undefined);
@@ -47,6 +48,30 @@ export default function FirstLoadPanel({ ws, state, detail, onBackToRules, onUpl
         {rows ?<li>{`Rows in the file: ${rows}`}</li> : null}
         {rest.map((f) => <li key={f.label}>{`${f.label}: ${f.value}`}</li>)}
       </ul>
+      {breakdown && breakdown.trust_score !== null && (
+        <Text data-testid="first-load-score" mt="xs">
+          {`Trust score ${breakdown.trust_score} | release threshold ${breakdown.threshold} `}
+          {breakdown.below_threshold && (
+            <span style={{ background: "var(--amz-warning)", color: "var(--amz-on-bright)", borderRadius: 4, padding: "1px 8px" }}>
+              below the threshold
+            </span>
+          )}
+        </Text>
+      )}
+      {breakdown && breakdown.rules.length > 0 && (
+        <div data-testid="first-load-rules" style={{ margin: "8px 0" }}>
+          <Text fw={600}>Rules on this load</Text>
+          <ul style={{ margin: "4px 0" }}>
+            {breakdown.rules.map((r) => (
+              <li key={r.rule_key}>
+                <strong>{r.rule_key}</strong>{`: ${r.flagged_rows} of ${r.total_rows} rows flagged`}
+                {r.sample_rows.length > 0 && ` | Rows ${r.sample_rows.join(", ")}${r.flagged_rows > r.sample_rows.length ? ", ..." : ""}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {breakdown && <Text data-testid="first-load-next" mt="xs"><strong>Next: </strong>{breakdown.next_action}</Text>}
       {recover && (
         <div data-testid="first-load-recover" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
           <Button disabled={busy} onClick={() => onBackToRules?.()}>Back to Rules</Button>

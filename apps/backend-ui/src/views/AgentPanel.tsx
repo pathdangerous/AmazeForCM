@@ -4,6 +4,7 @@ import { formatWhen } from "../theme";
 import { STEP_LABELS } from "./Stepper";
 
 const SHOWN_COLUMNS = 12;
+const NO_AGENT_STEPS: StepName[] = ["first_load", "product_ready"]; // the load and the trust score are deterministic code
 
 function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -56,7 +57,9 @@ export default function AgentPanel({ step, items, notes, inputs, timeline, peopl
           <Tabs.Tab value="timeline">Timeline</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="why" pt="sm">
-          {empty && <Text size="sm">The agent has nothing to explain for this step yet.</Text>}
+          {NO_AGENT_STEPS.includes(step)
+            ? <Text size="sm">No agent runs at this step: rules and the trust score are computed</Text>
+            : empty && <Text size="sm">The agent has nothing to explain for this step yet.</Text>}
           {agents.map((n) => (
             <Text size="sm" key={`${n.agent}/${n.model}/${n.prompt_version}`}>
               <strong>{n.agent}</strong> | model {n.model} | prompt {n.prompt_version}
