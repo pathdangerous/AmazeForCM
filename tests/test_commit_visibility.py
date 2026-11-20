@@ -834,3 +834,58 @@ async def test_a_re_upload_puts_the_file_in_the_drop_folder_and_writes_no_row(
     assert committed(own_schema, "SELECT count(*) FROM loads") == [(0,)]
     assert committed(own_schema, "SELECT count(*) FROM source_fetches") == [(1,)]  # the first file only
     assert DropzoneConnector(dropzone).fetch("dropzone/upload_prices").content == b"id,name,qty\n2,b,3\n"
+
+
+# ---------------------------------------------------------------- phase 7.9: pause, resume and delete commit
+
+OWNER = {"X-Dev-User": "dev-data-owner"}
+FEED_REASON = "Synthetic: the vendor is changing its file layout."
+
+
+async def _registered_volumes(f, tmp_path):
+    from apps.api.deps import get_app_settings
+    from apps.api.main import app
+
+    app.dependency_overrides[get_app_settings] = lambda: Settings(
+        _env_file=None, dropzone_root=tmp_path / "dz", local_blob_root=tmp_path / "blob")
+    await _volumes_onboarding(f)
+    await _accepted_and_registered(f)
+
+
+@pytest.mark.anyio
+async def test_pause_commits_the_stage_and_its_event(own_schema, flow, tmp_path):
+    async with flow() as f:
+        await _registered_volumes(f, tmp_path)
+        paused = await f.client.post(f"/api/amaze/feeds/{f.feed_id}/pause", headers=OWNER, json={"reason": FEED_REASON})
+        assert paused.status_code == 200, paused.text
+    assert committed(own_schema, "SELECT stage FROM feeds WHERE code = :c", c=VOLUMES) == [("paused",)]
+    assert committed(own_schema, "SELECT action, reason, \"by\" FROM feed_status_events") == [
+        ("pause", FEED_REASON, "dev-data-owner")]
+
+
+@pytest.mark.anyio
+async def test_resume_commits_the_stage_and_its_event(own_schema, flow, tmp_path):
+    async with flow() as f:
+        await _registered_volumes(f, tmp_path)
+        for action in ("pause", "resume"):
+            response = await f.client.post(f"/api/amaze/feeds/{f.feed_id}/{action}", headers=OWNER,
+                                           json={"reason": FEED_REASON})
+            assert response.status_code == 200, response.text
+    assert committed(own_schema, "SELECT stage FROM feeds WHERE code = :c", c=VOLUMES) == [("registered",)]
+    assert committed(own_schema, "SELECT action FROM feed_status_events ORDER BY at") == [("pause",), ("resume",)]
+
+
+@pytest.mark.anyio
+async def test_delete_commits_the_removal_the_record_the_requirement_and_the_notice(own_schema, flow, tmp_path):
+    async with flow() as f:
+        await _registered_volumes(f, tmp_path)
+        response = await f.client.request("DELETE", f"/api/amaze/feeds/{f.feed_id}", headers=OWNER,
+                                          json={"reason": FEED_REASON, "confirm_code": VOLUMES})
+        assert response.status_code == 200, response.text
+    assert committed(own_schema, "SELECT count(*) FROM feeds WHERE code = :c", c=VOLUMES) == [(0,)]
+    assert committed(own_schema, "SELECT count(*) FROM source_fetches") == [(0,)]
+    assert committed(own_schema, "SELECT code, \"by\", reason FROM feed_deletions") == [
+        (VOLUMES, "dev-data-owner", FEED_REASON)]
+    assert _status(own_schema, f.id) == [("no_source_found",)]
+    assert committed(own_schema, "SELECT recipient FROM notifications WHERE subject = :s",
+                     s=f"Feed deleted: {VOLUMES}") == [("dev-requester",)]

@@ -104,6 +104,11 @@ from core.repositories.errors import (  # noqa: E402 (kept beside its use)
 
 CONFLICTS = CONFLICTS + (BackNotAllowed, StepNotEnterable, StepJobActive, StepNotReady, OnboardingAlreadyExists,
                          JobSuperseded)
+# phase 7.9: pause, resume and delete of a feed (LoadInProgress, already above, is the delete's 409 too)
+from core.repositories.errors import FeedNotLive, FeedNotPaused, NotOwnerOrOperations  # noqa: E402
+
+CONFLICTS = CONFLICTS + (FeedNotLive, FeedNotPaused)
+FORBIDDEN = FORBIDDEN + (NotOwnerOrOperations,)
 # phase 7.8, task 7.3a: the visibility chosen at go-live is refused once the feed has a product
 from core.repositories.errors import FeedHasProduct  # noqa: E402
 

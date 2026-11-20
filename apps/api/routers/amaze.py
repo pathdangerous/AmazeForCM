@@ -49,7 +49,7 @@ from apps.api.deps import (
 from apps.api.jobs import DAILY_FETCH_HOUR, DailyFetch
 from apps.api.transactions import in_transaction, read
 from core.domain.common import NonBlank
-from core.domain.feed import Feed, FeedStage
+from core.domain.feed import Feed, FeedDeletion, FeedStage
 from core.domain.glossary import GlossaryElement
 from core.domain.mapping import GlossaryRun
 from core.domain.proposal import ProposalStatus
@@ -62,7 +62,8 @@ from core.repositories.glossary import GlossaryRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.standard_records import StandardRecordRepository
-from core.steps.errors import ChoiceNotOffered
+from core.steps.errors import ChoiceNotOffered, CodeNotConfirmed
+from core.steps.feed_lifecycle import FeedDeleted, FeedPaused, FeedResumed, delete_feed, pause_feed, resume_feed
 from core.steps.feed_page import (
     FeedPage,
     LoadOnPage,
@@ -301,6 +302,59 @@ def register(feed_id: UUID, body: RegisterBody, session: DbSession, user: Backen
     if isinstance(result, Registered):  # phase 5: the run it queued is committed; wake the worker
         kick()
     return RegisterResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+# ---- phase 7.9: pause, resume and delete of a feed (plan docs/plans/phase-7.9.md, section 5)
+
+
+class ReasonBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Text  # blank is refused by the step (422); over 500 characters by the model (422)
+
+
+class DeleteBody(ReasonBody):
+    confirm_code: Text  # the feed's code, typed back
+
+
+class FeedActionResponse(BaseModel):
+    result: FeedPaused | FeedResumed = Field(discriminator="outcome")
+    feed: FeedPage
+
+
+BackendUser = Annotated[User, Depends(backend_user)]
+
+
+@router.post("/feeds/{feed_id}/pause", response_model=FeedActionResponse)
+def pause(feed_id: UUID, body: ReasonBody, session: DbSession, user: BackendUser,
+          catalogue: Catalogue) -> FeedActionResponse:
+    result = in_transaction(session, lambda: pause_feed(session, feed_id=feed_id, user=user, reason=body.reason))
+    return FeedActionResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+@router.post("/feeds/{feed_id}/resume", response_model=FeedActionResponse)
+def resume(feed_id: UUID, body: ReasonBody, session: DbSession, user: BackendUser,
+           catalogue: Catalogue) -> FeedActionResponse:
+    result = in_transaction(session, lambda: resume_feed(session, feed_id=feed_id, user=user, reason=body.reason))
+    return FeedActionResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+@router.delete("/feeds/{feed_id}", response_model=FeedDeleted)
+def remove_feed(feed_id: UUID, body: DeleteBody, session: DbSession, user: BackendUser, blobs: Blobs,
+                settings: AppSettings, notifier: RequestNotifier) -> FeedDeleted:
+    def work() -> FeedDeleted:
+        feed = FeedRepository(session).get(feed_id)  # FeedNotFound: 404
+        if body.confirm_code != feed.code:
+            raise CodeNotConfirmed(f"Type the feed's code, {feed.code}, to delete it")
+        return delete_feed(session, feed_id=feed_id, user=user, reason=body.reason, blob_store=blobs,
+                           dropzone_root=settings.dropzone_root, notifier=notifier)
+
+    return in_transaction(session, work)
+
+
+@router.get("/feed-deletions", response_model=list[FeedDeletion])
+def feed_deletions(session: DbSession, user: BackendUser) -> list[FeedDeletion]:
+    return read(session, lambda: FeedRepository(session).list_deletions())
 
 
 # ---- phase 5: steps 05 and 06 (plan, section 9)

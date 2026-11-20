@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from core.domain.feed import Feed, FeedDraft, FeedStage
+from core.domain.feed import Feed, FeedDeletion, FeedDraft, FeedStage
 from core.repositories.errors import (
     DuplicateFeedCode,
     DuplicateFeedSource,
@@ -19,6 +19,7 @@ from core.repositories.errors import (
     RequirementNotFound,
 )
 from core.repositories.tables import FeedRow as Row
+from core.repositories.tables import FeedDeletionRow as Deletion
 from core.repositories.tables import FeedStatusEventRow as StatusEvent
 from core.repositories.tables import RequirementRow, SourceChoiceRow
 
@@ -98,6 +99,11 @@ class FeedRepository:
         row.owner_id, row.stage, row.registered_at = owner, "registered", datetime.now(UTC)
         self._session.flush()
         return Feed.model_validate(row)
+
+    def list_deletions(self) -> list[FeedDeletion]:
+        """Every hard-deleted feed, newest first (migration 0027)."""
+        query = select(Deletion).order_by(Deletion.at.desc(), Deletion.id)
+        return [FeedDeletion.model_validate(r) for r in self._session.scalars(query)]
 
     def record_status_event(self, feed_id: UUID, *, action: Literal["pause", "resume"], reason: str, by: str) -> None:
         """The record the stage guard needs before registered <-> paused (migration 0027): append-only."""

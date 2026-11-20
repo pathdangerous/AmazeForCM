@@ -136,9 +136,9 @@ def _blob_keys(session: Session, feed_id: UUID) -> tuple[set[str], list[UUID]]:
                 "SELECT manifest_ref FROM upload_sources WHERE feed_id = :f"):
         refs.update(session.execute(text(sql), params).scalars())
     keys = {k for k in (_key(r) for r in refs) if k}
-    logs = list(session.execute(text(
+    logs = [i for i in session.execute(text(  # a glossary run not yet answered has no log row (NULL)
         "SELECT DISTINCT proposal_log_id FROM proposals WHERE feed_id = :f "
-        "UNION SELECT proposal_log_id FROM glossary_runs WHERE feed_id = :f"), params).scalars())
+        "UNION SELECT proposal_log_id FROM glossary_runs WHERE feed_id = :f"), params).scalars() if i is not None]
     return keys, logs
 
 

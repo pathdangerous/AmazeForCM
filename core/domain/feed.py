@@ -43,6 +43,21 @@ class FeedDraft(BaseModel):
         return self
 
 
+class FeedDeletion(BaseModel):
+    """The record of a hard-deleted feed (migration 0027): who, when, why, and the rows removed per table."""
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID
+    at: datetime
+    feed_id: UUID
+    code: str
+    name: str
+    by: str
+    reason: str
+    rows_deleted: dict[str, int]
+
+
 FeedVisibility = Literal["open", "restricted"]  # the same two words as a product's (phase 4 plan, assumption 31)
 
 

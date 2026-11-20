@@ -25,6 +25,10 @@ class ReasonNeeded(StepInputError):
     """Pausing, resuming or deleting a feed needs a reason that says why (phase 7.9); it is missing or blank."""
 
 
+class CodeNotConfirmed(StepInputError):
+    """A feed is deleted only after its code is typed back, so the wrong feed is not deleted by a slip (phase 7.9)."""
+
+
 class NothingToDecide(StepInputError):
     """There is no pending proposal of this kind for the requirement."""
 

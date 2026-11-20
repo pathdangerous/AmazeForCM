@@ -158,6 +158,41 @@ def test_a_deleted_feeds_code_and_source_can_be_used_again(db_session, glossary,
     ).scalar_one() == 0
 
 
+# ---------------------------------------------------------------- acceptance: the demo can be repeated
+
+
+def delete_through_the_step(w, db_session):
+    from core.steps.feed_lifecycle import delete_feed as delete_step
+    from ports.identity.dev import DevIdentity
+
+    return delete_step(db_session, feed_id=w.feed_id, user=DevIdentity().get_user("dev-operator"),
+                       reason="Synthetic: repeat the demo.", blob_store=w.ctx.blob_store,
+                       dropzone_root=w.settings.dropzone_root, notifier=InAppNotifier(db_session))
+
+
+def test_the_demo_file_is_onboarded_deleted_and_onboarded_again_twice_in_a_row(db_session, glossary, tmp_path):
+    """Acceptance: the same file under the same code, every time, to a released first load: no quarantine (no earlier
+    load of the same bytes is left), no duplicate_linked (no feed of that source is left), released."""
+    from core.repositories.loads import LoadRepository
+
+    seen = []
+    for _ in range(2):  # the whole sequence, twice in a row: onboard, delete, onboard again
+        first = onboarded(db_session, tmp_path)
+        deleted = delete_through_the_step(first, db_session)
+        assert deleted.code == "syn_security_master" and deleted.rows_deleted["feeds"] == 1
+        again = onboarded(db_session, tmp_path)  # the same file, the same code, the same folders
+        loads = LoadRepository(db_session).list_for_feed(again.feed_id)
+        scheduled = [x for x in loads if x.purpose == "scheduled"]
+        assert [x.status for x in scheduled] == ["released"], [(x.status, x.arrival_outcome) for x in loads]
+        assert scheduled[0].arrival_outcome == "on_time_complete"
+        assert db_session.execute(text("SELECT count(*) FROM feeds WHERE code = 'syn_security_master'")).scalar_one() == 1
+        seen.append(again.feed_id)
+        delete_through_the_step(again, db_session)  # leave nothing for the next round
+    assert len(set(seen)) == 2  # a new feed each time
+    assert db_session.execute(text("SELECT count(*) FROM feed_deletions WHERE code = 'syn_security_master'")
+                              ).scalar_one() == 4
+
+
 # ---------------------------------------------------------------- a plain DELETE is still refused, table by table
 
 # every table with a DELETE guard (append-only, or guarded history) that an onboarded feed fills; loads and products
