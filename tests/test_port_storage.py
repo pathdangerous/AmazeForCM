@@ -32,6 +32,27 @@ def test_missing_blob(store):
         store.get("nope.txt")
 
 
+def test_delete_removes_one_blob_and_only_that_one(store):
+    store.put("raw/a.csv", b"x")
+    store.put("raw/b.csv", b"y")
+    store.delete("raw/a.csv")
+    assert not store.exists("raw/a.csv") and store.get("raw/b.csv") == b"y"
+    assert store.list_keys() == ["raw/b.csv"]
+
+
+def test_deleting_a_missing_blob_is_not_an_error(store):
+    store.delete("nope.txt")
+    store.put("a.txt", b"x")
+    store.delete("a.txt")
+    store.delete("a.txt")  # twice
+
+
+@pytest.mark.parametrize("key", ["", "../escape.txt", "/abs.txt", "a//b.txt", ".hidden"])
+def test_delete_refuses_a_malformed_key(store, key):
+    with pytest.raises(InvalidBlobKey):
+        store.delete(key)
+
+
 def test_list_keys_with_prefix(store):
     for key in ("raw/b.csv", "raw/a.csv", "curated/c.csv"):
         store.put(key, b"x")

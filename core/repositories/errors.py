@@ -74,6 +74,19 @@ class FeedNotRegistered(RepositoryError):
     """Loads arrive only for registered feeds."""
 
 
+class FeedNotLive(RepositoryError):
+    """Only a live (registered) feed is paused (phase 7.9, migration 0027)."""
+
+
+class FeedNotPaused(RepositoryError):
+    """Only a paused feed is resumed (phase 7.9, migration 0027)."""
+
+
+class NotOwnerOrOperations(RepositoryError, PermissionError):
+    """Pause, resume and delete are for the feed's registered owner or a user with the operations role (phase 7.9;
+    a feed with no owner yet, a candidate, is acted on by operations only)."""
+
+
 class FeedHasProduct(RepositoryError):
     """A registered feed's visibility is revised only before its product exists (migration 0026): the product
     keeps the visibility of the registration it was created under."""

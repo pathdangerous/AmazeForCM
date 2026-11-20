@@ -29,5 +29,8 @@ class AzureBlobStore:
     def exists(self, key: str) -> bool:
         raise NotImplementedError(AZURE_NOT_IMPLEMENTED)
 
+    def delete(self, key: str) -> None:
+        raise NotImplementedError(AZURE_NOT_IMPLEMENTED)
+
     def list_keys(self, prefix: str = "") -> list[str]:
         raise NotImplementedError(AZURE_NOT_IMPLEMENTED)

@@ -484,6 +484,29 @@ def test_the_daily_job_loads_a_live_feed_after_its_fetch(db_session, daily, live
     assert test_load.purpose == "go_live_test"
 
 
+def test_the_daily_job_skips_a_paused_feed_and_the_next_run_after_a_resume_loads_it_once(db_session, daily, live):
+    """Phase 7.9: a paused feed is neither fetched nor loaded; a resume changes only the stage, so the next run fetches
+    normally and loads once: nothing is backfilled for the days it was paused."""
+    from core.steps.feed_lifecycle import pause_feed, resume_feed
+    from ports.identity.dev import DevIdentity
+
+    operations = DevIdentity().get_user("dev-operations")
+    feed, _ = live()
+    pause_feed(db_session, feed_id=feed.id, user=operations, reason="Synthetic: the vendor is changing its layout.")
+    db_session.commit()
+    fetches = len(SourceFetchRepository(db_session).list_for_feed(feed.id))  # the one registration read the file with
+    for _ in range(3):  # three daily runs while paused
+        assert daily().run() == {}
+    assert len(SourceFetchRepository(db_session).list_for_feed(feed.id)) == fetches
+    assert [x.purpose for x in loads_of(db_session, feed)] == ["go_live_test"]  # no scheduled load
+
+    resume_feed(db_session, feed_id=feed.id, user=operations, reason="Synthetic: the layout is stable.")
+    db_session.commit()
+    assert daily().run() == {"syn_exchange_volumes": "fetched"}
+    assert sorted(x.purpose for x in loads_of(db_session, feed)) == ["go_live_test", "scheduled"]  # one, no backfill
+    assert len(SourceFetchRepository(db_session).list_for_feed(feed.id)) == fetches + 1
+
+
 def test_a_feed_without_a_go_live_is_fetched_but_not_loaded(db_session, daily, live):
     feed, _ = live(mapped=False)
     assert daily().run() == {"syn_exchange_volumes": "fetched"}

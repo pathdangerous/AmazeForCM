@@ -43,6 +43,10 @@ class BlobStore(Protocol):
 
     def exists(self, key: str) -> bool: ...
 
+    def delete(self, key: str) -> None:
+        """Remove the blob. A key that holds no blob is not an error (a delete may be repeated)."""
+        ...
+
     def list_keys(self, prefix: str = "") -> list[str]:
         """Keys starting with prefix, sorted."""
         ...

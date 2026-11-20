@@ -21,6 +21,10 @@ class NotTheRequester(Exception):
     Not a StepInputError: the API answers 404, as for another requester's requirement."""
 
 
+class ReasonNeeded(StepInputError):
+    """Pausing, resuming or deleting a feed needs a reason that says why (phase 7.9); it is missing or blank."""
+
+
 class NothingToDecide(StepInputError):
     """There is no pending proposal of this kind for the requirement."""
 

@@ -93,7 +93,7 @@ def test_status_lists_are_the_names_in_claude_md():
         "awaiting_scope_confirmation", "scope_not_confirmed", "scope_confirmed", "awaiting_source_choice",
         "no_source_found",  # phase 3b, migration 0009
     )
-    assert FEED_STAGES == ("candidate", "registered", "rejected")
+    assert FEED_STAGES == ("candidate", "registered", "paused", "rejected")  # phase 7.9: paused
     assert LOAD_STATUSES == ("received", "loaded", "held", "failed_rolled_back", "released",  # loaded: 0018
                              "quarantined", "abandoned")  # 0019
     assert ARRIVAL_OUTCOMES == ("on_time_complete", "resent_quarantined", "additive_parked", "breaking_held")
@@ -257,8 +257,9 @@ def test_requirement_statuses_and_transitions_are_the_plans():
         ("defined", "no_source_found"), ("scope_not_confirmed", "no_source_found"),  # S1: no channel (review fix 5)
         ("onboarding", "awaiting_source_choice"), ("onboarding", "no_source_found"),  # phase 4: 03 rejected
         ("onboarding", "ready"), ("onboarding", "access_restricted"),  # phase 7 assumption 27: step 20 -> created
+        ("ready", "no_source_found"), ("access_restricted", "no_source_found"),  # phase 7.9: the feed was deleted
     })
-    assert len(REQUIREMENT_TRANSITIONS) == 19  # was 17
+    assert len(REQUIREMENT_TRANSITIONS) == 21  # was 19 (phase 7.9: two more)
     assert {s for move in REQUIREMENT_TRANSITIONS for s in move} <= set(REQUIREMENT_STATUSES)
 
 

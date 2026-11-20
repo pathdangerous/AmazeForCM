@@ -200,5 +200,7 @@ def test_database_refuses_a_registered_feed_without_owner(db_session):
 
 
 def test_proposal_links_must_point_at_real_rows(db_session, make_proposal):
-    with pytest.raises(IntegrityError, match="fk_proposals_feed_id_feeds"):
+    # old: the FK fk_proposals_feed_id_feeds. 0027 (phase 7.9) replaced it with an insert trigger, so a proposal kept
+    # after its feed was deleted may name a feed that is gone, while a new proposal still needs a real one.
+    with pytest.raises(IntegrityError, match="proposals.feed_id: feed .* does not exist"):
         make_proposal(feed_id=uuid.uuid4())

@@ -12,7 +12,9 @@ through amaze_delete_feed(); the deletion is recorded in feed_deletions.
   feeds CHECKs that tie the owner and registered_at to 'registered' now cover 'paused' too.
 - feed_deletions (append-only): feed id (no FK: it outlives the feed), code, name, who, when, why, rows deleted per table.
 - proposals.feed_id loses its FK to feeds: a proposal a glossary element was made from is kept (the request), and it
-  must keep a feed id (0017 CHECK names_a_column), so it names a feed that feed_deletions records.
+  must keep a feed id (0017 CHECK names_a_column), so it names a feed that feed_deletions records. A BEFORE INSERT
+  trigger (amaze_require_feed_of_proposal) keeps the FK's protection for every new row: the feed must exist when the
+  proposal is written.
 - amaze_may_delete(table, old row): true only while amaze.deleting_feed names the row's own feed (its feed_id, or the
   feed of its parent row, or its id in the session temp table of log rows being deleted).
 - The five functions that refuse a DELETE (amaze_refuse_update_delete, amaze_guard_glossary_run,
@@ -286,6 +288,16 @@ FEED_STAGE_NEW = FEED_STAGE_OLD.replace(
     RAISE EXCEPTION 'feed % cannot move from % to %', NEW.id, OLD.stage, NEW.stage USING ERRCODE = 'check_violation';
 """)
 
+PROPOSAL_FEED_EXISTS = """
+CREATE FUNCTION amaze_require_feed_of_proposal() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.feed_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM feeds WHERE id = NEW.feed_id) THEN
+        RAISE EXCEPTION 'proposals.feed_id: feed % does not exist', NEW.feed_id USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+"""
+
 MAY_DELETE = """
 CREATE FUNCTION amaze_may_delete(tbl text, old jsonb) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
 DECLARE
@@ -463,6 +475,10 @@ def upgrade() -> None:
     op.execute("ALTER TABLE feeds ADD CONSTRAINT ck_feeds_registered_at_matches_stage "
                "CHECK ((stage IN ('registered', 'paused')) = (registered_at IS NOT NULL))")
     op.execute("ALTER TABLE proposals DROP CONSTRAINT fk_proposals_feed_id_feeds")
+    # the FK's protection stays for every new row: a proposal names a feed that exists when it is written
+    op.execute(PROPOSAL_FEED_EXISTS)
+    op.execute("CREATE TRIGGER trg_proposals_feed_exists BEFORE INSERT ON proposals "
+               "FOR EACH ROW EXECUTE FUNCTION amaze_require_feed_of_proposal()")
 
     op.execute(MAY_DELETE)
     for body in (REFUSE_UPDATE_DELETE_NEW, GLOSSARY_RUN_NEW, ONBOARDING_JOB_NEW, ONBOARDING_SESSION_NEW,
@@ -492,6 +508,8 @@ BEGIN
     END IF;
 END $$;
 """)
+    op.execute("DROP TRIGGER trg_proposals_feed_exists ON proposals")
+    op.execute("DROP FUNCTION amaze_require_feed_of_proposal()")
     op.execute("DROP FUNCTION amaze_delete_feed(uuid, text, text)")
     for body in (REFUSE_UPDATE_DELETE_OLD, GLOSSARY_RUN_OLD, ONBOARDING_JOB_OLD, ONBOARDING_SESSION_OLD,
                  PROPOSAL_CHANGE_OLD, FEED_STAGE_OLD):

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -66,6 +67,17 @@ class DropzoneConnector:
             raise SourceUnavailable(f"The file {newest.name!r} in the drop folder cannot be read: {exc}") from exc
         return FetchedFile(source_ref=source_ref, filename=newest.name, content=content,
                            content_type=guess_content_type(newest.name))
+
+
+def remove_dropzone(root: Path, feed_code: str) -> int:
+    """Delete the feed's whole drop folder (phase 7.9: a deleted feed leaves no file the same code could pick up
+    again). Returns how many files went; no folder is no error."""
+    folder = _folder(Path(root), feed_code)
+    if not folder.is_dir():
+        return 0
+    files = sum(1 for p in folder.rglob("*") if p.is_file())
+    shutil.rmtree(folder)
+    return files
 
 
 def write_to_dropzone(root: Path, feed_code: str, filename: str, data: bytes) -> str:

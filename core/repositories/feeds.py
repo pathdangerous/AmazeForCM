@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -19,6 +19,7 @@ from core.repositories.errors import (
     RequirementNotFound,
 )
 from core.repositories.tables import FeedRow as Row
+from core.repositories.tables import FeedStatusEventRow as StatusEvent
 from core.repositories.tables import RequirementRow, SourceChoiceRow
 
 
@@ -68,7 +69,9 @@ class FeedRepository:
         )
         query = (
             select(Row)
-            .where(Row.connector.is_not(None), Row.stage != "rejected", or_(Row.stage == "registered", selected))
+            # a paused feed (0027) is not fetched, even while a requirement still selects it
+            .where(Row.connector.is_not(None), Row.stage.not_in(("rejected", "paused")),
+                   or_(Row.stage == "registered", selected))
             .order_by(Row.created_at, Row.id)
         )
         return [Feed.model_validate(r) for r in self._session.scalars(query)]
@@ -93,6 +96,18 @@ class FeedRepository:
         if not owner:
             raise FeedHasNoOwner(f"Feed {row.code!r} has no owner; name one to register it")
         row.owner_id, row.stage, row.registered_at = owner, "registered", datetime.now(UTC)
+        self._session.flush()
+        return Feed.model_validate(row)
+
+    def record_status_event(self, feed_id: UUID, *, action: Literal["pause", "resume"], reason: str, by: str) -> None:
+        """The record the stage guard needs before registered <-> paused (migration 0027): append-only."""
+        self._session.add(StatusEvent(feed_id=feed_id, action=action, reason=reason, by=by))
+        self._session.flush()
+
+    def set_stage(self, feed_id: UUID, to: Literal["registered", "paused"]) -> Feed:
+        """registered -> paused or paused -> registered; the database refuses it without the matching event."""
+        row = self._row(feed_id, lock=True)
+        row.stage = to
         self._session.flush()
         return Feed.model_validate(row)
 

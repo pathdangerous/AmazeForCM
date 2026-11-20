@@ -51,6 +51,9 @@ class LocalBlobStore:
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
 
+    def delete(self, key: str) -> None:
+        self._path(key).unlink(missing_ok=True)
+
     def list_keys(self, prefix: str = "") -> list[str]:
         if not self.root.is_dir():
             return []
