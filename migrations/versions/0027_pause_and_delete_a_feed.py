@@ -425,7 +425,8 @@ BEGIN
          WHERE feed_id = p_feed AND id NOT IN (SELECT id FROM amaze_feed_kept)
         ON CONFLICT DO NOTHING;
     INSERT INTO amaze_feed_logs (id, feed_id)
-        SELECT DISTINCT proposal_log_id, p_feed FROM glossary_runs WHERE feed_id = p_feed
+        SELECT DISTINCT proposal_log_id, p_feed FROM glossary_runs
+         WHERE feed_id = p_feed AND proposal_log_id IS NOT NULL  -- a run not yet answered has no log row
         ON CONFLICT DO NOTHING;
 {body}    INSERT INTO feed_deletions (feed_id, code, name, "by", reason, rows_deleted)
         VALUES (p_feed, f.code, f.name, p_by, p_reason, counts);
