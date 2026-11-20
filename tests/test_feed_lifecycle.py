@@ -261,6 +261,42 @@ def test_a_requirement_whose_current_choice_is_another_feed_is_left_alone(world)
     assert FeedRepository(world.session).get(other).stage == "registered"
 
 
+def test_a_paused_feeds_product_says_since_when_and_a_resumed_one_does_not(world):
+    """Phase 7.9: the product stays, with its last release, and says it has stopped updating."""
+    from core.steps.product_page import catalogue, product_page
+
+    onboarding_requirement(world.session, world.feed, elements=["volume"])
+    deliver(world, volume_csv(10, 0))
+    riley = IDENTITY.get_user("dev-requester")
+    [code] = [p.code for g in catalogue(world.session, user=riley, identity=IDENTITY) for p in g.products]
+    assert product_page(world.session, code=code, user=riley, identity=IDENTITY).paused_since is None
+    pause_feed(world.session, feed_id=world.feed, user=OWNER, reason=REASON)
+    paused_at = world.session.execute(text("SELECT at FROM feed_status_events WHERE feed_id = :f"),
+                                      {"f": world.feed}).scalar_one()
+    page = product_page(world.session, code=code, user=riley, identity=IDENTITY)
+    assert page.paused_since == paused_at and page.freshness is not None  # the last release is still shown
+    [listed] = [p for g in catalogue(world.session, user=riley, identity=IDENTITY) for p in g.products]
+    assert listed.paused_since == paused_at
+    resume_feed(world.session, feed_id=world.feed, user=OWNER, reason=REASON)
+    assert product_page(world.session, code=code, user=riley, identity=IDENTITY).paused_since is None
+    pause_feed(world.session, feed_id=world.feed, user=OWNER, reason=REASON)  # a second pause: its own date
+    again = product_page(world.session, code=code, user=riley, identity=IDENTITY).paused_since
+    assert again is not None and again > paused_at
+
+
+def test_a_deleted_feeds_product_is_gone_from_the_catalogue_and_the_page(world):
+    from core.steps.product_page import ProductNotFound, catalogue, product_page
+
+    onboarding_requirement(world.session, world.feed, elements=["volume"])
+    deliver(world, volume_csv(10, 0))
+    riley = IDENTITY.get_user("dev-requester")
+    [code] = [p.code for g in catalogue(world.session, user=riley, identity=IDENTITY) for p in g.products]
+    delete_feed(world.session, feed_id=world.feed, user=OWNER, reason=REASON, blob_store=world.blobs,
+                dropzone_root=world.dropzone, notifier=world.notifier)
+    assert catalogue(world.session, user=riley, identity=IDENTITY) == []
+    assert isinstance(product_page(world.session, code=code, user=riley, identity=IDENTITY), ProductNotFound)
+
+
 def test_a_feed_with_a_load_in_progress_is_not_deleted_and_nothing_goes(world):
     key, _ = deliver(world, volume_csv(10, 0))
     world.session.execute(text(

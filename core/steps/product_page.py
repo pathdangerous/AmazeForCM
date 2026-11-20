@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.domain.glossary import GlossaryElement
@@ -26,6 +27,7 @@ from core.repositories.grants import ProductGrantRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.products import ProductRepository
 from core.repositories.standard_records import StandardRecordRepository
+from core.repositories.tables import FeedRow, FeedStatusEventRow as StatusEvent
 from core.steps.result import StepResult
 
 PREVIEW_ROWS = 100
@@ -66,6 +68,7 @@ class CatalogueProduct(BaseModel):
     freshness: Freshness | None
     access: Literal["entitled", "not_entitled_visible"]
     route: str | None  # "Ask <owner> for access to <product>" when not entitled
+    paused_since: datetime | None = None  # the feed is paused (phase 7.9): when its latest pause began
 
 
 class DomainGroup(BaseModel):
@@ -99,6 +102,7 @@ class ProductPage(StepResult):
     access: Literal["entitled", "not_entitled_visible"]
     route: str | None
     freshness: Freshness | None
+    paused_since: datetime | None = None  # the feed is paused (phase 7.9): the product keeps its last release
     columns: list[str]  # element keys, in the feed's mapping order
     dictionary: list[DictionaryRow]
 
@@ -163,6 +167,16 @@ def _freshness(session: Session, product: ProductWithElements) -> tuple[Freshnes
     return Freshness(released_at=load.finished_at or load.received_at, rows=rows), load
 
 
+def _paused_since(session: Session, product: ProductWithElements) -> datetime | None:
+    """When the product's feed was last paused, while it is paused; None otherwise (phase 7.9)."""
+    if product.feed_id is None:
+        return None
+    return session.scalars(
+        select(StatusEvent.at).join(FeedRow, FeedRow.id == StatusEvent.feed_id)
+        .where(StatusEvent.feed_id == product.feed_id, StatusEvent.action == "pause", FeedRow.stage == "paused")
+        .order_by(StatusEvent.at.desc()).limit(1)).first()
+
+
 def catalogue(session: Session, *, user: UserLike, identity: IdentityLike) -> list[DomainGroup]:
     products = ProductRepository(session).list_with_elements()
     access = _access(session, products, user, identity)
@@ -173,7 +187,7 @@ def catalogue(session: Session, *, user: UserLike, identity: IdentityLike) -> li
             code=p.code, name=p.name, description=p.description, owner_id=p.owner_id,
             owner_name=_owner_name(identity, p.owner_id), visibility=p.visibility,
             freshness=_freshness(session, p)[0], access="entitled" if entitled else "not_entitled_visible",
-            route=route))
+            route=route, paused_since=_paused_since(session, p)))
     return [DomainGroup(domain=d, label=domain_label(d), products=groups[d]) for d in sorted(groups)]
 
 
@@ -213,7 +227,7 @@ def product_page(session: Session, *, code: str, user: UserLike, identity: Ident
         domain_label=domain_label(product.domain), owner=Owner(id=product.owner_id,
                                                               name=_owner_name(identity, product.owner_id)),
         visibility=product.visibility, access="entitled" if entitled else "not_entitled_visible", route=route,
-        freshness=freshness, columns=keys,
+        freshness=freshness, paused_since=_paused_since(session, product), columns=keys,
         dictionary=[_dictionary_row(elements[k], labels.get(k)) for k in keys])
 
 
