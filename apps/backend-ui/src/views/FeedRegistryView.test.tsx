@@ -1,4 +1,4 @@
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import type { FeedRow } from "../api";
 import { PEOPLE, renderWithTheme, stubFetch } from "../test/fixtures";
@@ -25,6 +25,37 @@ test("the registry renders a stubbed feed list with its feed-link", async () => 
   expect(link.getAttribute("href")).toBe(`#/feed/${FEED.id}`);
   expect(screen.getByTestId("feeds-table").tagName).toBe("TABLE");
   expect(screen.getByRole("group", { name: "Stage" })).toBeTruthy();
+});
+
+const OPS = { id: "dev-operations", display_name: "Opal Operations", email: "o@example.test", roles: ["operations"], app: "backend" as const };
+
+test("phase 7.9: the stage filter has Paused, and a paused feed is listed as paused", async () => {
+  stubFetch({ "GET /api/amaze/feeds": [{ ...FEED, stage: "paused" }] });
+  renderWithTheme(<FeedRegistryView devUser="dev-backend-team" people={NAMES} />);
+  const row = (await screen.findByTestId("feeds-table")).querySelector("tbody tr") as HTMLElement;
+  expect(row.textContent).toContain("paused");
+  expect(screen.getByRole("button", { name: "Paused" })).toBeTruthy();
+});
+
+test("phase 7.9: operations gets Pause and Delete per row, and the list is read again after a pause", async () => {
+  const fetchStub = stubFetch({ "GET /api/amaze/feeds": [FEED], [`POST /api/amaze/feeds/${FEED.id}/pause`]: { result: {} } });
+  renderWithTheme(<FeedRegistryView devUser="dev-operations" people={NAMES} me={OPS} />);
+  const row = (await screen.findByTestId("feeds-table")).querySelector("tbody tr") as HTMLElement;
+  expect(within(row).getByRole("button", { name: "Pause" })).toBeTruthy();
+  expect(within(row).getByRole("button", { name: "Delete" })).toBeTruthy();
+  fireEvent.click(within(row).getByRole("button", { name: "Pause" }));
+  fireEvent.change(screen.getByLabelText("Why it is paused"), { target: { value: "The vendor changes its layout" } });
+  fireEvent.click(screen.getByRole("button", { name: "Pause feed" }));
+  await waitFor(() => expect(fetchStub.mock.calls.filter(([u, i]) => String(u) === "/api/amaze/feeds" && !i?.method).length).toBe(2));
+});
+
+test("phase 7.9: a user who is neither owner nor operations sees no controls in the registry", async () => {
+  stubFetch({ "GET /api/amaze/feeds": [FEED] });
+  renderWithTheme(<FeedRegistryView devUser="dev-backend-team" people={NAMES}
+                                    me={{ ...OPS, id: "dev-backend-team", roles: ["backend_team"] }} />);
+  await screen.findByTestId("feeds-table");
+  expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
 });
 
 test("P3 and P4: the owner by name, the source by its catalogue name with the reference beside it", async () => {

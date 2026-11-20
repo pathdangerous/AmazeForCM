@@ -5,6 +5,7 @@ import {
   type Owner, type SignoffOutcome, type User,
 } from "../api";
 import { formatWhen } from "../theme";
+import FeedLifecycle from "./FeedLifecycle";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
 import RulesSection from "./RulesSection";
@@ -290,6 +291,13 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
         <code>{feed.code}</code> {feed.name} <Badge variant="default" ml="xs">{feed.stage}</Badge>
       </Title>
       {loadError && <Text className="bad" role="alert">{loadError}</Text>}
+      {feed.stage === "paused" && (
+        <Text my="xs" data-testid="feed-paused-note">
+          Paused: the daily run skips this feed, so it is not fetched and nothing new loads. Its product stays with its last release.
+        </Text>
+      )}
+      <FeedLifecycle feed={feed} me={me} devUser={devUser} onChanged={onChange}
+                     onDeleted={() => { window.location.hash = "#/feeds"; }} />
 
       <Section name="source" title="Source" result={result}>
         {page.source ? (

@@ -40,7 +40,7 @@ export type Feed = {
   created_at: string;
   code: string;
   name: string;
-  stage: "candidate" | "registered" | "rejected";
+  stage: "candidate" | "registered" | "paused" | "rejected"; // registered = live; paused (phase 7.9) = live, not fetched
   requirement_id: string | null;
   owner_id: string | null;
   source_ref: string | null;
@@ -243,6 +243,30 @@ export async function apiPost<T>(path: string, body: unknown, devUser: string): 
   if (!response.ok) throw await failure(path, response);
   return (await response.json()) as T;
 }
+
+// ---- phase 7.9: pause, resume and delete of a feed
+export const pauseFeed = (feedId: string, reason: string, devUser: string) =>
+  apiPost<{ result: { outcome: "paused" }; feed: FeedPage }>(`/api/amaze/feeds/${feedId}/pause`, { reason }, devUser);
+export const resumeFeed = (feedId: string, reason: string, devUser: string) =>
+  apiPost<{ result: { outcome: "resumed" }; feed: FeedPage }>(`/api/amaze/feeds/${feedId}/resume`, { reason }, devUser);
+export type FeedDeleted = {
+  outcome: "deleted"; feed_id: string; code: string; rows_deleted: Record<string, number>; blobs_deleted: number;
+  blobs_failed: number; requirements_reset: number; notified: number;
+};
+export async function deleteFeed(feedId: string, reason: string, confirmCode: string, devUser: string): Promise<FeedDeleted> {
+  const path = `/api/amaze/feeds/${feedId}`;
+  const response = await fetch(path, {
+    method: "DELETE",
+    headers: { Accept: "application/json", "Content-Type": "application/json", "X-Dev-User": devUser },
+    body: JSON.stringify({ reason, confirm_code: confirmCode }),
+  });
+  if (!response.ok) throw await failure(path, response);
+  return (await response.json()) as FeedDeleted;
+}
+export type FeedDeletion = {
+  id: string; at: string; feed_id: string; code: string; name: string; by: string; reason: string;
+  rows_deleted: Record<string, number>;
+};
 
 // ---- phase 7.8, task 2.5: a file uploaded straight to a new feed (POST /api/amaze/uploads...)
 

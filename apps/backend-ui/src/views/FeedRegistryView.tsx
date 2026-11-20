@@ -1,21 +1,26 @@
 import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
-import { apiGet, describeError, type Feed, type FeedRow } from "../api";
+import { apiGet, describeError, type Feed, type FeedRow, type User } from "../api";
 import { formatWhen } from "../theme";
+import FeedLifecycle from "./FeedLifecycle";
 
 const STAGES: { value: "" | Feed["stage"]; label: string }[] = [
   { value: "", label: "All" },
   { value: "candidate", label: "Candidate" },
   { value: "registered", label: "Registered" },
+  { value: "paused", label: "Paused" },
   { value: "rejected", label: "Rejected" },
 ];
 
 // Converted to the phase 7.5 look (task 4). P3: the owner by name; P4: the source by its catalogue name, the raw
 // reference beside it; P5: an empty state in the backend team's words.
-export default function FeedRegistryView({ devUser, people }: { devUser: string; people: Record<string, string> }) {
+export default function FeedRegistryView({ devUser, people, me = null }: {
+  devUser: string; people: Record<string, string>; me?: User | null;
+}) {
   const [stage, setStage] = useState<"" | Feed["stage"]>("");
   const [feeds, setFeeds] = useState<FeedRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0); // phase 7.9: a pause, a resume or a delete reads the list again
 
   useEffect(() => {
     if (!devUser) return;
@@ -31,7 +36,7 @@ export default function FeedRegistryView({ devUser, people }: { devUser: string;
     return () => {
       current = false;
     };
-  }, [devUser, stage]);
+  }, [devUser, stage, reload]);
 
   return (
     <section>
@@ -67,6 +72,7 @@ export default function FeedRegistryView({ devUser, people }: { devUser: string;
                 <Table.Th>Owner</Table.Th>
                 <Table.Th>Source</Table.Th>
                 <Table.Th>Created</Table.Th>
+                {me && <Table.Th>Actions</Table.Th>}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -87,6 +93,12 @@ export default function FeedRegistryView({ devUser, people }: { devUser: string;
                     ) : f.source_ref ?? <span className="muted">none</span>}
                   </Table.Td>
                   <Table.Td>{formatWhen(f.created_at)}</Table.Td>
+                  {me && (
+                    <Table.Td>
+                      <FeedLifecycle feed={f} me={me} devUser={devUser} onChanged={() => setReload((n) => n + 1)}
+                                     onDeleted={() => setReload((n) => n + 1)} />
+                    </Table.Td>
+                  )}
                 </Table.Tr>
               ))}
             </Table.Tbody>

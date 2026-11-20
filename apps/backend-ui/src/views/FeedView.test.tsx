@@ -187,6 +187,46 @@ test("P24 and P8: Prepare says why it is disabled; the go-live names people", as
   expect(screen.getByTestId("go-live-summary").textContent).toContain("The owner is Devon Owner");
 });
 
+const OPERATIONS = { id: "dev-operations", display_name: "Opal Operations", email: "o@example.test",
+                     roles: ["operations"], app: "backend" } as (typeof USERS)[number];
+
+test("phase 7.9: operations sees Pause and Delete on a live feed; a user with neither role sees none", async () => {
+  show(feedPage(), {}, OPERATIONS);
+  const box = await screen.findByTestId("feed-lifecycle");
+  expect(within(box).getByRole("button", { name: "Pause" })).toBeTruthy();
+  expect(within(box).getByRole("button", { name: "Delete" })).toBeTruthy();
+  cleanup();
+  show(feedPage(), {}, USERS[0]); // backend team: neither the owner nor operations
+  await screen.findByTestId("feed-view");
+  expect(screen.queryByTestId("feed-lifecycle")).toBeNull();
+});
+
+test("phase 7.9: a paused feed says so, offers Resume, and Pause sends the reason and reads the page again", async () => {
+  const paused = feedPage({ feed: { ...feedPage().feed, stage: "paused" } });
+  show(paused, {}, OPERATIONS);
+  expect((await screen.findByTestId("feed-paused-note")).textContent).toContain("not fetched");
+  expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
+  cleanup();
+  const onChange = vi.fn();
+  const fetchStub = show(feedPage(), { onChange }, OPERATIONS, {
+    [`POST /api/amaze/feeds/${FEED_ID}/pause`]: { result: { outcome: "paused" }, feed: paused } });
+  fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+  fireEvent.change(screen.getByLabelText("Why it is paused"), { target: { value: "The vendor changes its layout" } });
+  fireEvent.click(screen.getByRole("button", { name: "Pause feed" }));
+  await vi.waitFor(() => expect(onChange).toHaveBeenCalled());
+  expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/pause"))).toBe(true);
+});
+
+test("phase 7.9: after a delete the page goes back to the registry", async () => {
+  show(feedPage(), {}, OPERATIONS, {
+    [`DELETE /api/amaze/feeds/${FEED_ID}`]: { outcome: "deleted", code: feedPage().feed.code, rows_deleted: { feeds: 1 } } });
+  fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+  fireEvent.change(screen.getByLabelText("Why it is deleted"), { target: { value: "The demo is over" } });
+  fireEvent.change(screen.getByLabelText(`Type ${feedPage().feed.code} to confirm`), { target: { value: feedPage().feed.code } });
+  fireEvent.click(screen.getByRole("button", { name: "Delete feed" }));
+  await vi.waitFor(() => expect(window.location.hash).toBe("#/feeds"));
+});
+
 test("P19: the result of Propose mappings shows above the mapping table", async () => {
   show(feedPage({ columns: [feedPage().columns[0], unmapped] }), {}, USERS[1], {
     [`POST /api/amaze/feeds/${FEED_ID}/mappings/propose`]: { result: {

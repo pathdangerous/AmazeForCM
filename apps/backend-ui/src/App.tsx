@@ -145,7 +145,7 @@ export default function App() {
         <div className="app-panel">
         <RunBanner devUser={me ? selected : ""} refresh={`${view}/${feedId}/${changed}`} onChange={onChange}
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
-        {view === "status" && <StatusView />}
+        {view === "status" && <StatusView devUser={me ? selected : ""} people={people} />}
         {view === "glossary" && (
           <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")} people={people}
                         changed={changed} onChange={onChange} />
@@ -160,7 +160,7 @@ export default function App() {
         {view === "onboarding" && onboardingId && (
           <WorkspaceView id={onboardingId} devUser={me ? selected : ""} people={people} />
         )}
-        {view === "feeds" && !feedId &&<FeedRegistryView devUser={me ? selected : ""} people={people} />}
+        {view === "feeds" && !feedId && <FeedRegistryView devUser={me ? selected : ""} people={people} me={me} />}
         {view === "feeds" && feedId && (
           <FeedView feedId={feedId} devUser={me ? selected : ""} me={me} people={people}
                     canAct={!!me && me.roles.includes("backend_team")}
