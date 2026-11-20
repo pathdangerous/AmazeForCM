@@ -53,8 +53,9 @@ Done when:
 
 - `feed_status_events(id, at, feed_id FK, action pause|resume, reason non-blank, by)`: append-only, no truncate; a trigger requires `by` non-blank and, for `pause`, a registered feed and for `resume` a paused one (the stage guard enforces the move; this trigger enforces the order of events).
 - `feeds.stage` CHECK `stage` gains `paused`; the two CHECKs widened; `amaze_guard_feed_stage` replaced (allows registered to paused to registered as in assumption 2; everything else as in 0015).
-- `feed_deletions(id, at, feed_id (no FK), code, name, by, reason non-blank, rows_deleted jsonb, blobs jsonb null)`: append-only, no truncate.
-- `proposals.feed_id` FK dropped (assumption 4).
+- `feed_deletions(id, at, feed_id (no FK), code, name, by, reason non-blank, rows_deleted jsonb)`: append-only, no truncate. **Built without a `blobs` column:** the table is append-only and the blobs are deleted after the function wrote the row, so a blob count cannot be added to it; the step returns the counts (`blobs_deleted`, `blobs_failed`) and logs failures.
+- `proposals.feed_id` FK dropped (assumption 4), replaced by `trg_proposals_feed_exists` (BEFORE INSERT): a new proposal still needs a real feed; only a proposal kept after a delete may name a gone one. Found when the old test `test_proposal_links_must_point_at_real_rows` failed.
+- Found by the acceptance walk: `glossary_runs.proposal_log_id` is NULL for a run not yet answered; the function skips NULL log ids.
 - `amaze_may_delete()`; the five guard functions re-created with the early exit (bodies copied from the database, then one added line each).
 - `amaze_delete_feed(feed_id uuid, by text, reason text) returns jsonb` (the per-table counts); `SET LOCAL amaze.deleting_feed` inside it; raises `FeedLoadInProgress` as an exception with SQLSTATE `restrict_violation`-class message the repository maps to the named error; also raises for an unknown feed or a blank reason.
 
@@ -67,7 +68,7 @@ Done when:
 
 ## 6. UI (C)
 
-- backend-ui: the registry list and the feed page show Pause/Resume (a reason box) and Delete (a dialog: reason, and the feed code typed to confirm; Delete stays disabled until both match). A paused feed's stage reads "paused". The Status page lists the deletions (who, when, reason, per-table counts).
+- backend-ui: the registry list and the feed page show Pause/Resume (a reason box) and Delete (an inline `role="dialog"` panel, not a portal modal: reason, and the feed code typed to confirm exactly; Delete stays disabled until both match; a refusal by the API shows inside it and keeps the typed text). A paused feed's stage reads "paused". The Status page lists the deletions (who, when, reason, per-table counts).
 - consumer-ui: a paused product shows "Paused: not updating since <date>" next to its freshness; a deleted product is gone from the catalogue, its page answers not found, a requirement that lost its feed reads as before for `no_source_found`.
 
 ## 7. Tests (D), RED first, targeted

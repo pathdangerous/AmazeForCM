@@ -74,6 +74,12 @@ export default function ProductView({ devUser, code }: { devUser: string; code: 
             Owner: {page.owner.name}
             {page.freshness ? ` | Updated ${formatWhen(page.freshness.released_at)}` : " | Not released yet"}
           </Text>
+          {page.paused_since && (
+            <Text mt="xs" data-testid="product-paused"
+                  style={{ background: "var(--amz-info)", color: "var(--amz-on-bright)", padding: "4px 10px", borderRadius: 4, display: "inline-block" }}>
+              {`Paused: not updating since ${formatWhen(page.paused_since)}`}
+            </Text>
+          )}
           <Text mt="sm">{page.description}</Text>
 
           <Title order={3} mt="lg" mb="xs">Data dictionary</Title>

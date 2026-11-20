@@ -157,6 +157,7 @@ export type Freshness = { released_at: string; rows: number };
 export type CatalogueProduct = {
   code: string; name: string; description: string; owner_id: string; owner_name: string; visibility: string;
   freshness: Freshness | null; access: "entitled" | "not_entitled_visible"; route: string | null;
+  paused_since?: string | null; // phase 7.9: the product's feed is paused since this moment
 };
 export type DomainGroup = { domain: string; label: string; products: CatalogueProduct[] };
 export type DictionaryRow = {
@@ -166,6 +167,7 @@ export type ProductPage = {
   outcome: "product_page"; code: string; name: string; description: string; domain: string; domain_label: string;
   owner: { id: string; name: string }; visibility: string; access: "entitled" | "not_entitled_visible";
   route: string | null; freshness: Freshness | null; columns: string[]; dictionary: DictionaryRow[];
+  paused_since?: string | null; // phase 7.9
 };
 export type ProductPreview = { outcome: "preview"; columns: string[]; rows: unknown[][] };
 

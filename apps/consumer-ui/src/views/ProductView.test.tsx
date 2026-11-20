@@ -29,6 +29,22 @@ function downloadStub(file: string) {
   return { fetchStub, create, click };
 }
 
+test("phase 7.9: a paused product says since when it is not updating, and still shows its last release", async () => {
+  stubFetch({ [PAGE]: productPage({ paused_since: "2026-11-20T09:30:00" }), [PREVIEW]: previewRows(2) });
+  show();
+  const note = await screen.findByTestId("product-paused");
+  expect(note.textContent).toBe("Paused: not updating since 20 Nov 2026, 09:30");
+  expect(screen.getByText(/Updated 18 Nov 2026, 12:44/)).toBeTruthy();
+  expect(screen.getByTestId("product-dictionary")).toBeTruthy(); // the product is still usable
+});
+
+test("phase 7.9: a product that is not paused shows no paused note", async () => {
+  stubFetch({ [PAGE]: productPage(), [PREVIEW]: previewRows(2) });
+  show();
+  await screen.findByRole("heading", { name: "Bond terms" });
+  expect(screen.queryByTestId("product-paused")).toBeNull();
+});
+
 test("header, dictionary and preview rows", async () => {
   stubFetch({ [PAGE]: productPage(), [PREVIEW]: previewRows(3) });
   show();

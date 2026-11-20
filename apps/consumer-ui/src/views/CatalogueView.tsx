@@ -44,6 +44,9 @@ export default function CatalogueView({ devUser }: { devUser: string }) {
                   Owner: {p.owner_name}
                   {p.freshness ? ` | Updated ${formatWhen(p.freshness.released_at)}` : " | Not released yet"}
                 </div>
+                {p.paused_since && (
+                  <div data-testid={`catalogue-paused-${p.code}`}>{`Paused: not updating since ${formatWhen(p.paused_since)}`}</div>
+                )}
               </a>
             ))}
           </div>
