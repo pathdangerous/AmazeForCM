@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0026"  # old: "0025" (phase 7.8, task 7.3a: a registered feed's visibility may be revised)
+HEAD = "0027"  # old: "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -1013,6 +1013,72 @@ def test_0026_downgrade_restores_the_0015_registration_guards(scratch_schema):
     assert _0026_state(engine) == before
     command.upgrade(config, "0026")
     assert _0026_state(engine) == up
+
+
+GUARDS_0027 = ("amaze_refuse_update_delete", "amaze_guard_glossary_run", "amaze_guard_onboarding_job",
+               "amaze_guard_onboarding_session", "amaze_guard_proposal_change", "amaze_guard_feed_stage")
+
+
+def _0027_state(engine):
+    with engine.connect() as connection:
+        functions = {name: connection.execute(text(
+            "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :n "
+            "AND p.pronamespace = current_schema()::regnamespace"), {"n": name}).scalar_one()
+            for name in GUARDS_0027}
+        return {
+            "functions": functions,
+            "tables": set(inspect(connection).get_table_names()),
+            "other_functions": set(connection.execute(text(
+                "SELECT proname FROM pg_proc WHERE proname IN ('amaze_delete_feed', 'amaze_may_delete') "
+                "AND pronamespace = current_schema()::regnamespace")).scalars()),
+            "feed_checks": sorted(connection.execute(text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'feeds'::regclass "
+                "AND contype = 'c' AND conname LIKE 'ck_feeds_%'")).scalars()),
+            "proposals_feed_fk": connection.execute(text(
+                "SELECT count(*) FROM pg_constraint WHERE conname = 'fk_proposals_feed_id_feeds' "
+                "AND connamespace = current_schema()::regnamespace")).scalar_one(),
+        }
+
+
+def test_0027_adds_pause_delete_and_the_guards_that_let_one_feed_be_deleted(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0026")
+    before = _0027_state(engine)
+    command.upgrade(config, "0027")
+    up = _0027_state(engine)
+    assert {"feed_status_events", "feed_deletions"} <= up["tables"] and not {"feed_status_events", "feed_deletions"} & before["tables"]
+    assert up["other_functions"] == {"amaze_delete_feed", "amaze_may_delete"} and before["other_functions"] == set()
+    assert all("amaze_may_delete" in up["functions"][name] for name in GUARDS_0027[:5])
+    assert all("amaze_may_delete" not in before["functions"][name] for name in GUARDS_0027[:5])
+    assert "paused" in up["functions"]["amaze_guard_feed_stage"] and "paused" not in before["functions"]["amaze_guard_feed_stage"]
+    assert any("paused" in c and "candidate" in c for c in up["feed_checks"])
+    assert up["proposals_feed_fk"] == 0 and before["proposals_feed_fk"] == 1  # kept proposals keep their feed id only
+
+
+def test_0027_downgrade_restores_the_0026_schema_and_upgrades_again(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0026")
+    before = _0027_state(engine)
+    command.upgrade(config, "0027")
+    up = _0027_state(engine)
+    command.downgrade(config, "0026")
+    assert _0027_state(engine) == before
+    command.upgrade(config, "0027")
+    assert _0027_state(engine) == up
+
+
+def test_0027_downgrade_refuses_while_a_feed_is_paused_or_a_deletion_is_recorded(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0027")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO feed_deletions (feed_id, code, name, \"by\", reason, rows_deleted) "
+            "VALUES (gen_random_uuid(), 'syn_gone', 'Gone', 'dev-operator', 'Synthetic.', '{}'::jsonb)"))
+    with pytest.raises(DBAPIError, match="migration 0027 cannot be downgraded"):
+        command.downgrade(config, "0026")
 
 
 def test_0014_downgrade_restores_0013_when_there_are_no_phase_4_rows(scratch_schema):

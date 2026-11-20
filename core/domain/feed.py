@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from core.domain.common import NonBlank, SnakeName
 
-FeedStage = Literal["candidate", "registered", "rejected"]
+FeedStage = Literal["candidate", "registered", "paused", "rejected"]  # registered = live; paused (0027): live, not fetched
 FEED_STAGES: tuple[str, ...] = get_args(FeedStage)
 
 # How a feed's source is read (phase 3): one of the source connectors in ports/connectors.

@@ -152,7 +152,9 @@ class ProposalRow(Base):
     status: Mapped[str] = mapped_column(Text, default="pending", server_default="pending")
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("requirements.id"))
-    feed_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feeds.id"))
+    # 0027: no FK. A proposal a glossary element was made from is kept when its feed is deleted and still names it
+    # (feed_deletions records the feed); every other proposal of the feed is deleted with it.
+    feed_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     edited_from: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposals.id"))  # 0024
     edited_by: Mapped[str | None] = mapped_column(Text)  # 0024
 
@@ -263,9 +265,10 @@ class FeedRow(Base):
         UniqueConstraint("code"),
         CheckConstraint("code ~ '^[a-z][a-z0-9_]*$'", name="code_format"),
         CheckConstraint(_in("stage", FEED_STAGES), name="stage"),
-        # Step 04 outcome no_owner: a registered feed must have an owner.
-        CheckConstraint("stage <> 'registered' OR owner_id IS NOT NULL", name="registered_has_owner"),
-        CheckConstraint("(stage = 'registered') = (registered_at IS NOT NULL)", name="registered_at_matches_stage"),
+        # Step 04 outcome no_owner: a registered feed must have an owner (0027: a paused feed is a registered one)
+        CheckConstraint("stage NOT IN ('registered', 'paused') OR owner_id IS NOT NULL", name="registered_has_owner"),
+        CheckConstraint("(stage IN ('registered', 'paused')) = (registered_at IS NOT NULL)",
+                        name="registered_at_matches_stage"),
         # migration 0008: the source a feed reads; one feed per source
         UniqueConstraint("source_code"),
         CheckConstraint(_in("connector", CONNECTORS), name="connector"),
@@ -284,6 +287,46 @@ class FeedRow(Base):
     registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source_code: Mapped[str | None] = mapped_column(Text)
     connector: Mapped[str | None] = mapped_column(Text)
+
+
+class FeedStatusEventRow(Base):
+    """A pause or a resume of a feed, with the reason and the person (migration 0027). Append-only; the stage guard
+    allows registered <-> paused only right after the matching row."""
+
+    __tablename__ = "feed_status_events"
+    __table_args__ = (
+        CheckConstraint("action IN ('pause', 'resume')", name="action"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+        CheckConstraint('length(btrim("by")) > 0', name="by"),
+        Index("ix_feed_status_events_feed_id", "feed_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    action: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    by: Mapped[str] = mapped_column("by", Text)
+
+
+class FeedDeletionRow(Base):
+    """The record of a hard-deleted feed: who, when, why, and how many rows of each table went (migration 0027).
+    Append-only; written only by amaze_delete_feed(). No FK: it outlives the feed."""
+
+    __tablename__ = "feed_deletions"
+    __table_args__ = (
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+        CheckConstraint('length(btrim("by")) > 0', name="by"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    code: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    by: Mapped[str] = mapped_column("by", Text)
+    reason: Mapped[str] = mapped_column(Text)
+    rows_deleted: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
 class SourceChoiceRow(Base):
