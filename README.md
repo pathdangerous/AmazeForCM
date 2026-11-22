@@ -12,7 +12,7 @@ Start here:
 4. `STARTER_PROMPT.md`: paste its prompt into Claude Code.
 5. Copy `.env.example` to `.env` and set the database password.
 
-Use synthetic data only.
+Rule 6 (synthetic data only) was voided on 2026-11-22: see `CLAUDE.md`. Secrets never go in the repository. On Replit, read `replit.md` first.
 
 ## Set up and run (Windows PowerShell, from the repository root)
 

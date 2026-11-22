@@ -19,7 +19,7 @@ The system is three platforms, in the order data moves:
 3. **Every negative outcome is explicit.** Each step returns a typed result: success or one of its named negative outcomes (see the step table). Never return a bare error for an expected case.
 4. **Every AI proposal is logged** with the agent name, provider, model and version, prompt version, input reference, output, and who approved or rejected it.
 5. **Everything Azure sits behind an interface** (see Placeholders). Local implementations run on a Windows laptop with no containers; Azure implementations are switched on by configuration. Business logic never imports an Azure SDK directly.
-6. **Synthetic data only.** No client files, client names or real vendor data in this repository, tests or fixtures.
+6. **Voided on 2026-11-22.** The rule was "synthetic data only". The code now lives only on company-approved servers (the company GitHub repository and Replit), so client files, client names and real vendor data may be used. Secrets still never go in the repository: `.env` locally, Replit Secrets on Replit. Three tests still check that today's fixtures are synthetic (`tests/test_source_catalogue.py`, `tests/test_glossary_seed.py`, `tests/test_demo_seed.py`); change them in the phase that brings in real data.
 7. **Configuration is versioned, never edited in place.** A change creates a new version.
 
 **Exception to rules 1/7 (phase 7.9):** a feed may be hard-deleted only through `amaze_delete_feed()`; its deletion is recorded in `feed_deletions`. Nothing else deletes from an append-only table (the guards allow a DELETE only while `amaze.deleting_feed` names the row's own feed). Glossary elements and their proposals are kept.
