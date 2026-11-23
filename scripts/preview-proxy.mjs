@@ -1,15 +1,26 @@
-// Development-only preview proxies. The original app ports stay unchanged.
+// Development-only single entrance. Keep /market/ in upstream paths for Vite's base.
 import http from "node:http";
 import net from "node:net";
+import { pathToFileURL } from "node:url";
 
-function serve(port, targetPort) {
+export function targetPort(path) {
+  return new URL(path, "http://localhost").pathname.startsWith("/market/") ? 5174 : 5173;
+}
+
+export function createPreviewServer() {
   const server = http.createServer((req, res) => {
+    if (new URL(req.url, "http://localhost").pathname === "/market") {
+      res.writeHead(308, { Location: req.url.replace("/market", "/market/") });
+      res.end();
+      return;
+    }
+    const port = targetPort(req.url);
     const upstream = http.request({
       hostname: "127.0.0.1",
-      port: targetPort,
+      port,
       path: req.url,
       method: req.method,
-      headers: { ...req.headers, host: `127.0.0.1:${targetPort}` },
+      headers: { ...req.headers, host: `127.0.0.1:${port}` },
     }, (reply) => {
       res.writeHead(reply.statusCode, reply.headers);
       reply.pipe(res);
@@ -22,8 +33,9 @@ function serve(port, targetPort) {
     req.pipe(upstream);
   });
   server.on("upgrade", (req, socket, head) => {
-    const upstream = net.connect(targetPort, "127.0.0.1", () => {
-      const headers = { ...req.headers, host: `127.0.0.1:${targetPort}` };
+    const port = targetPort(req.url);
+    const upstream = net.connect(port, "127.0.0.1", () => {
+      const headers = { ...req.headers, host: `127.0.0.1:${port}` };
       upstream.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`
         + Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join("")
         + "\r\n");
@@ -34,10 +46,11 @@ function serve(port, targetPort) {
     socket.on("error", () => upstream.destroy());
     socket.on("close", () => upstream.destroy());
   });
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`Preview proxy ${port} -> 127.0.0.1:${targetPort}`);
-  });
+  return server;
 }
 
-serve(5000, 5173);
-serve(3000, 5174);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  createPreviewServer().listen(5000, "0.0.0.0", () => {
+    console.log("Preview proxy 5000: /market/ -> 5174; all else -> 5173");
+  });
+}

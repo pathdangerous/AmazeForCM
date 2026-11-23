@@ -15,6 +15,7 @@ const server = {
 };
 
 export default defineConfig({
+  base: "/market/",
   plugins: [react()],
   server,
   preview: server,
