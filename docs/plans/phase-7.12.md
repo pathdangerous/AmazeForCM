@@ -1,4 +1,13 @@
-# Phase 7.12, section T7: manual items at every onboarding stage
+# Phase 7.12
+
+## T0: decisions
+
+1. Agents draft code; a person approves it; only approved code runs, and it runs with no model (rule 2).
+2. Exception fixes: agents propose, a person approves in bulk; an agent never changes data alone (rule 1).
+3. Erasing profiling history is a recorded erase, like 7.9's feed delete (rule 7), never an edit in place.
+4. The demo covers T1-T4 and T7; items not built go on the roadmap (T6).
+
+## Section T7: manual items at every onboarding stage
 
 Request (T7): "Add item" at each onboarding stage; edit and reject on every stage's items, agent-made or manual.
 

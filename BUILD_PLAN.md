@@ -121,6 +121,18 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
   keyboard checks pass; screens are written to `docs/phase75-screenshots/phase711/`.
   Push `phase-7.11`; do not merge.
 
+## Phase 7.12 — Business-user profile, completion report, versioned code, drift, manual items
+
+Plan: `docs/plans/phase-7.12.md`. Tasks: T0 decisions, T1 profile for business users and agent actions, T2 completion
+report, T3 generated code (migration 0029), T4 drift on a new delivery, T5 overview, T6 demo and roadmap, T7 manual items.
+
+Decisions (T0):
+- Agents draft code; a person approves it; only approved code runs, and it runs with no model (rule 2).
+- Exception fixes: agents propose, a person approves in bulk; an agent never changes data alone (rule 1).
+- Erasing profiling history is a recorded erase, like 7.9's feed delete (rule 7): never an edit in place.
+- The demo covers T1-T4 and T7; whatever is not built goes on the roadmap (T6).
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass. Push `phase-7.12`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
