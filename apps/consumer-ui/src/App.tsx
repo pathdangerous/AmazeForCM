@@ -28,7 +28,7 @@ function routeFromHash(): Route {
   return { view: path in VIEWS ? (path as View) : "search" };
 }
 
-export default function App() {
+function App() {
   const [route, setRoute] = useState<Route>(routeFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [fourEyes, setFourEyes] = useState(true);
@@ -74,19 +74,20 @@ export default function App() {
   const inbox = useInbox(devUser, route.view === "notifications"); // phase 7.5, P27
 
   return (
-    <>
+    <div className="market-shell">
       <header className="app-header">
         <div className="app-header-inner">
-          <Title order={1}>{TITLE}</Title>
-          <nav aria-label="Views" className="app-nav">
+          <Title order={1} className="sr-only">{TITLE}</Title>
+          <a href="#/catalogue" className="brand"><strong>amaze</strong><span>Marketplace</span></a>
+          <nav aria-label="Marketplace" className="app-nav">
             {(Object.keys(VIEWS) as View[]).map((name) => (
-              <Anchor key={name} href={`#/${name}`} aria-current={route.view === name ? "page" : undefined}>
+              <Anchor key={name} href={`#/${name}`} aria-current={route.view === name || route.view === "product" && name === "catalogue" || route.view === "requirement" && name === "requests" ? "page" : undefined}>
                 {VIEWS[name]}{name === "notifications" && inbox.unseen > 0 ? ` (${inbox.unseen})` : ""}
               </Anchor>
             ))}
           </nav>
           <div className="who">
-            <label htmlFor="dev-user">Dev user</label>
+            <label htmlFor="dev-user"><span aria-hidden="true">Working as</span><span className="sr-only">Dev user</span></label>
             <NativeSelect id="dev-user" data-testid="dev-user" value={selected} w={240} style={{ flex: "none" }}
                           onChange={(e) => {
                             const user = users.find(u => u.id === e.currentTarget.value);
@@ -116,6 +117,8 @@ export default function App() {
         </div>
       </main>
       <footer>Synthetic data only.</footer>
-    </>
+    </div>
   );
 }
+
+export default App;

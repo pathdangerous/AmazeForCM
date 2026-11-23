@@ -17,6 +17,7 @@ const server = {
 export default defineConfig({
   base: "/market/",
   plugins: [react()],
+  resolve: { dedupe: ["react", "react-dom", "@mantine/core", "@mantine/hooks"] },
   server,
   preview: server,
 });

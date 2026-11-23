@@ -7,5 +7,6 @@ import { defineConfig } from "vitest/config";
 // from f:\ vitest loads itself twice, once per casing, and every file fails "failed to find the current suite".
 export default defineConfig({
   plugins: [react()],
+  resolve: { dedupe: ["react", "react-dom", "@mantine/core", "@mantine/hooks"] },
   test: { environment: "jsdom", include: ["src/**/*.test.tsx"] },
 });

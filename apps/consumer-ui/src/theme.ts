@@ -1,195 +1,157 @@
-// The one look of both UIs (phase 7.5 plan, assumptions 2 to 4). This file is byte-identical in backend-ui and
-// consumer-ui; tests/test_ui_shared_look.py checks that, the pinned versions, that main.tsx uses it, and that every
-// pair in CONTRAST_PAIRS meets 4.5:1. Change it in both apps at once.
-//
-// Colours: the Hexaware palette (LIGHT, SHARED). Outside it, and marked: success (#1A7F37), every DARK value
-// (derived at task 0, decision 3) and the tints of BRAND other than shade 6 (Mantine needs ten shades).
-// Rules of use: content sits on panels; warning, info and the current-state marker are fills with ON_BRIGHT text,
-// never text; the focus colour is never text; disabled is a border, never text (disabled text is muted on subtle).
+// Approved phase 7.11 tokens. Keep this file byte-identical in both apps.
+// Amber/orange are fills, not text on white. Every normal-text pairing below meets AA.
 import { createTheme, type CSSVariablesResolver, type MantineColorsTuple } from "@mantine/core";
 
 export const SHARED = {
-  header: "#07125E", // header bar, both schemes
-  onFill: "#FFFFFF", // text on header, primary, danger and success fills
-  primary: "#3C2CDA", // primary fill, both schemes
-  primaryHover: "#3123B8", // derived (BRAND shade 7)
-  focus: "#1D86FF", // focus ring and icons, never text
-  danger: "#DA2D2C", // danger fill
-  warning: "#EA9D00", // fill only
-  info: "#14CBDE", // fill only
-  marker: "#F4CB4E", // current-state marker, fill only
-  onBright: "#040D43", // text on warning, info and marker fills
-  disabled: "#8088A7", // disabled controls: border only
-  success: "#1A7F37", // success fill; outside the Hexaware palette
+  header: "#2E343E",
+  onFill: "#FFFFFF",
+  primary: "#FAB800",
+  primaryHover: "#E5A800",
+  focus: "#1D4ED8",
+  danger: "#B42318",
+  warning: "#FAB800",
+  info: "#DBEAFE",
+  marker: "#FAB800",
+  onBright: "#1F2329",
+  disabled: "#9CA3AF",
+  success: "#2563EB",
+  attention: "#EA580C",
+  goodChip: "#DBEAFE",
+  goodChipText: "#1E3A8A",
+  attentionChip: "#FFEDD5",
+  attentionChipText: "#9A3412",
+  gridHeader: "#FEF1CC",
+  gridFilter: "#FFF8E5",
+  navMuted: "#C9CED6",
 };
-
 export const LIGHT = {
-  page: "#F8F8F9",
+  page: "#F4F5F7",
   panel: "#FFFFFF",
-  subtle: "#EEEFF2",
-  line: "#CBD0E5",
-  muted: "#535983", // strong lines and muted text
-  text: "#040D43",
-  heading: "#07125E",
-  link: "#3C2CDA",
-  dangerText: "#DA2D2C", // on panels only
-  successText: "#1A7F37", // outside the Hexaware palette
+  subtle: "#F7F8FA",
+  line: "#E5E7EB",
+  muted: "#5B6472",
+  text: "#1F2329",
+  heading: "#1F2329",
+  link: "#1D4ED8",
+  dangerText: "#9A3412",
+  successText: "#1E3A8A",
 };
-
-// Derived at task 0 (decision 3): every value here is outside the Hexaware palette.
+// Retained for callers that explicitly choose dark; the owner-approved default is light.
 export const DARK = {
-  page: "#0B1030",
-  panel: "#131A3D",
-  subtle: "#1D2550",
-  line: "#323C70",
-  muted: "#A9AECF",
-  text: "#E6E8F5",
+  page: "#242A33",
+  panel: "#2E343E",
+  subtle: "#3A414C",
+  line: "#647080",
+  muted: "#C9CED6",
+  text: "#F4F5F7",
   heading: "#FFFFFF",
-  link: "#ABA3FF",
-  dangerText: "#FF8F8E",
-  successText: "#5CC97B",
+  link: "#BFDBFE",
+  dangerText: "#FED7AA",
+  successText: "#BFDBFE",
 };
-
-// [scheme: what, text, background]. Every pair the look puts text on; the pytest checks each at 4.5:1.
 export const CONTRAST_PAIRS = [
-  ["light: body text on page", "#040D43", "#F8F8F9"],
-  ["light: body text on panel", "#040D43", "#FFFFFF"],
-  ["light: body text on subtle", "#040D43", "#EEEFF2"],
-  ["light: muted on page", "#535983", "#F8F8F9"],
-  ["light: muted on panel", "#535983", "#FFFFFF"],
-  ["light: muted on subtle (also disabled text)", "#535983", "#EEEFF2"],
-  ["light: heading on page", "#07125E", "#F8F8F9"],
-  ["light: heading on panel", "#07125E", "#FFFFFF"],
-  ["light: link on page", "#3C2CDA", "#F8F8F9"],
-  ["light: link on panel", "#3C2CDA", "#FFFFFF"],
-  ["light: link on subtle", "#3C2CDA", "#EEEFF2"],
-  ["light: danger text on panel", "#DA2D2C", "#FFFFFF"],
-  ["light: success text on panel", "#1A7F37", "#FFFFFF"],
-  ["light: success text on page", "#1A7F37", "#F8F8F9"],
-  ["light: white on header", "#FFFFFF", "#07125E"],
-  ["light: white on primary", "#FFFFFF", "#3C2CDA"],
-  ["light: white on primary hover", "#FFFFFF", "#3123B8"],
-  ["light: white on danger", "#FFFFFF", "#DA2D2C"],
-  ["light: white on success", "#FFFFFF", "#1A7F37"],
-  ["light: dark text on warning", "#040D43", "#EA9D00"],
-  ["light: dark text on info", "#040D43", "#14CBDE"],
-  ["light: dark text on marker", "#040D43", "#F4CB4E"],
-  ["dark: body text on page", "#E6E8F5", "#0B1030"],
-  ["dark: body text on panel", "#E6E8F5", "#131A3D"],
-  ["dark: body text on subtle", "#E6E8F5", "#1D2550"],
-  ["dark: muted on page", "#A9AECF", "#0B1030"],
-  ["dark: muted on panel", "#A9AECF", "#131A3D"],
-  ["dark: muted on subtle (also disabled text)", "#A9AECF", "#1D2550"],
-  ["dark: heading on page", "#FFFFFF", "#0B1030"],
-  ["dark: heading on panel", "#FFFFFF", "#131A3D"],
-  ["dark: link on page", "#ABA3FF", "#0B1030"],
-  ["dark: link on panel", "#ABA3FF", "#131A3D"],
-  ["dark: link on subtle", "#ABA3FF", "#1D2550"],
-  ["dark: danger text on page", "#FF8F8E", "#0B1030"],
-  ["dark: danger text on panel", "#FF8F8E", "#131A3D"],
-  ["dark: success text on page", "#5CC97B", "#0B1030"],
-  ["dark: success text on panel", "#5CC97B", "#131A3D"],
-  ["dark: white on header", "#FFFFFF", "#07125E"],
-  ["dark: white on primary", "#FFFFFF", "#3C2CDA"],
-  ["dark: white on primary hover", "#FFFFFF", "#3123B8"],
-  ["dark: white on danger", "#FFFFFF", "#DA2D2C"],
-  ["dark: white on success", "#FFFFFF", "#1A7F37"],
-  ["dark: dark text on warning", "#040D43", "#EA9D00"],
-  ["dark: dark text on info", "#040D43", "#14CBDE"],
-  ["dark: dark text on marker", "#040D43", "#F4CB4E"],
+  ["light: body on page", "#1F2329", "#F4F5F7"],
+  ["light: body on panel", "#1F2329", "#FFFFFF"],
+  ["light: body on subtle", "#1F2329", "#F7F8FA"],
+  ["light: muted on page", "#5B6472", "#F4F5F7"],
+  ["light: muted on panel", "#5B6472", "#FFFFFF"],
+  ["light: muted on subtle", "#5B6472", "#F7F8FA"],
+  ["light: heading on page", "#1F2329", "#F4F5F7"],
+  ["light: heading on panel", "#1F2329", "#FFFFFF"],
+  ["light: link on panel", "#1D4ED8", "#FFFFFF"],
+  ["light: link on page", "#1D4ED8", "#F4F5F7"],
+  ["light: link on subtle", "#1D4ED8", "#F7F8FA"],
+  ["light: danger on panel", "#9A3412", "#FFFFFF"],
+  ["light: success on panel", "#1E3A8A", "#FFFFFF"],
+  ["light: header", "#FFFFFF", "#2E343E"],
+  ["light: muted header", "#C9CED6", "#2E343E"],
+  ["light: primary", "#1F2329", "#FAB800"],
+  ["light: primary hover", "#1F2329", "#E5A800"],
+  ["light: danger fill", "#FFFFFF", "#B42318"],
+  ["light: success fill", "#FFFFFF", "#2563EB"],
+  ["light: blue chip", "#1E3A8A", "#DBEAFE"],
+  ["light: orange chip", "#9A3412", "#FFEDD5"],
+  ["light: grid header", "#1F2329", "#FEF1CC"],
+  ["light: grid filter", "#1F2329", "#FFF8E5"],
+  ["light: muted grid", "#5B6472", "#FFF8E5"],
+  ["dark: body on page", "#F4F5F7", "#242A33"],
+  ["dark: body on panel", "#F4F5F7", "#2E343E"],
+  ["dark: body on subtle", "#F4F5F7", "#3A414C"],
+  ["dark: muted on page", "#C9CED6", "#242A33"],
+  ["dark: muted on panel", "#C9CED6", "#2E343E"],
+  ["dark: muted on subtle", "#C9CED6", "#3A414C"],
+  ["dark: heading on panel", "#FFFFFF", "#2E343E"],
+  ["dark: link on panel", "#BFDBFE", "#2E343E"],
+  ["dark: link on page", "#BFDBFE", "#242A33"],
+  ["dark: link on subtle", "#BFDBFE", "#3A414C"],
+  ["dark: danger text", "#FED7AA", "#2E343E"],
+  ["dark: success text", "#BFDBFE", "#2E343E"],
+  ["dark: primary", "#1F2329", "#FAB800"],
+  ["dark: info fill", "#1F2329", "#DBEAFE"],
+  ["dark: success fill", "#FFFFFF", "#2563EB"],
 ] as const;
 
-// Mantine's primary colour: shade 6 is the palette's primary; the other shades are derived tints and shades.
 const BRAND: MantineColorsTuple = [
-  "#EEECFC", "#DCD8F9", "#BBB3F2", "#9A8EEB", "#7A6AE4", "#5B4BDF", "#3C2CDA", "#3123B8", "#271C93", "#1D156E",
+  "#FFF8E5", "#FEF1CC", "#FDE49A", "#FCD665", "#FBC82F", "#FAC015", "#FAB800", "#E5A800", "#B07C00", "#805A00",
 ];
-
-// R1's type scale (12 / 14 body and tables / 16 section / 20 page / 24 app title), radius 6, 4 px grid.
 export const theme = createTheme({
   primaryColor: "brand",
   primaryShade: 6,
   colors: { brand: BRAND },
   white: SHARED.onFill,
   black: LIGHT.text,
-  fontFamily: "system-ui, 'Segoe UI', sans-serif",
+  fontFamily: "Inter, system-ui, sans-serif",
   fontFamilyMonospace: "ui-monospace, Consolas, monospace",
-  fontSizes: { xs: "12px", sm: "14px", md: "14px", lg: "16px", xl: "20px" },
-  lineHeights: { xs: "1.45", sm: "1.45", md: "1.45", lg: "1.45", xl: "1.45" },
+  fontSizes: { xs: "12px", sm: "13px", md: "14px", lg: "15px", xl: "22px" },
+  lineHeights: { xs: "1.5", sm: "1.5", md: "1.5", lg: "1.5", xl: "1.35" },
   spacing: { xs: "4px", sm: "8px", md: "12px", lg: "16px", xl: "24px" },
-  radius: { xs: "4px", sm: "6px", md: "6px", lg: "8px", xl: "12px" },
+  radius: { xs: "4px", sm: "6px", md: "8px", lg: "8px", xl: "12px" },
   defaultRadius: "sm",
   focusRing: "auto",
   headings: {
-    fontWeight: "600",
+    fontWeight: "700",
     sizes: {
-      h1: { fontSize: "24px", lineHeight: "1.45" },
-      h2: { fontSize: "20px", lineHeight: "1.45" },
-      h3: { fontSize: "16px", lineHeight: "1.45" },
-      h4: { fontSize: "14px", lineHeight: "1.45" },
+      h1: { fontSize: "26px", lineHeight: "1.35" },
+      h2: { fontSize: "22px", lineHeight: "1.4" },
+      h3: { fontSize: "15px", lineHeight: "1.5" },
+      h4: { fontSize: "14px", lineHeight: "1.5" },
     },
   },
   components: {
     Table: { defaultProps: { borderColor: "var(--amz-line)", highlightOnHoverColor: "var(--amz-subtle)" } },
-    Badge: { defaultProps: { component: "span" } }, // badges sit inside text (p, h2): never a div there
+    Badge: { defaultProps: { component: "span" } },
+    Button: { defaultProps: { autoContrast: true } },
   },
 });
-
-// The palette as CSS variables: Mantine's own (body, text, dimmed, anchor, default, disabled, error) and --amz-*
-// for the rules in index.html. Light and dark differ only where DARK says so.
 function scheme(c: typeof LIGHT): Record<string, string> {
   return {
-    "--mantine-color-body": c.page,
-    "--mantine-color-text": c.text,
-    "--mantine-color-bright": c.heading,
-    "--mantine-color-dimmed": c.muted,
-    "--mantine-color-placeholder": c.muted,
-    "--mantine-color-anchor": c.link,
-    "--mantine-color-error": c.dangerText,
-    "--mantine-color-success": c.successText,
-    "--mantine-color-default": c.panel,
-    "--mantine-color-default-hover": c.subtle,
-    "--mantine-color-default-color": c.text,
-    "--mantine-color-default-border": c.line,
-    "--mantine-color-disabled": c.subtle,
-    "--mantine-color-disabled-color": c.muted,
+    "--mantine-color-body": c.page, "--mantine-color-text": c.text, "--mantine-color-bright": c.heading,
+    "--mantine-color-dimmed": c.muted, "--mantine-color-placeholder": c.muted, "--mantine-color-anchor": c.link,
+    "--mantine-color-error": c.dangerText, "--mantine-color-success": c.successText,
+    "--mantine-color-default": c.panel, "--mantine-color-default-hover": c.subtle,
+    "--mantine-color-default-color": c.text, "--mantine-color-default-border": c.line,
+    "--mantine-color-disabled": c.subtle, "--mantine-color-disabled-color": c.muted,
     "--mantine-color-disabled-border": SHARED.disabled,
-    "--amz-page": c.page,
-    "--amz-panel": c.panel,
-    "--amz-subtle": c.subtle,
-    "--amz-line": c.line,
-    "--amz-muted": c.muted,
-    "--amz-text": c.text,
-    "--amz-heading": c.heading,
-    "--amz-link": c.link,
-    "--amz-danger-text": c.dangerText,
-    "--amz-success-text": c.successText,
+    "--amz-page": c.page, "--amz-panel": c.panel, "--amz-subtle": c.subtle, "--amz-line": c.line,
+    "--amz-muted": c.muted, "--amz-text": c.text, "--amz-heading": c.heading, "--amz-link": c.link,
+    "--amz-danger-text": c.dangerText, "--amz-success-text": c.successText,
   };
 }
-
-export const cssVariablesResolver: CSSVariablesResolver = () => ({
+export const cssVariablesResolver = (_theme?: unknown): ReturnType<CSSVariablesResolver> => ({
   variables: {
-    "--amz-header": SHARED.header,
-    "--amz-on-fill": SHARED.onFill,
-    "--amz-primary": SHARED.primary,
-    "--amz-focus": SHARED.focus,
-    "--amz-danger": SHARED.danger,
-    "--amz-warning": SHARED.warning,
-    "--amz-info": SHARED.info,
-    "--amz-marker": SHARED.marker,
-    "--amz-on-bright": SHARED.onBright,
-    "--amz-disabled": SHARED.disabled,
-    "--amz-success": SHARED.success,
-    "--mantine-primary-color-contrast": SHARED.onFill,
+    "--amz-header": SHARED.header, "--amz-on-fill": SHARED.onFill, "--amz-primary": SHARED.primary,
+    "--amz-focus": SHARED.focus, "--amz-danger": SHARED.danger, "--amz-warning": SHARED.warning,
+    "--amz-info": SHARED.info, "--amz-marker": SHARED.marker, "--amz-on-bright": SHARED.onBright,
+    "--amz-disabled": SHARED.disabled, "--amz-success": SHARED.success,
+    "--amz-grid-header": SHARED.gridHeader, "--amz-grid-filter": SHARED.gridFilter,
+    "--mantine-primary-color-contrast": SHARED.onBright,
+    "--mantine-color-brand-contrast": SHARED.onBright,
   },
   light: scheme(LIGHT),
   dark: scheme(DARK),
 });
 
-// One date format for both UIs (checkpoint 2, item 3): "18 Nov 2026, 12:44" in the viewer's time zone, and
-// "18 Nov 2026" where no time is shown (time: false, or a YYYY-MM-DD day, read as that day wherever the viewer is).
-// Built by hand: Intl's en-GB month names vary by ICU version ("Sep" or "Sept").
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 export function formatWhen(value: string | Date, options: { time?: boolean } = {}): string {
   const day = typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
   const at = day ? new Date(Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10)))
