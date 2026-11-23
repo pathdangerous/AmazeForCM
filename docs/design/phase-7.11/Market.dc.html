@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Amaze Marketplace — Product page</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F5F7}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #1F2329; min-height: 1180px; background: #F4F5F7">
+
+<header style="background: #2E343E">
+<div style="max-width: 1280px; margin: 0 auto; height: 56px; display: flex; align-items: center; gap: 24px; padding: 0 24px; flex-wrap: wrap">
+<div style="display: flex; align-items: baseline; gap: 10px"><span style="font-size: 26px; font-weight: 700; color: {{accent}}; letter-spacing: -0.5px">amaze</span><span style="font-size: 13px; color: #C9CED6">Marketplace</span></div>
+<nav aria-label="Marketplace" style="display: flex; gap: 4px">
+<sc-for list="{{tabs}}" as="t" hint-placeholder-count="4"><a href="#" style="{{t.style}}">{{t.label}}</a></sc-for>
+</nav>
+<div style="flex: 1"></div>
+<label style="display: flex; align-items: center; gap: 8px; color: #C9CED6; font-size: 13px">Working as<select style="height: 36px; width: 200px; border-radius: 6px; border: 1px solid #4B5563; background: #3A414C; color: #FFFFFF; font: inherit; font-size: 14px; padding: 0 8px"><option>Riley Requester</option><option>Olive Operator</option></select></label>
+</div>
+</header>
+
+<main style="max-width: 1280px; margin: 0 auto; padding: 20px 24px 40px; display: flex; flex-direction: column; gap: 16px">
+<div style="font-size: 12px; color: #5B6472">Catalogue / Security master / Synthetic security master</div>
+
+<section style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 20px 24px; display: flex; gap: 24px; flex-wrap: wrap; align-items: center">
+<div style="flex: 999 1 520px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; flex-wrap: wrap"><span style="padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #FEF1CC; color: #5B4A12">Security master</span><span style="padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #F1F2F4; color: #374151">Estimates</span><span style="padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #DBEAFE; color: #1E3A8A">You have access</span></div>
+<h1 style="margin: 0; font-size: 26px; font-weight: 700">Synthetic security master</h1>
+<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #374151; max-width: 680px">One row per instrument: identifiers, sector, region and 22 consensus estimates, checked against 14 approved rules before every release.</p>
+<div style="display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; color: #5B6472"><span>Owner <b style="color: #1F2329">Olive Operator</b></span><span>Updated <b style="color: #1F2329">daily</b></span><span>Last release <b style="color: #1F2329">23 Nov 2026, 09:12</b></span><span>Licence <b style="color: #1F2329">Internal use only</b></span></div>
+</div>
+<div style="flex: 1 1 220px; display: flex; flex-direction: column; gap: 10px; align-items: stretch">
+<div style="background: #F7F8FA; border-radius: 8px; padding: 14px 16px; display: flex; align-items: center; gap: 14px">
+<div role="img" aria-label="Trust score 98.6" style="width: 64px; height: 64px; border-radius: 50%; background: conic-gradient(#2563EB 0 98.6%, #E5E7EB 98.6% 100%); display: flex; align-items: center; justify-content: center"><div style="width: 46px; height: 46px; border-radius: 50%; background: #F7F8FA; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">98.6</div></div>
+<div><div style="font-weight: 700">Trust score</div><div style="font-size: 12px; color: #5B6472">1 of 70 rows flagged · certified</div></div>
+</div>
+<button style="height: 42px; border: 0; border-radius: 6px; background: {{accent}}; color: #1F2329; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer">Download Excel</button>
+<button style="height: 42px; border: 1px solid #1F2329; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer">Download CSV</button>
+</div>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px 24px">
+<h2 style="margin: 0 0 12px; font-size: 15px; font-weight: 700">Where this data comes from</h2>
+<div style="display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap">
+<sc-for list="{{lineage}}" as="n" hint-placeholder-count="5">
+<div style="flex: 1 1 160px; display: flex; align-items: center; gap: 8px"><div style="flex: 1; background: #F7F8FA; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px"><div style="font-size: 11px; color: #5B6472; text-transform: uppercase; letter-spacing: 0.6px">{{n.stage}}</div><div style="font-size: 13px; font-weight: 600">{{n.name}}</div><div style="font-size: 12px; color: #5B6472">{{n.detail}}</div></div><sc-if value="{{n.arrow}}" hint-placeholder-val="{{ true }}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></sc-if></div>
+</sc-for>
+</div>
+</section>
+
+<div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start">
+<section style="flex: 1 1 440px; min-width: 0; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden">
+<div style="padding: 12px 16px; display: flex; align-items: center"><h2 style="margin: 0; font-size: 15px; font-weight: 700">Data dictionary</h2><span style="margin-left: auto; font-size: 12px; color: #5B6472">30 elements</span></div>
+<div style="overflow-x: auto"><table style="width: 100%; border-collapse: collapse; font-size: 13px">
+<thead><tr style="background: #FEF1CC; text-align: left"><th style="padding: 9px 16px; font-weight: 600">Element</th><th style="padding: 9px 12px; font-weight: 600">Definition</th><th style="padding: 9px 12px; font-weight: 600">Type · unit</th></tr></thead>
+<tbody><sc-for list="{{dict}}" as="d" hint-placeholder-count="6"><tr style="border-top: 1px solid #EEF0F3"><td style="padding: 9px 16px; font-weight: 600">{{d.e}}</td><td style="padding: 9px 12px; color: #374151">{{d.def}}</td><td style="padding: 9px 12px; color: #5B6472; white-space: nowrap">{{d.t}}</td></tr></sc-for></tbody>
+</table></div>
+</section>
+
+<section style="flex: 1 1 560px; min-width: 0; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden">
+<div style="padding: 12px 16px; display: flex; align-items: center"><h2 style="margin: 0; font-size: 15px; font-weight: 700">Preview</h2><span style="margin-left: auto; font-size: 12px; color: #5B6472">First 6 of 70 rows</span></div>
+<div style="overflow-x: auto"><table style="width: 100%; border-collapse: collapse; font-size: 13px">
+<thead><tr style="background: #FEF1CC; text-align: left"><th style="padding: 9px 16px; font-weight: 600">ticker</th><th style="padding: 9px 12px; font-weight: 600">instrument_name</th><th style="padding: 9px 12px; font-weight: 600">sector</th><th style="padding: 9px 12px; font-weight: 600">record_date</th><th style="padding: 9px 12px; font-weight: 600; text-align: right">best_pe_ratio</th></tr></thead>
+<tbody><sc-for list="{{preview}}" as="p" hint-placeholder-count="6"><tr style="border-top: 1px solid #EEF0F3"><td style="padding: 9px 16px; font-family: ui-monospace, Consolas, monospace; font-size: 12px">{{p.t}}</td><td style="padding: 9px 12px">{{p.n}}</td><td style="padding: 9px 12px; color: #5B6472">{{p.s}}</td><td style="padding: 9px 12px; color: #5B6472">{{p.d}}</td><td style="padding: 9px 12px; text-align: right; font-variant-numeric: tabular-nums">{{p.pe}}</td></tr></sc-for></tbody>
+</table></div>
+</section>
+</div>
+<p style="margin: 0; font-size: 12px; color: #5B6472">Synthetic data only.</p>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FAB800","options":["#FAB800","#F59E0B","#2563EB"]},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#FAB800';
+    const tab = (label, active) => ({ label, style: 'display: inline-flex; align-items: center; height: 56px; padding: 0 12px; font-size: 14px; text-decoration: none; ' + (active ? 'color: #FFFFFF; font-weight: 600; box-shadow: inset 0 -3px 0 ' + accent + ';' : 'color: #C9CED6;') });
+    return {
+      accent,
+      tabs: [tab('Search'), tab('Catalogue', true), tab('My requests'), tab('Notifications')],
+      lineage: [
+        { stage: 'Source', name: 'Synthetic_Security_Master.xlsx', detail: 'Uploaded by Olive Operator', arrow: true },
+        { stage: 'Curated', name: '70 rows · 30 columns', detail: '3 transformations applied', arrow: true },
+        { stage: 'Validated', name: '14 rules', detail: '1 row flagged', arrow: true },
+        { stage: 'Standard model', name: 'Security master', detail: '30 glossary elements', arrow: true },
+        { stage: 'Product', name: 'Released', detail: 'Trust score 98.6', arrow: false }
+      ],
+      dict: [
+        { e: 'ticker', def: 'Exchange ticker of the instrument', t: 'text' },
+        { e: 'instrument_name', def: 'Short name of the instrument', t: 'text' },
+        { e: 'sector', def: 'Industry sector', t: 'text' },
+        { e: 'record_date', def: 'Date the estimates were recorded', t: 'date' },
+        { e: 'best_pe_ratio', def: 'Consensus price-to-earnings ratio', t: 'decimal · times' },
+        { e: 'best_div_yld', def: 'Consensus dividend yield', t: 'decimal · percent' }
+      ],
+      preview: [
+        { t: '100001 SY Equity', n: 'Synthetic Alpha Corp', s: 'Industrials', d: '2026-11-21', pe: '18.40' },
+        { t: '100002 SY Equity', n: 'Synthetic Beta Ltd', s: 'Financials', d: '2026-11-21', pe: '11.92' },
+        { t: '100003 SY Equity', n: 'Synthetic Gamma plc', s: 'Technology', d: '2026-11-21', pe: '27.05' },
+        { t: '100004 SY Equity', n: 'Synthetic Delta Inc', s: 'Utilities', d: '2026-11-21', pe: '15.63' },
+        { t: '100005 SY Equity', n: 'Synthetic Epsilon AG', s: 'Health care', d: '2026-11-21', pe: '22.18' },
+        { t: '100006 SY Equity', n: 'Synthetic Zeta SA', s: 'Energy', d: '2026-11-21', pe: '9.77' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

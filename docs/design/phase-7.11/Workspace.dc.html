@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Amaze — Onboarding workspace, mapping</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F5F7}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #1F2329; min-height: 1180px; background: #F4F5F7; display: flex; flex-direction: column">
+
+<header style="height: 56px; background: #2E343E; display: flex; align-items: center; gap: 16px; padding: 0 20px">
+<button aria-label="Toggle menu" style="background: none; border: 0; color: #E5E7EB; width: 44px; height: 44px; cursor: pointer"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg></button>
+<div style="display: flex; align-items: baseline; gap: 10px"><span style="font-size: 26px; font-weight: 700; color: {{accent}}; letter-spacing: -0.5px">amaze</span><span style="font-size: 13px; color: #C9CED6">for Capital Markets</span></div>
+<div style="flex: 1"></div>
+<label style="display: flex; align-items: center; gap: 8px; color: #C9CED6; font-size: 13px">Working as<select style="height: 36px; width: 200px; border-radius: 6px; border: 1px solid #4B5563; background: #3A414C; color: #FFFFFF; font: inherit; font-size: 14px; padding: 0 8px"><option>Olive Operator</option><option>Riley Requester</option></select></label>
+<div aria-hidden="true" style="width: 34px; height: 34px; border-radius: 50%; background: {{accent}}; color: #1F2329; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center">OO</div>
+</header>
+
+<div style="display: flex; flex: 1 1 auto; flex-wrap: wrap">
+<nav aria-label="Main" style="width: 236px; flex: 0 0 236px; background: #2E343E; padding: 12px 0 24px; display: flex; flex-direction: column; gap: 2px">
+<sc-for list="{{nav}}" as="g" hint-placeholder-count="6">
+<div style="padding: 14px 20px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: #9CA3AF">{{g.group}}</div>
+<sc-for list="{{g.items}}" as="it" hint-placeholder-count="3"><a href="{{it.href}}" style="{{it.style}}">{{it.label}}</a></sc-for>
+</sc-for>
+</nav>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 20px 32px 0; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px">
+<div style="flex: 1 1 360px">
+<div style="font-size: 12px; color: #5B6472">Home / Onboardings / Synthetic security master</div>
+<h1 style="margin: 4px 0 0; font-size: 22px; font-weight: 700">Synthetic security master <span style="font-size: 14px; font-weight: 500; color: #5B6472">· syn_security_master · Synthetic_Security_Master.xlsx · 70 rows, 30 columns</span></h1>
+</div>
+<a href="Main.dc.html" style="height: 36px; display: inline-flex; align-items: center; padding: 0 14px; border: 1px solid #1F2329; border-radius: 6px; color: #1F2329; font-weight: 600; font-size: 13px; text-decoration: none">Save and exit</a>
+</div>
+
+<ol aria-label="Onboarding steps" style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px">
+<sc-for list="{{steps}}" as="s" hint-placeholder-count="9">
+<li style="display: flex; flex-direction: column; gap: 6px; font-size: 12px"><div style="{{s.bar}}"></div><div style="display: flex; align-items: center; gap: 6px"><span style="{{s.dot}}">{{s.mark}}</span><span style="{{s.labelStyle}}">{{s.label}}</span></div><span style="color: #5B6472; font-size: 11px">{{s.state}}</span></li>
+</sc-for>
+</ol>
+
+<div style="display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start">
+<section style="flex: 999 1 640px; min-width: 0; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex-wrap: wrap">
+<h2 style="margin: 0; font-size: 15px; font-weight: 700">Map source columns to the standard model</h2>
+<span style="display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #DBEAFE; color: #1E3A8A">26 pre-accepted</span>
+<span style="display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #FFEDD5; color: #9A3412">4 need you</span>
+<label style="margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px"><input type="checkbox" checked>Show only items that need me</label>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse; font-size: 13px">
+<thead>
+<tr style="background: #FEF1CC; text-align: left"><th style="padding: 10px 16px; font-weight: 600">Source column</th><th style="padding: 10px 12px; font-weight: 600">Sample profile</th><th style="padding: 10px 12px; font-weight: 600">Proposed element</th><th style="padding: 10px 12px; font-weight: 600">Type · unit</th><th style="padding: 10px 12px; font-weight: 600; width: 120px">Confidence</th><th style="padding: 10px 16px; font-weight: 600">Decision</th></tr>
+</thead>
+<tbody>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="7">
+<tr style="{{r.rowStyle}}">
+<td style="padding: 10px 16px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; font-weight: 600">{{r.col}}</td>
+<td style="padding: 10px 12px; color: #5B6472">{{r.profile}}</td>
+<td style="padding: 10px 12px"><div style="font-weight: 600">{{r.element}}</div><sc-if value="{{r.alt}}" hint-placeholder-val="{{ false }}"><div style="font-size: 12px; color: #9A3412">{{r.alt}}</div></sc-if></td>
+<td style="padding: 10px 12px; color: #5B6472">{{r.type}}</td>
+<td style="padding: 10px 12px"><div style="display: flex; align-items: center; gap: 8px"><div style="flex: 1; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden"><div style="{{r.bar}}"></div></div><span style="font-size: 12px; font-variant-numeric: tabular-nums">{{r.conf}}</span></div></td>
+<td style="padding: 6px 16px; white-space: nowrap">
+<sc-if value="{{r.needs}}" hint-placeholder-val="{{ false }}"><div style="display: flex; gap: 6px"><button style="height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: {{accent}}; color: #1F2329; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer">Accept</button><button style="height: 30px; padding: 0 10px; border: 1px solid #1F2329; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer">Edit</button><button style="height: 30px; padding: 0 10px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 12px; cursor: pointer">Reject</button></div></sc-if>
+<sc-if value="{{r.done}}" hint-placeholder-val="{{ true }}"><span style="display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #DBEAFE; color: #1E3A8A">Pre-accepted</span></sc-if>
+</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+<div style="display: flex; justify-content: space-between; padding: 10px 16px; border-top: 1px solid #EEF0F3; font-size: 12px; color: #5B6472"><span>1 to 7 of 30</span><span>Page 1 of 5</span></div>
+</section>
+
+<aside aria-label="What the agent did" style="flex: 1 1 320px; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 10px"><div aria-hidden="true" style="width: 32px; height: 32px; border-radius: 8px; background: #2E343E; color: {{accent}}; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px">AI</div><div><h2 style="margin: 0; font-size: 15px; font-weight: 700">What the agent did and why</h2><div style="font-size: 12px; color: #5B6472">MappingAgent · Azure OpenAI · prompt mapping v2</div></div></div>
+<p style="margin: 0; font-size: 13px; line-height: 1.55">Matched 30 columns against at most 10 glossary candidates each, using names, aliases and the profiled types. 26 scored 0.85 or more and are pre-accepted; you still approve them with the step. 4 are ties or low scores and need your decision.</p>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+<sc-for list="{{facts}}" as="f" hint-placeholder-count="4"><div style="background: #F7F8FA; border-radius: 6px; padding: 10px"><div style="font-size: 11px; color: #5B6472">{{f.k}}</div><div style="font-size: 16px; font-weight: 700">{{f.v}}</div></div></sc-for>
+</div>
+<div style="font-size: 13px; font-weight: 600">Issues carried from profiling</div>
+<ul style="margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: #1F2329">
+<li>RECORD_DATE is text in DD-MM-YYYY: a parse-date step is proposed in Transformations</li>
+<li>COUNTRY, REGION, F_PERIOD hold only placeholders (ALL, N/A)</li>
+<li>One duplicate key: 100001 SY Equity</li>
+</ul>
+<div style="font-size: 12px; color: #5B6472; border-top: 1px solid #EEF0F3; padding-top: 10px">No values from the file were sent to the model. Logged as call 4,812 · every decision is recorded with your name.</div>
+</aside>
+</div>
+
+<div style="position: sticky; bottom: 0; margin: 0 -32px; padding: 12px 32px; background: #FFFFFF; border-top: 1px solid #E5E7EB; display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+<a href="Main.dc.html" style="height: 40px; display: inline-flex; align-items: center; padding: 0 16px; border: 1px solid #1F2329; border-radius: 6px; color: #1F2329; font-weight: 600; font-size: 14px; text-decoration: none">Back to Glossary</a>
+<span style="margin-left: auto; font-size: 13px; color: #9A3412; font-weight: 600">4 items need a decision before you can continue</span>
+<button disabled style="height: 40px; padding: 0 20px; border: 0; border-radius: 6px; background: #E5E7EB; color: #4B5563; font: inherit; font-size: 14px; font-weight: 600">Approve and next: Transformations</button>
+</div>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FAB800","options":["#FAB800","#F59E0B","#2563EB"]},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#FAB800';
+    const base = 'display: flex; align-items: center; padding: 0 20px; height: 40px; font-size: 14px; text-decoration: none; ';
+    const item = (label, active, href) => ({ label, href: href || '#', style: base + (active ? 'background: ' + accent + '; color: #1F2329; font-weight: 600;' : 'color: #E5E7EB;') });
+    const nav = [
+      { group: 'Overview', items: [item('Operations overview', false, 'Main.dc.html')] },
+      { group: 'Onboard', items: [item('Onboardings', true), item('Feed registry'), item('Sources')] },
+      { group: 'Govern', items: [item('Business glossary'), item('Rules library'), item('Approvals')] },
+      { group: 'Operate', items: [item('Loads'), item('Exceptions'), item('Schedules')] },
+      { group: 'Masters', items: [item('Security master'), item('Reference data')] },
+      { group: 'Insights', items: [item('DQ dashboard'), item('Lineage'), item('Usage')] }
+    ];
+    const names = ['Upload', 'Profile', 'Glossary', 'Mapping', 'Transformations', 'Rules', 'Go-live', 'First load', 'Product ready'];
+    const steps = names.map((label, i) => {
+      const done = i < 3, cur = i === 3;
+      const col = done ? '#2563EB' : cur ? accent : '#E5E7EB';
+      return {
+        label,
+        mark: done ? '✓' : String(i + 1),
+        state: done ? 'Done' : cur ? 'Needs you' : 'Waiting',
+        bar: 'height: 4px; border-radius: 2px; background: ' + col + ';',
+        dot: 'width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; ' + (done ? 'background: #2563EB; color: #FFFFFF;' : cur ? 'background: ' + accent + '; color: #1F2329;' : 'background: #F1F2F4; color: #4B5563;'),
+        labelStyle: cur ? 'font-weight: 700;' : done ? 'font-weight: 500;' : 'color: #4B5563;'
+      };
+    });
+    const bar = (v, c) => 'width: ' + v + '%; height: 100%; background: ' + c + ';';
+    const need = (col, profile, element, alt, type, conf) => ({ col, profile, element, alt, type, conf: conf.toFixed(2), bar: bar(conf * 100, '#EA580C'), needs: true, done: false, rowStyle: 'border-top: 1px solid #EEF0F3; background: #FFF8F1;' });
+    const ok = (col, profile, element, type, conf) => ({ col, profile, element, alt: '', type, conf: conf.toFixed(2), bar: bar(conf * 100, '#2563EB'), needs: false, done: true, rowStyle: 'border-top: 1px solid #EEF0F3;' });
+    const rows = [
+      need('COUNTRY', 'placeholders only (ALL)', 'country_of_risk', 'Tie: country_of_domicile scores 0.61', 'text', 0.62),
+      need('BEST_SALES', 'decimal · 0 nulls', 'best_sales', 'Currency is not in the file: unit left empty', 'decimal · ?', 0.55),
+      need('F_PERIOD', 'placeholders only (N/A)', 'fiscal_period', 'Or: no element (column not loaded)', 'text', 0.58),
+      need('REGION', 'placeholders only (ALL)', 'region', 'New element proposed in Glossary', 'text', 0.71),
+      ok('TICKER_NAME', 'text · 1 duplicate', 'ticker', 'text', 0.98),
+      ok('RECORD_DATE', 'text dates DD-MM-YYYY', 'record_date', 'date', 0.91),
+      ok('BEST_PE_RATIO', 'decimal · 2 nulls', 'best_pe_ratio', 'decimal · times', 0.88)
+    ];
+    return {
+      accent, nav, steps, rows,
+      facts: [ { k: 'Columns', v: '30' }, { k: 'Candidates per column', v: '≤ 10' }, { k: 'Mean confidence', v: '0.89' }, { k: 'Time', v: '4.2 s' } ]
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Amaze — Operations overview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F5F7}
+a{color:#1D4ED8}a:hover{color:#1E3A8A}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #1F2329; min-height: 1180px; background: #F4F5F7; display: flex; flex-direction: column">
+
+<header style="height: 56px; background: #2E343E; display: flex; align-items: center; gap: 16px; padding: 0 20px; flex-wrap: wrap">
+<button aria-label="Toggle menu" style="background: none; border: 0; color: #E5E7EB; width: 44px; height: 44px; cursor: pointer; display: flex; align-items: center; justify-content: center"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg></button>
+<div style="display: flex; align-items: baseline; gap: 10px"><span style="font-size: 26px; font-weight: 700; color: {{accent}}; letter-spacing: -0.5px">amaze</span><span style="font-size: 13px; color: #C9CED6">for Capital Markets</span></div>
+<div style="flex: 1 1 240px; display: flex; justify-content: center"><label style="display: flex; align-items: center; gap: 8px; background: #3A414C; border-radius: 6px; padding: 0 12px; height: 36px; width: 100%; max-width: 440px; color: #C9CED6"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg><span style="position: absolute; left: -9999px">Search</span><input placeholder="Search feeds, elements, products…" style="background: none; border: 0; color: #FFFFFF; font: inherit; font-size: 14px; width: 100%; outline: none"></label></div>
+<button aria-label="Notifications, 3 new" style="position: relative; background: none; border: 0; color: #E5E7EB; width: 44px; height: 44px; cursor: pointer"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"></path><path d="M10 20a2 2 0 0 0 4 0"></path></svg><span style="position: absolute; top: 6px; right: 6px; background: {{accent}}; color: #1F2329; font-size: 11px; font-weight: 700; border-radius: 9px; padding: 0 5px">3</span></button>
+<label style="display: flex; align-items: center; gap: 8px; color: #C9CED6; font-size: 13px">Working as<select style="height: 36px; width: 200px; border-radius: 6px; border: 1px solid #4B5563; background: #3A414C; color: #FFFFFF; font: inherit; font-size: 14px; padding: 0 8px"><option>Olive Operator</option><option>Riley Requester</option></select></label>
+<div aria-hidden="true" style="width: 34px; height: 34px; border-radius: 50%; background: {{accent}}; color: #1F2329; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center">OO</div>
+</header>
+
+<div style="display: flex; flex: 1 1 auto; flex-wrap: wrap">
+<nav aria-label="Main" style="width: 236px; flex: 0 0 236px; background: #2E343E; padding: 12px 0 24px; display: flex; flex-direction: column; gap: 2px">
+<sc-for list="{{nav}}" as="g" hint-placeholder-count="6">
+<div style="padding: 14px 20px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: #9CA3AF">{{g.group}}</div>
+<sc-for list="{{g.items}}" as="it" hint-placeholder-count="3">
+<a href="#" style="{{it.style}}"><span>{{it.label}}</span><sc-if value="{{it.badge}}" hint-placeholder-val="{{ false }}"><span style="margin-left: auto; background: #3A414C; color: #F3F4F6; border-radius: 10px; font-size: 11px; font-weight: 600; padding: 1px 8px">{{it.badge}}</span></sc-if></a>
+</sc-for>
+</sc-for>
+</nav>
+
+<main style="flex: 999 1 560px; min-width: 0; padding: 20px 32px 40px; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px">
+<div style="flex: 1 1 360px">
+<div style="font-size: 12px; color: #5B6472">Home / Overview</div>
+<h1 style="margin: 4px 0 0; font-size: 22px; font-weight: 700">Operations overview</h1>
+</div>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #5B6472">Period<select style="height: 36px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 14px; padding: 0 8px; color: #1F2329"><option>Last 7 days</option><option>Today</option><option>Last 30 days</option></select></label>
+<a href="Workspace.dc.html" style="height: 40px; display: inline-flex; align-items: center; gap: 8px; padding: 0 18px; border-radius: 6px; background: {{accent}}; color: #1F2329; font-weight: 600; font-size: 14px; text-decoration: none">+ Onboard a file</a>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+<sc-for list="{{kpis}}" as="k" hint-placeholder-count="4">
+<div style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px">
+<div style="font-size: 13px; color: #5B6472">{{k.label}}</div>
+<div style="font-size: 30px; font-weight: 700; letter-spacing: -0.5px">{{k.value}}</div>
+<div style="font-size: 12px; color: #5B6472">{{k.sub}}</div>
+</div>
+</sc-for>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<section style="grid-column: span 2; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: #FEF1CC; border-bottom: 1px solid #F3D98A">
+<h2 style="margin: 0; font-size: 15px; font-weight: 700">Waiting for your decision</h2>
+<span style="background: #1F2329; color: #FFFFFF; border-radius: 10px; font-size: 12px; font-weight: 600; padding: 1px 9px">7</span>
+<span style="margin-left: auto; font-size: 12px; color: #5B4A12">Agents propose · you decide · rules execute</span>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse; font-size: 13px">
+<thead><tr style="background: #FFF8E5; text-align: left">
+<th style="padding: 10px 16px; font-weight: 600">Feed</th><th style="padding: 10px 12px; font-weight: 600">Step</th><th style="padding: 10px 12px; font-weight: 600">Proposal</th><th style="padding: 10px 12px; font-weight: 600">Agent</th><th style="padding: 10px 12px; font-weight: 600; width: 130px">Confidence</th><th style="padding: 10px 16px"></th>
+</tr></thead>
+<tbody>
+<sc-for list="{{queue}}" as="q" hint-placeholder-count="5">
+<tr style="border-top: 1px solid #EEF0F3">
+<td style="padding: 10px 16px; font-weight: 600">{{q.feed}}</td>
+<td style="padding: 10px 12px; color: #5B6472">{{q.step}}</td>
+<td style="padding: 10px 12px">{{q.proposal}}</td>
+<td style="padding: 10px 12px; color: #5B6472">{{q.agent}}</td>
+<td style="padding: 10px 12px"><div style="display: flex; align-items: center; gap: 8px"><div style="flex: 1; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden"><div style="{{q.bar}}"></div></div><span style="font-variant-numeric: tabular-nums; font-size: 12px">{{q.conf}}</span></div></td>
+<td style="padding: 6px 16px; text-align: right; white-space: nowrap"><a href="Workspace.dc.html" style="display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border: 1px solid #1F2329; border-radius: 6px; color: #1F2329; font-weight: 600; text-decoration: none">Review</a></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</section>
+
+<section style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; font-size: 15px; font-weight: 700">Data quality</h2>
+<div style="display: flex; align-items: center; gap: 18px">
+<div role="img" aria-label="Rows passing all rules: 96.4 percent" style="width: 116px; height: 116px; border-radius: 50%; background: conic-gradient(#2563EB 0 96.4%, #EA580C 96.4% 100%); display: flex; align-items: center; justify-content: center"><div style="width: 80px; height: 80px; border-radius: 50%; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center"><span style="font-size: 20px; font-weight: 700">96.4%</span><span style="font-size: 11px; color: #5B6472">pass</span></div></div>
+<div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px">
+<div style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 10px; height: 10px; background: #2563EB; border-radius: 2px"></span>Pass · 41,218 rows</div>
+<div style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 10px; height: 10px; background: #EA580C; border-radius: 2px"></span>Flagged · 1,537 rows</div>
+</div>
+</div>
+<div style="font-size: 13px; font-weight: 600">Flagged rows by feed</div>
+<sc-for list="{{dq}}" as="d" hint-placeholder-count="4">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; justify-content: space-between; font-size: 12px"><span>{{d.feed}}</span><span style="color: #5B6472">{{d.n}}</span></div>
+<div style="height: 8px; background: #F1F2F4; border-radius: 4px; overflow: hidden"><div style="{{d.bar}}"></div></div>
+</div>
+</sc-for>
+</section>
+</div>
+
+<section style="background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex-wrap: wrap">
+<h2 style="margin: 0; font-size: 15px; font-weight: 700">Recent loads</h2>
+<span style="font-size: 12px; color: #5B6472">Every load: arrival check → run → certify → release</span>
+<button style="margin-left: auto; height: 32px; padding: 0 12px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 13px; cursor: pointer">Columns</button>
+<button style="height: 32px; padding: 0 12px; border: 1px solid #D1D5DB; border-radius: 6px; background: #FFFFFF; font: inherit; font-size: 13px; cursor: pointer">Export CSV</button>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse; font-size: 13px">
+<thead>
+<tr style="background: #FEF1CC; text-align: left"><th style="padding: 10px 16px; font-weight: 600">Feed</th><th style="padding: 10px 12px; font-weight: 600">Source</th><th style="padding: 10px 12px; font-weight: 600">Arrived</th><th style="padding: 10px 12px; font-weight: 600; text-align: right">Rows</th><th style="padding: 10px 12px; font-weight: 600; text-align: right">Flagged</th><th style="padding: 10px 12px; font-weight: 600; text-align: right">Trust score</th><th style="padding: 10px 16px; font-weight: 600">Status</th></tr>
+<tr style="background: #FFF8E5"><sc-for list="{{filters}}" as="f" hint-placeholder-count="7"><td style="padding: 6px 12px"><input aria-label="{{f}}" placeholder="Filter" style="width: 100%; box-sizing: border-box; height: 28px; border: 1px solid #E5D3A0; border-radius: 4px; background: #FFFFFF; font: inherit; font-size: 12px; padding: 0 8px"></td></sc-for></tr>
+</thead>
+<tbody>
+<sc-for list="{{loads}}" as="l" hint-placeholder-count="5">
+<tr style="border-top: 1px solid #EEF0F3">
+<td style="padding: 10px 16px; font-weight: 600">{{l.feed}}</td>
+<td style="padding: 10px 12px; color: #5B6472">{{l.source}}</td>
+<td style="padding: 10px 12px; color: #5B6472">{{l.at}}</td>
+<td style="padding: 10px 12px; text-align: right; font-variant-numeric: tabular-nums">{{l.rows}}</td>
+<td style="padding: 10px 12px; text-align: right; font-variant-numeric: tabular-nums">{{l.flagged}}</td>
+<td style="padding: 10px 12px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums">{{l.score}}</td>
+<td style="padding: 10px 16px"><span style="{{l.chip}}">{{l.status}}</span></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-top: 1px solid #EEF0F3; font-size: 12px; color: #5B6472"><span>1 to 5 of 42</span><span>Page 1 of 9</span></div>
+</section>
+<p style="margin: 0; font-size: 12px; color: #5B6472">Sample figures for the mockup only.</p>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FAB800","options":["#FAB800","#F59E0B","#2563EB"]},"$preview":{"width":1440,"height":1180}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#FAB800';
+    const base = 'display: flex; align-items: center; gap: 10px; padding: 0 20px; height: 40px; font-size: 14px; text-decoration: none; ';
+    const item = (label, active, badge) => ({ label, badge: badge || '', style: base + (active ? 'background: ' + accent + '; color: #1F2329; font-weight: 600;' : 'color: #E5E7EB;') });
+    const nav = [
+      { group: 'Overview', items: [item('Operations overview', true)] },
+      { group: 'Onboard', items: [item('Onboardings', false, '2'), item('Feed registry'), item('Sources')] },
+      { group: 'Govern', items: [item('Business glossary'), item('Rules library'), item('Approvals', false, '7')] },
+      { group: 'Operate', items: [item('Loads'), item('Exceptions', false, '12'), item('Schedules')] },
+      { group: 'Masters', items: [item('Security master'), item('Reference data')] },
+      { group: 'Insights', items: [item('DQ dashboard'), item('Lineage'), item('Usage')] }
+    ];
+    const bar = (v, c) => 'width: ' + v + '%; height: 100%; background: ' + c + '; border-radius: 3px;';
+    const queue = [
+      { feed: 'syn_security_master', step: 'Mapping', proposal: 'COUNTRY → country_of_risk (tie with country_of_domicile)', agent: 'MappingAgent', conf: '0.62', bar: bar(62, '#EA580C') },
+      { feed: 'syn_security_master', step: 'Mapping', proposal: 'BEST_SALES → best_sales (currency not in file)', agent: 'MappingAgent', conf: '0.55', bar: bar(55, '#EA580C') },
+      { feed: 'syn_vendor_eod_prices', step: 'Rules', proposal: 'close_price not negative · back-test 0 of 1,240 flagged', agent: 'RuleRecommender', conf: '0.93', bar: bar(93, '#2563EB') },
+      { feed: 'syn_vendor_eod_prices', step: 'Glossary', proposal: 'New element: adjusted_close (decimal, price)', agent: 'GlossaryBuilder', conf: '0.88', bar: bar(88, '#2563EB') },
+      { feed: 'syn_fx_rates', step: 'Go-live', proposal: 'Go-live summary · expected trust score 99.1', agent: 'ReviewSummariser', conf: '—', bar: bar(0, '#2563EB') }
+    ];
+    const dq = [
+      { feed: 'syn_security_master', n: '812', bar: bar(100, '#EA580C') },
+      { feed: 'syn_vendor_eod_prices', n: '401', bar: bar(49, '#EA580C') },
+      { feed: 'syn_custody_positions', n: '236', bar: bar(29, '#EA580C') },
+      { feed: 'syn_fx_rates', n: '88', bar: bar(11, '#EA580C') }
+    ];
+    const chip = (bg, fg) => 'display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; background: ' + bg + '; color: ' + fg + ';';
+    const released = chip('#DBEAFE', '#1E3A8A'), held = chip('#FFEDD5', '#9A3412'), quarantined = chip('#E5E7EB', '#374151');
+    const loads = [
+      { feed: 'syn_vendor_eod_prices', source: 'Synthetic Market Data Co', at: '23 Nov 09:12', rows: '1,240', flagged: '6', score: '99.5', status: 'Released', chip: released },
+      { feed: 'syn_fx_rates', source: 'Synthetic FX Ltd', at: '23 Nov 08:40', rows: '312', flagged: '0', score: '100.0', status: 'Released', chip: released },
+      { feed: 'syn_custody_positions', source: 'Synthetic Custodian A', at: '23 Nov 07:55', rows: '4,806', flagged: '236', score: '95.1', status: 'Released', chip: released },
+      { feed: 'syn_security_master', source: 'Upload · Olive Operator', at: '22 Nov 18:03', rows: '70', flagged: '9', score: '87.1', status: 'Held · below 90', chip: held },
+      { feed: 'syn_vendor_eod_prices', source: 'Synthetic Market Data Co', at: '22 Nov 09:10', rows: '1,240', flagged: '—', score: '—', status: 'Quarantined · resent file', chip: quarantined }
+    ];
+    return {
+      accent, nav, queue, dq, loads,
+      filters: ['Filter feed', 'Filter source', 'Filter arrived', 'Filter rows', 'Filter flagged', 'Filter trust score', 'Filter status'],
+      kpis: [
+        { label: 'Feeds live', value: '12', sub: '2 onboarding · 1 paused' },
+        { label: 'Loads this week', value: '42', sub: '39 released · 2 held · 1 quarantined' },
+        { label: 'Average trust score', value: '97.8', sub: 'Release threshold 90' },
+        { label: 'Open exceptions', value: '12', sub: '5 with a proposed fix' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
