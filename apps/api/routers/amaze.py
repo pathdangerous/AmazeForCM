@@ -10,13 +10,13 @@ with no connection held, then writes; the summary reads, ends the transaction, c
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Annotated, Literal
+from datetime import date, datetime
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StringConstraints
 from sqlalchemy.orm import Session
 
@@ -105,6 +105,9 @@ from core.steps.s11_go_live import (
     go_live_plan,
 )
 from core.steps.s11_go_live import record_summary as record_go_live_summary  # s02 has a record_summary too
+from core.engine.codegen import FileDiff, diff_versions
+from core.repositories.code_versions import CodeVersionNotFound, CodeVersionRepository
+from core.steps.codegen import code_for_feed
 from core.steps.completion import CompletionReport, completion_report
 from core.steps.s02_profile import decide_profile_action
 from core.steps.s02_profile import ProfileResult, ProfileSummary, profile_plan, record_profile, record_summary, \
@@ -270,6 +273,83 @@ def feed_completion(feed_id: UUID, session: DbSession) -> CompletionReport:
     def work():
         FeedRepository(session).get(feed_id)  # FeedNotFound: 404
         return completion_report(session, feed_id)
+
+    return read(session, work)
+
+
+class CodeVersionSummary(BaseModel):
+    version: int
+    sha256: str
+    approved_by: str
+    created_at: datetime
+    paths: list[str]
+    test_load_result: dict[str, Any]
+
+
+class CodeVersionDetail(CodeVersionSummary):
+    files: dict[str, str]
+
+
+class CodePreview(BaseModel):
+    """The code the engine would run for the configuration now: what the owner approves, never stored by this route."""
+
+    sha256: str
+    files: dict[str, str]
+    differs_from_latest: bool
+
+
+class CodeDiff(BaseModel):
+    from_version: int
+    to_version: int | None  # None: the preview of the configuration now
+    files: list[FileDiff]
+
+
+def _summary(v) -> dict[str, Any]:
+    return {"version": v.version, "sha256": v.sha256, "approved_by": v.approved_by, "created_at": v.created_at,
+            "paths": sorted(v.files), "test_load_result": v.test_load_result}
+
+
+@router.get("/feeds/{feed_id}/code", response_model=list[CodeVersionSummary])
+def code_versions(feed_id: UUID, session: DbSession) -> list[CodeVersionSummary]:
+    """Phase 7.12, T3: the feed's generated code versions, oldest first. Read only."""
+    def work():
+        FeedRepository(session).get(feed_id)
+        return [CodeVersionSummary(**_summary(v)) for v in CodeVersionRepository(session).list_for_feed(feed_id)]
+
+    return read(session, work)
+
+
+@router.get("/feeds/{feed_id}/code/preview", response_model=CodePreview)
+def code_preview(feed_id: UUID, session: DbSession) -> CodePreview:
+    def work():
+        FeedRepository(session).get(feed_id)
+        code = code_for_feed(session, feed_id)
+        latest = CodeVersionRepository(session).latest(feed_id)
+        return CodePreview(sha256=code.sha256, files=code.files, differs_from_latest=latest is None or latest.sha256 != code.sha256)
+
+    return read(session, work)
+
+
+@router.get("/feeds/{feed_id}/code/diff", response_model=CodeDiff)
+def code_diff(feed_id: UUID, session: DbSession, from_version: Annotated[int, Query(alias="from", ge=1)],
+              to_version: Annotated[int | None, Query(alias="to", ge=1)] = None) -> CodeDiff:
+    """Which files differ between two versions (`to` left out: the configuration now), with a unified diff of each."""
+    def work():
+        FeedRepository(session).get(feed_id)
+        repo = CodeVersionRepository(session)
+        old = repo.get(feed_id, from_version).files
+        new = repo.get(feed_id, to_version).files if to_version else code_for_feed(session, feed_id).files
+        return CodeDiff(from_version=from_version, to_version=to_version, files=diff_versions(old, new))
+
+    return read(session, work)
+
+
+@router.get("/feeds/{feed_id}/code/{version}", response_model=CodeVersionDetail)
+def code_version(feed_id: UUID, version: int, session: DbSession) -> CodeVersionDetail:
+    def work():
+        FeedRepository(session).get(feed_id)
+        v = CodeVersionRepository(session).get(feed_id, version)
+        return CodeVersionDetail(**_summary(v), files=v.files)
 
     return read(session, work)
 

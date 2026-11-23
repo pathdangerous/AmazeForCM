@@ -247,8 +247,12 @@ def go_live(session, feed_id: UUID, *, owner: str = "dev-data-owner", hypercare_
         payload={"mapping_ids": [str(i) for i in mappings], "rule_ids": [str(i) for i in rules],
                  "transformation_ids": [str(i) for i in transformations], "test_load_id": str(test_load.id), "summary": "Synthetic.", "highlights": [], "risks": []})
     repo.record_decision(proposal.id, user=dev_user_for("data_owner"), decision="approved")
+    from core.steps.codegen import store_code_version  # T3: every go-live pins the code generated from its configuration
+
+    code = store_code_version(session, feed_id=feed_id, approved_by=owner, test_load_id=test_load.id)
     return GoLiveRepository(session).add_version(
         feed_id=feed_id, proposal_id=proposal.id, approved_by=owner, mapping_ids=mappings, rule_ids=rules,
+        code_version_id=code.id,
         test_load_id=test_load.id, hypercare_until=date.today() + timedelta(days=hypercare_days),
         transformation_ids=transformations)
 

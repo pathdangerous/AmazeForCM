@@ -436,6 +436,18 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     assert done["session"]["status"] == "done" and done["current_step"] == "product_ready"
     product = ProductRepository(w.session).for_feed(UUID(confirmed["feed_id"]))
     assert product is not None and product.visibility == "restricted"  # the product has the latest registration's
+    # T3: the go-live approval stored code version 1 and pinned it; the files are what the engine runs
+    feed_url = f"/api/amaze/feeds/{confirmed['feed_id']}/code"
+    versions = (await w.client.get(feed_url, headers=OP)).json()
+    assert [v["version"] for v in versions] == [1] and versions[0]["approved_by"] == "dev-operator"
+    assert {"load.sql", "curated.sql", "staging_ddl.sql", "README.md"} <= set(versions[0]["paths"])
+    detail = (await w.client.get(f"{feed_url}/1", headers=OP)).json()
+    preview = (await w.client.get(f"{feed_url}/preview", headers=OP)).json()
+    assert detail["files"] == preview["files"] and preview["differs_from_latest"] is False
+    assert (await w.client.get(f"{feed_url}/diff", params={"from": 1}, headers=OP)).json()["files"] == []
+    assert (await w.client.get(f"{feed_url}/9", headers=OP)).status_code == 404
+    assert (await w.client.get(f"{feed_url}/diff", params={"from": 1, "to": 9}, headers=OP)).status_code == 404
+    w.session.rollback()
     loaded = {f["label"]: f["value"] for f in (await call(w, "GET", f"/{oid}", params={"step": "first_load"}))[
         "inputs"]["facts"]}
     assert loaded["Load"] == "released" and loaded["Outcome"] == "released" and loaded["Product"] == product.code

@@ -6,6 +6,7 @@ import {
   type Owner, type SignoffOutcome, type User,
 } from "../api";
 import { formatWhen } from "../theme";
+import CodeView from "./CodeView";
 import FeedLifecycle from "./FeedLifecycle";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
@@ -579,6 +580,9 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("rules")} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []} people={people}
                          onChange={onChange} {...reporter("go-live")} />
+          <Section name="code" title="Generated code" result={result}>
+            <CodeView feedId={feed.id} devUser={devUser} />
+          </Section>
           <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("loads")} />
         </>
       )}

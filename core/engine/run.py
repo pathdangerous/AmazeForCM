@@ -39,7 +39,16 @@ from sqlalchemy.orm import Session
 
 from core.domain.load import STAGES, Load, LoadStageDraft, Stage, StandardRecordDraft
 from core.domain.transformation import TransformStep
-from core.engine.curate import Found, curated_rows_sql, curated_sql, match_header, uncast_sql
+from core.engine.curate import (
+    Found,
+    curated_rows_sql,
+    curated_sql,
+    duplicate_probe_sql,
+    keep_last_sql,
+    key_columns_found,
+    match_header,
+    uncast_sql,
+)
 from core.engine.passthrough import PASS_THROUGH, PASS_THROUGH_APPLIED, json_value
 from core.engine.sandbox import FileUnreadable, RuleFailed, RuleRefused, Sandbox
 from core.engine.transform import label_of, quoted
@@ -137,6 +146,7 @@ class LoadOutcome(BaseModel):
     stages: list[RunResult]
     records: list[StandardRecordDraft]
     timings: dict[str, tuple[datetime, datetime]]
+    executed_sql: list[str] = Field(default_factory=list)  # every statement the sandbox ran (T3: code shown = code run)
 
     @property
     def failed(self) -> FailedRolledBack | None:
@@ -169,24 +179,40 @@ def plan_load(session: Session, load_id: UUID) -> LoadPlan:
     feed = FeedRepository(session).get(load.feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}; only a registered feed is loaded")
-    glossary = GlossaryRepository(session)
-    mappings = MappingRepository(session).current_for_feed(feed.id)
-    rules = RuleRepository(session).current_for_feed(feed.id)
-    transformations = TransformationRepository(session).current_for_feed(feed.id)
+    config = configuration_of(session, feed.id)
     changed = False
     if load.purpose == "scheduled":  # assumption 15: loaded only as the latest go-live approved it
         live = GoLiveRepository(session).latest(feed.id)
-        changed = (live is None or set(live.mapping_ids) != {m.id for m in mappings}
-                   or set(live.rule_ids) != {r.id for r in rules}
-                   or set(live.transformation_ids) != {t.id for t in transformations})
-    return LoadPlan(
-        load=load, configuration_changed=changed,
+        changed = (live is None or set(live.mapping_ids) != {c.mapping_id for c in config.columns}
+                   or set(live.rule_ids) != {r.rule_id for r in config.rules}
+                   or set(live.transformation_ids) != {t.transformation_id for t in config.transformations})
+    return LoadPlan(load=load, configuration_changed=changed, columns=config.columns, rules=config.rules,
+                    transformations=config.transformations, key_policy=config.key_policy)
+
+
+class Configuration(BaseModel):
+    """The approved configuration a load runs (and the code generated from it): the one place it is read (T3)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    columns: list[MappedColumn]
+    rules: list[RuleToRun]
+    transformations: list[TransformationToRun]
+    key_policy: KeyPolicyToRun | None
+
+
+def configuration_of(session: Session, feed_id: UUID) -> Configuration:
+    """Read only: the current mappings, rules and transformations and the key policy of the feed."""
+    glossary = GlossaryRepository(session)
+    mappings = MappingRepository(session).current_for_feed(feed_id)
+    return Configuration(
         columns=[MappedColumn(source_field=m.source_field, element_key=m.element_key, mapping_id=m.id,
                               data_type=glossary.get_current(m.element_key).data_type) for m in mappings],
-        rules=[RuleToRun(rule_id=r.id, rule_key=r.rule_key, sql=r.sql) for r in rules],
+        rules=[RuleToRun(rule_id=r.id, rule_key=r.rule_key, sql=r.sql)
+               for r in RuleRepository(session).current_for_feed(feed_id)],
         transformations=[TransformationToRun(transformation_id=t.id, source_field=t.source_field, steps=list(t.steps))
-                         for t in transformations],
-        key_policy=_key_policy(session, feed.id))
+                         for t in TransformationRepository(session).current_for_feed(feed_id)],
+        key_policy=_key_policy(session, feed_id))
 
 
 def _key_policy(session: Session, feed_id: UUID) -> KeyPolicyToRun | None:
@@ -226,7 +252,7 @@ def execute_load(plan: LoadPlan, *, blob_store: BlobStore, rule_timeout_seconds:
                     break
     finally:
         box.close()
-    return LoadOutcome(stages=stages, records=records, timings=timings)
+    return LoadOutcome(stages=stages, records=records, timings=timings, executed_sql=list(box.executed))
 
 
 def _raw(plan: LoadPlan, blobs: BlobStore, box: Sandbox, path: Path, state: dict) -> RunResult:
@@ -304,19 +330,12 @@ def _duplicates(plan: LoadPlan, box: Sandbox, found: list[Found], rows: int, det
     policy = plan.key_policy
     if policy is None:
         return None
-    by_name = {name.lower(): f for f in found for name in (f.source_field, f.header)}
-    keys = [by_name[c.lower()] for c in policy.key_columns if c.lower() in by_name]
-    ignored = [c for c in policy.key_columns if c.lower() not in by_name]
+    keys, ignored = key_columns_found(found, policy.key_columns)
     if ignored:
         detail["key_columns_ignored"] = ignored
     if not keys:
         return None
-    columns = ", ".join(quoted(k.element_key) for k in keys)
-    present = " AND ".join(f"{quoted(k.element_key)} IS NOT NULL" for k in keys)
-    shared = box.execute(
-        f"SELECT _row, {columns}, max(_row) OVER (PARTITION BY {columns}) AS last_row FROM "
-        f"(SELECT *, count(*) OVER (PARTITION BY {columns}) AS n FROM curated WHERE {present}) WHERE n > 1 "
-        "ORDER BY _row")
+    shared = box.execute(duplicate_probe_sql(keys))
     if not shared:
         return None
     groups: dict[tuple, int] = {}
@@ -331,9 +350,7 @@ def _duplicates(plan: LoadPlan, box: Sandbox, found: list[Found], rows: int, det
                        f"First: {text}", rows_in=rows, count=len(groups), rows=len(shared), first=first)
     if policy.policy == "keep_last":
         dropped = [int(row) for row, *rest in shared if int(row) != int(rest[-1])]
-        box.execute(
-            f"DELETE FROM curated WHERE _row IN (SELECT _row FROM (SELECT _row, max(_row) OVER "
-            f"(PARTITION BY {columns}) AS last_row FROM curated WHERE {present}) WHERE _row <> last_row)")
+        box.execute(keep_last_sql(keys))
         state["rows"] = rows - len(dropped)
         listed_rows = {"count": len(dropped), "rows": dropped[:MAX_DROPPED_LISTED]}
         if len(dropped) > MAX_DROPPED_LISTED:

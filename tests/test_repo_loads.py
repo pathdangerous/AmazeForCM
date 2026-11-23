@@ -309,7 +309,7 @@ def test_a_go_live_needs_an_approved_review_summary_of_the_feed(db_session, regi
     repo = GoLiveRepository(db_session)
     load = a_load(db_session, registered.id, "loaded")
     fields = {"feed_id": registered.id, "approved_by": "dev-data-owner", "mapping_ids": [], "rule_ids": [],
-              "test_load_id": load.id, "hypercare_until": date.today()}
+              "test_load_id": load.id, "hypercare_until": date.today(), "code_version_id": uuid.uuid4()}
     summary = make_proposal(kind="review_summary", roles=("data_owner",), feed_id=registered.id)
     with pytest.raises(ProposalNotApproved):
         repo.add_version(proposal_id=summary.id, **fields)
@@ -336,4 +336,5 @@ def test_a_go_live_from_another_feeds_summary_is_refused(db_session, registered,
     with pytest.raises(ProposalForAnotherFeed):
         GoLiveRepository(db_session).add_version(
             feed_id=registered.id, proposal_id=proposal.id, approved_by="dev-data-owner", mapping_ids=[],
-            rule_ids=[], test_load_id=a_load(db_session, registered.id, "loaded").id, hypercare_until=date.today())
+            rule_ids=[], test_load_id=a_load(db_session, registered.id, "loaded").id, hypercare_until=date.today(),
+            code_version_id=uuid.uuid4())  # refused for the proposal before the pin is looked at

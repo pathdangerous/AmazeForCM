@@ -755,6 +755,29 @@ class FeedGoLiveRow(Base):
                                                                 server_default=text("'{}'::uuid[]"))
     test_load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
     hypercare_until: Mapped[date] = mapped_column(Date)
+    # 0030 (phase 7.12, T3): the code version this approval pinned (the trigger requires it on every new go-live)
+    code_version_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("code_versions.id"))
+
+
+class CodeVersionRow(Base):
+    """T3: the generated code of a feed (staging DDL, load and curated SQL, rule SQL, documentation) at one go-live
+    approval. Append-only (migration 0030); `sha256` must be the hash of `files` (the trigger recomputes it)."""
+
+    __tablename__ = "code_versions"
+    __table_args__ = (UniqueConstraint("feed_id", "version"),)
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(Text)
+    files: Mapped[dict[str, str]] = mapped_column(JSONB)
+    mapping_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    rule_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    transformation_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    test_load_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("loads.id"))
+    test_load_result: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    approved_by: Mapped[str] = mapped_column(Text)
 
 
 class LoadStageRow(Base):

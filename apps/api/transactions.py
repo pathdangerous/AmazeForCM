@@ -113,7 +113,9 @@ FORBIDDEN = FORBIDDEN + (NotOwnerOrOperations,)
 from core.repositories.errors import FeedHasProduct  # noqa: E402
 
 CONFLICTS = CONFLICTS + (FeedHasProduct,)
-NOT_FOUND = NOT_FOUND + (OnboardingNotFound,)
+from core.repositories.code_versions import CodeVersionNotFound  # noqa: E402
+
+NOT_FOUND = NOT_FOUND + (OnboardingNotFound, CodeVersionNotFound)
 # phase 7.12, T7: a manual item. A pending item on the column, or a mapped column left out, is a conflict (409); an item
 # that is not valid (a column the file lacks, an element that does not exist, a rule that fails its back-test) is 422.
 from core.repositories.errors import ColumnAlreadyMapped, ItemAlreadyPending, ManualItemRefused  # noqa: E402

@@ -231,7 +231,8 @@ def _feed_go_lives_row(db_session, request):
     from tests.test_db_load_guards import loaded_load
 
     feed = _phase_6_feed(db_session)
-    world = SimpleNamespace(feed=feed, mappings=[uuid.uuid4()], rules=[], load=loaded_load(db_session, feed))
+    world = SimpleNamespace(feed=feed, mappings=[uuid.uuid4()], rules=[], load=loaded_load(db_session, feed),
+                           s=db_session)
     proposal = summary_proposal(db_session, world)
     return "feed_go_lives", db_session.execute(text(GO_LIVE), go_live_params(world, proposal)).scalar_one()
 

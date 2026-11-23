@@ -24,7 +24,7 @@ from tests.step_chains import run_scheduled
 from tests.test_onboarding import approve, current, make_world, run_to, work
 
 # table -> how its rows of feed :f are found. Direct: a feed_id column. Children: through their parent row.
-DIRECT = ("feed_go_lives", "feed_key_policies", "feed_profiles", "feed_registrations", "feed_signoffs", "glossary_runs",
+DIRECT = ("code_versions", "feed_go_lives", "feed_key_policies", "feed_profiles", "feed_registrations", "feed_signoffs", "glossary_runs",
           "load_certifications", "loads", "mappings", "onboarding_sessions", "products", "proposals", "rules",
           "source_choices", "source_fetches", "standard_records", "transformations", "upload_sources",
           "feed_status_events")

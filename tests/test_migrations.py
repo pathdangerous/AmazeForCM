@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0029"  # old: "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0030"  # old: "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -1192,3 +1192,37 @@ def test_0028_downgrade_refuses_while_a_manual_item_exists(scratch_schema):
              "p": '{"rule_key": "r", "sql": "SELECT 1", "description": "d", "backtest": {"status": "not_back_tested"}}'})
     with pytest.raises(DBAPIError, match="migration 0028 cannot be downgraded"):
         command.downgrade(config, "0027")
+
+
+# ---------------------------------------------------------------- 0030 (phase 7.12, T3): code versions
+
+
+def _0030_state(engine):
+    with engine.connect() as connection:
+        return {
+            "tables": set(inspect(connection).get_table_names()),
+            "go_live_columns": sorted(c["name"] for c in inspect(connection).get_columns("feed_go_lives")),
+            "delete_function": connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_delete_feed' "
+                "AND p.pronamespace = current_schema()::regnamespace")).scalar_one(),
+            "functions": set(connection.execute(text(
+                "SELECT proname FROM pg_proc WHERE proname IN ('amaze_guard_code_version', "
+                "'amaze_go_live_pins_code_version') AND pronamespace = current_schema()::regnamespace")).scalars()),
+        }
+
+
+def test_0030_adds_code_versions_and_downgrade_restores_0029(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0029")
+    before = _0030_state(engine)
+    command.upgrade(config, "0030")
+    up = _0030_state(engine)
+    assert "code_versions" in up["tables"] and "code_versions" not in before["tables"]
+    assert "code_version_id" in up["go_live_columns"] and "code_version_id" not in before["go_live_columns"]
+    assert "DELETE FROM code_versions" in up["delete_function"] and "code_versions" not in before["delete_function"]
+    assert up["functions"] == {"amaze_guard_code_version", "amaze_go_live_pins_code_version"} and not before["functions"]
+    command.downgrade(config, "0029")
+    assert _0030_state(engine) == before
+    command.upgrade(config, "0030")
+    assert _0030_state(engine) == up

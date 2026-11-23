@@ -26,8 +26,8 @@ from tests.test_db_load_guards import loaded_load, new_load
 from tests.test_db_onboarding_guards import _branch_off, answered_by
 
 GO_LIVE = ("INSERT INTO feed_go_lives (feed_id, version, proposal_id, approved_by, mapping_ids, rule_ids, "
-           "test_load_id, hypercare_until) VALUES (:feed, :version, :proposal, :by, CAST(:mappings AS uuid[]), "
-           "CAST(:rules AS uuid[]), :load, :until) RETURNING id")
+           "test_load_id, hypercare_until, code_version_id) VALUES (:feed, :version, :proposal, :by, "
+           "CAST(:mappings AS uuid[]), CAST(:rules AS uuid[]), :load, :until, :code) RETURNING id")
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def world(s):
     """A registered feed (owner dev-data-owner), a configuration to pin and a loaded test load."""
     feed = a_registered_feed(s, "syn_go_live_guards")
     return SimpleNamespace(feed=feed, mappings=[uuid.uuid4(), uuid.uuid4()], rules=[uuid.uuid4()],
-                           load=loaded_load(s, feed))
+                           load=loaded_load(s, feed), s=s)
 
 
 def summary_payload(w, **over):
@@ -65,10 +65,25 @@ def summary_proposal(s, w, *, feed=None, decision="approved", kind="review_summa
     return repo.get(proposal.id)
 
 
+EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # the hash of no files
+
+
+def a_code_version(s, p) -> uuid.UUID:
+    """0030: every new go-live pins a code version of its feed with the same owner, load and ids (empty files)."""
+    version = s.scalar(text("SELECT COALESCE(max(version), 0) + 1 FROM code_versions WHERE feed_id = :f"), {"f": p["feed"]})
+    return s.execute(text(
+        "INSERT INTO code_versions (feed_id, version, sha256, files, mapping_ids, rule_ids, transformation_ids, "
+        "test_load_id, test_load_result, approved_by) VALUES (:feed, :v, :h, CAST('{}' AS jsonb), CAST(:mappings AS uuid[]), "
+        "CAST(:rules AS uuid[]), CAST(:tr AS uuid[]), :load, CAST('{}' AS jsonb), :by) RETURNING id"),
+        {"feed": p["feed"], "v": version, "h": EMPTY_SHA256, "mappings": p["mappings"], "rules": p["rules"],
+         "tr": p.get("transformations", []), "load": p["load"], "by": p["by"]}).scalar_one()
+
+
 def go_live_params(w, proposal, **over):
-    return {"feed": w.feed, "version": 1, "proposal": proposal.id if proposal is not None else None,
-            "by": "dev-data-owner", "mappings": w.mappings, "rules": w.rules, "load": w.load,
-            "until": date.today() + timedelta(days=10), **over}
+    params = {"feed": w.feed, "version": 1, "proposal": proposal.id if proposal is not None else None,
+              "by": "dev-data-owner", "mappings": w.mappings, "rules": w.rules, "load": w.load,
+              "until": date.today() + timedelta(days=10), **over}
+    return {**params, "code": a_code_version(w.s, params)}
 
 
 def guard(message):
@@ -108,7 +123,7 @@ def test_the_go_live_is_approved_by_the_owner_named_at_registration(s, world):
     owner (phase 4 note 4: the owner's first decision is the named owner's)."""
     other = FeedRepository(s).create_candidate(code="syn_go_live_named", name="Named owner").id
     registered_feed(s, other, owner_id="dev-someone-else")
-    w = SimpleNamespace(feed=other, mappings=world.mappings, rules=world.rules, load=loaded_load(s, other))
+    w = SimpleNamespace(feed=other, mappings=world.mappings, rules=world.rules, load=loaded_load(s, other), s=s)
     proposal = summary_proposal(s, w)
     answered_by(s, "is not the owner of feed", GO_LIVE, go_live_params(w, proposal),
                 guard("go-live: approved_by % is not the owner of feed %"))

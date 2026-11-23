@@ -68,6 +68,7 @@ from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
+from core.steps.codegen import store_code_version
 from core.steps.errors import BackToStepNeeded, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
@@ -287,8 +288,10 @@ def decide_go_live(session: Session, *, proposal_id: UUID, user: User, decision:
                                                "changed after the summary was written: reject it instead")
     proposals.record_decision(proposal_id, user=user, decision="approved", note=note)
     until = today + timedelta(days=hypercare_days)
+    # T3: the generated code of exactly this configuration is stored as the next code version, and the go-live pins it
+    code = store_code_version(session, feed_id=feed.id, approved_by=user.id, test_load_id=UUID(payload["test_load_id"]))
     live = GoLiveRepository(session).add_version(
-        feed_id=feed.id, proposal_id=proposal_id, approved_by=user.id,
+        feed_id=feed.id, proposal_id=proposal_id, approved_by=user.id, code_version_id=code.id,
         mapping_ids=[UUID(i) for i in payload["mapping_ids"]], rule_ids=[UUID(i) for i in payload["rule_ids"]],
         test_load_id=UUID(payload["test_load_id"]), hypercare_until=until,
         transformation_ids=[UUID(i) for i in pinned_transformations])

@@ -65,10 +65,20 @@ def _first_line(exc: Exception) -> str:
     return str(exc).splitlines()[0] if str(exc) else type(exc).__name__
 
 
+RAW_LOAD_SQL = ('CREATE TABLE "{table}" AS SELECT row_number() OVER () AS _row, * '
+                "FROM read_csv($path, header = true, all_varchar = true)")
+
+
+def raw_load_sql(table: str = "raw") -> str:
+    """The one statement that reads the file into memory. Generated code (core/engine/codegen.py) shows this same text."""
+    return RAW_LOAD_SQL.format(table=table)
+
+
 class Sandbox:
     def __init__(self, *, timeout_seconds: float):
         self._timeout = timeout_seconds
         self._locked = False
+        self.executed: list[str] = []  # every statement run, in order: what a test compares with the generated code
         self._connection = duckdb.connect(
             ":memory:", config={"autoinstall_known_extensions": False, "autoload_known_extensions": False})
 
@@ -76,16 +86,16 @@ class Sandbox:
         """Read the one file into memory: every column as text (the engine casts), plus `_row`, the file's data
         row number from 1 in file order. Before lock() only."""
         self._require_unlocked()
+        self.executed.append(raw_load_sql(table))
         try:
-            self._connection.execute(
-                f'CREATE TABLE "{table}" AS SELECT row_number() OVER () AS _row, * '
-                "FROM read_csv($path, header = true, all_varchar = true)", {"path": str(path)})
+            self._connection.execute(raw_load_sql(table), {"path": str(path)})
         except duckdb.Error as exc:
             raise FileUnreadable(_first_line(exc)) from None
 
     def execute(self, sql: str, params: dict[str, Any] | None = None) -> list[tuple]:
         """A trusted statement of the engine (never rule text), before lock() only."""
         self._require_unlocked()
+        self.executed.append(sql)
         return self._connection.execute(sql, params or {}).fetchall()
 
     def lock(self) -> None:
@@ -99,6 +109,7 @@ class Sandbox:
         if not self._locked:
             raise RuntimeError("the sandbox is not locked: lock() before any rule runs")
         check_rule_sql(sql)
+        self.executed.append(sql)
         timer = threading.Timer(self._timeout, self._connection.interrupt)
         timer.start()
         try:

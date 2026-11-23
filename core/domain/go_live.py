@@ -135,3 +135,4 @@ class GoLive(BaseModel):
     test_load_id: UUID
     hypercare_until: date
     transformation_ids: list[UUID] = Field(default_factory=list)  # 0023
+    code_version_id: UUID | None = None  # 0030 (T3): the generated code this approval pinned

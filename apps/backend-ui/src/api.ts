@@ -90,6 +90,25 @@ export async function apiGet<T>(path: string, devUser?: string, acceptStatuses: 
   return (await response.json()) as T;
 }
 
+// ---- phase 7.12, T3: generated code, versioned (read only; nothing here edits code)
+
+export type CodeVersionSummary = {
+  version: number; sha256: string; approved_by: string; created_at: string; paths: string[];
+  test_load_result: Record<string, unknown>;
+};
+export type CodeVersionDetail = CodeVersionSummary & { files: Record<string, string> };
+export type CodePreview = { sha256: string; files: Record<string, string>; differs_from_latest: boolean };
+export type CodeFileDiff = { path: string; change: "added" | "removed" | "changed"; diff: string };
+export type CodeDiff = { from_version: number; to_version: number | null; files: CodeFileDiff[] };
+
+const FEEDS_API = "/api/amaze/feeds";
+export const getCodeVersions = (feedId: string, devUser: string) => apiGet<CodeVersionSummary[]>(`${FEEDS_API}/${feedId}/code`, devUser);
+export const getCodeVersion = (feedId: string, version: number, devUser: string) =>
+  apiGet<CodeVersionDetail>(`${FEEDS_API}/${feedId}/code/${version}`, devUser);
+export const getCodePreview = (feedId: string, devUser: string) => apiGet<CodePreview>(`${FEEDS_API}/${feedId}/code/preview`, devUser);
+export const getCodeDiff = (feedId: string, from: number, to: number | null, devUser: string) =>
+  apiGet<CodeDiff>(`${FEEDS_API}/${feedId}/code/diff?from=${from}${to ? `&to=${to}` : ""}`, devUser);
+
 // ---- phase 4: one feed's page and the steps 02 to 04
 
 export type FileColumn = { name: string; type: string; null_count: number; null_rate: number | null; distinct_count: number };

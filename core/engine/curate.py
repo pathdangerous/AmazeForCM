@@ -20,7 +20,8 @@ from dataclasses import dataclass
 
 from core.engine.transform import TYPE_SQL, chain, column_sql, quoted, until_last_placeholder
 
-__all__ = ["Found", "TYPE_SQL", "curated_rows_sql", "curated_sql", "match_header", "quoted", "uncast_sql"]
+__all__ = ["Found", "TYPE_SQL", "curated_rows_sql", "curated_sql", "duplicate_probe_sql", "keep_last_sql",
+           "key_columns_found", "match_header", "quoted", "uncast_sql"]
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,32 @@ def uncast_sql(f: Found) -> str:
     if placeholders:  # nulled on purpose by an approved placeholder: not an uncast value
         sql += f" AND ({chain('r.' + quoted(f.header), placeholders)}) IS NOT NULL"
     return sql + " ORDER BY r._row"
+
+
+def duplicate_probe_sql(keys: list[Found]) -> str:
+    """The rows whose key (the key columns' element keys) repeats, with the highest `_row` of each. Rows with an empty
+    key column have no key. Run whenever the feed has key columns present in the file (step 13, duplicate policy)."""
+    columns = ", ".join(quoted(k.element_key) for k in keys)
+    present = " AND ".join(f"{quoted(k.element_key)} IS NOT NULL" for k in keys)
+    return (f"SELECT _row, {columns}, max(_row) OVER (PARTITION BY {columns}) AS last_row FROM "
+            f"(SELECT *, count(*) OVER (PARTITION BY {columns}) AS n FROM curated WHERE {present}) WHERE n > 1 "
+            "ORDER BY _row")
+
+
+def keep_last_sql(keys: list[Found]) -> str:
+    """The `keep_last` policy: only the row with the highest `_row` of each repeated key stays in curated."""
+    columns = ", ".join(quoted(k.element_key) for k in keys)
+    present = " AND ".join(f"{quoted(k.element_key)} IS NOT NULL" for k in keys)
+    return (f"DELETE FROM curated WHERE _row IN (SELECT _row FROM (SELECT _row, max(_row) OVER "
+            f"(PARTITION BY {columns}) AS last_row FROM curated WHERE {present}) WHERE _row <> last_row)")
+
+
+def key_columns_found(found: list[Found], key_columns: list[str]) -> tuple[list[Found], list[str]]:
+    """(the key columns that are mapped columns of the file, the names ignored): a key column is named by its mapped
+    name or the file's spelling, in any case."""
+    by_name = {name.lower(): f for f in found for name in (f.source_field, f.header)}
+    keys = [by_name[c.lower()] for c in key_columns if c.lower() in by_name]
+    return keys, [c for c in key_columns if c.lower() not in by_name]
 
 
 def curated_rows_sql(found: list[Found]) -> str:
