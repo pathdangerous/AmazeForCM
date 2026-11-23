@@ -19,7 +19,8 @@ from core.repositories.loads import LoadRepository
 from core.steps.codegen import code_for_feed, engine_plan_for
 from tests.test_onboarding import make_world, run_to
 
-BOOKKEEPING = {"SELECT count(*) FROM raw", "DESCRIBE raw"}  # the engine counts and reads the header; not data code
+BOOKKEEPING = {"SELECT count(*) FROM raw", "DESCRIBE raw",  # the engine counts and reads the header; not data code
+               "DESCRIBE SELECT * FROM read_csv($path, header = true, all_varchar = true)"}  # the file's own header
 
 
 def test_the_engine_runs_exactly_the_generated_statements(db_session, glossary, tmp_path):
@@ -35,6 +36,11 @@ def test_the_engine_runs_exactly_the_generated_statements(db_session, glossary, 
     assert outcome.failed is None and outcome.executed_sql
     ran = [s for s in outcome.executed_sql if s not in BOOKKEEPING]
     assert set(ran) <= set(code.statements), [s for s in ran if s not in code.statements]  # nothing runs that is not shown
+    # 7.12 B: staging_ddl.sql runs, as generated, before load.sql, and the load inserts into the table it created
+    ddl, load = code.statements[0], code.statements[1]  # the files hold them, in this order
+    assert ddl in code.files["staging_ddl.sql"] and load in code.files["load.sql"]
+    assert ddl in ran and load in ran and ran.index(ddl) < ran.index(load)
+    assert ddl.startswith("CREATE TABLE raw (") and load.startswith('INSERT INTO "raw"')
     always = [s for s in code.statements if s in set(code.always_run)]
     assert all(s in ran for s in always)  # what always runs was run
     for rule in plan.rules:  # a rule's file is its SQL, byte for byte

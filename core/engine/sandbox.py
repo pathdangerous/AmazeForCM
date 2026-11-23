@@ -65,13 +65,21 @@ def _first_line(exc: Exception) -> str:
     return str(exc).splitlines()[0] if str(exc) else type(exc).__name__
 
 
-RAW_LOAD_SQL = ('CREATE TABLE "{table}" AS SELECT row_number() OVER () AS _row, * '
+RAW_LOAD_SQL = ('INSERT INTO "{table}" SELECT row_number() OVER () AS _row, * '
                 "FROM read_csv($path, header = true, all_varchar = true)")
+HEADER_SQL = "DESCRIBE SELECT * FROM read_csv($path, header = true, all_varchar = true)"
 
 
 def raw_load_sql(table: str = "raw") -> str:
-    """The one statement that reads the file into memory. Generated code (core/engine/codegen.py) shows this same text."""
+    """The statement that reads the file into the staging table. Generated code (core/engine/codegen.py) shows this text."""
     return RAW_LOAD_SQL.format(table=table)
+
+
+def staging_ddl_sql(header: list[str], table: str = "raw") -> str:
+    """The staging table: `_row` and every file column as text. The engine runs this before the load and the generated
+    staging_ddl.sql shows it (T3, 7.12 B): the shape the load fills is the shape the code says."""
+    columns = ",\n".join(f'  "{name.replace(chr(34), chr(34) * 2)}" VARCHAR' for name in header)
+    return f'CREATE TABLE {table} (\n  _row BIGINT,\n{columns}\n)'
 
 
 class Sandbox:
@@ -86,8 +94,13 @@ class Sandbox:
         """Read the one file into memory: every column as text (the engine casts), plus `_row`, the file's data
         row number from 1 in file order. Before lock() only."""
         self._require_unlocked()
-        self.executed.append(raw_load_sql(table))
         try:
+            self.executed.append(HEADER_SQL)
+            header = [row[0] for row in self._connection.execute(HEADER_SQL, {"path": str(path)}).fetchall()]
+            ddl = staging_ddl_sql(header, table)
+            self.executed.append(ddl)
+            self._connection.execute(ddl)
+            self.executed.append(raw_load_sql(table))
             self._connection.execute(raw_load_sql(table), {"path": str(path)})
         except duckdb.Error as exc:
             raise FileUnreadable(_first_line(exc)) from None
