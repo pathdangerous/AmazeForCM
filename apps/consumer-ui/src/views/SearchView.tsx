@@ -1,5 +1,6 @@
 import { Anchor, Badge, Button, Checkbox, Fieldset, Group, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { useState, type FormEvent } from "react";
+import { StatusChip } from "../../../ui-shared/phase711";
 import {
   apiGet,
   apiPost,
@@ -124,8 +125,8 @@ export default function SearchView({ devUser }: { devUser: string }) {
                 <li key={h.product.code} data-testid={`hit-${h.product.code}`}>
                   <strong><Anchor href={`#/product/${h.product.code}`}>{h.product.name}</Anchor></strong>{" "}
                   {h.outcome === "found"
-                    ? <Badge tt="none" color="var(--amz-success)">Available</Badge>
-                    : <Badge tt="none" color="var(--amz-warning)" c="var(--amz-on-bright)">Access restricted</Badge>}
+                    ? <StatusChip tone="good">Available</StatusChip>
+                    : <StatusChip tone="attention">Access restricted</StatusChip>}
                   <div>{h.product.description}</div>
                   <div className="muted">Elements: {h.product.element_keys.join(", ")}</div>
                   {h.outcome === "not_entitled_visible" && <div className="route">{h.route}</div>}

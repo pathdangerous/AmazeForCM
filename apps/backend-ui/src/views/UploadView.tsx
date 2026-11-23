@@ -1,5 +1,6 @@
-import { Alert, Button, Loader, NativeSelect, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Button, NativeSelect, Table, Text, TextInput, Title } from "@mantine/core";
 import { useRef, useState } from "react";
+import { LoadingSkeleton } from "../../../ui-shared/phase711";
 import {
   ApiError, confirmUpload, describeError, reinspect, uploadFile,
   type InspectedUpload, type NeedsImageExtraction, type UploadAnswer, type UploadRefusal, type User,
@@ -164,7 +165,7 @@ export default function UploadView({ me, onUploaded }: { me: User | null; onUplo
 
       {!file && !result && !busy && <div className="empty" data-testid="upload-empty">Choose a CSV, TSV, XLSX or PDF file.</div>}
       {busy && (
-        <div className="toolbar" role="status"><Loader size="sm" /><span>Reading the file…</span></div>
+        <LoadingSkeleton label="Reading the file…" />
       )}
 
       {refusal && (

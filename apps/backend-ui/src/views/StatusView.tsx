@@ -6,7 +6,7 @@ import { formatWhen } from "../theme";
 // Phase 7.5: a value as a success or danger badge; its words stay the API's own.
 function Status({ good, text }: { good: boolean | null; text: string }) {
   if (good === null) return <Text span className="muted">checking...</Text>;
-  return <Badge tt="none" color={good ? "var(--amz-success)" : "var(--amz-danger)"}>{text}</Badge>;
+  return <Badge tt="none" style={{ background: good ? "#DBEAFE" : "#FFEDD5", color: good ? "#1E3A8A" : "#9A3412" }}>{text}</Badge>;
 }
 
 const totalRows = (counts: Record<string, number>) => Object.values(counts).reduce((a, b) => a + b, 0);

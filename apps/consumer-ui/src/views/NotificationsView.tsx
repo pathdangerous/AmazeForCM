@@ -1,5 +1,6 @@
 import { Anchor, Button, Group, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
+import { LoadingSkeleton } from "../../../ui-shared/phase711";
 import { apiGet, describeError, type Notification } from "../api";
 import { formatWhen } from "../theme";
 
@@ -78,6 +79,7 @@ export default function NotificationsView({ rows, error, onRefresh }: {
         <span className="muted">the latest 50 sent to you; checked every 15 seconds</span>
       </Group>
       {error && <Text className="bad" role="alert">{error}</Text>}
+      {rows === null && !error && <LoadingSkeleton label="Loading notifications" />}
       {rows !== null && rows.length === 0 && <Text className="muted" data-testid="no-notifications">Nothing yet.</Text>}
       {rows !== null && rows.length > 0 && (
         <ul className="hits" data-testid="notifications">

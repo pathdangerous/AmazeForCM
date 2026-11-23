@@ -168,6 +168,9 @@ export type ProductPage = {
   owner: { id: string; name: string }; visibility: string; access: "entitled" | "not_entitled_visible";
   route: string | null; freshness: Freshness | null; columns: string[]; dictionary: DictionaryRow[];
   paused_since?: string | null; // phase 7.9
+  // Latest released-load metadata, returned only for entitled users.
+  certification?: { trust_score: number; rows: number; flagged_rows: number } | null;
+  lineage?: { stage: string; name: string; rows: number | null }[];
 };
 export type ProductPreview = { outcome: "preview"; columns: string[]; rows: unknown[][] };
 

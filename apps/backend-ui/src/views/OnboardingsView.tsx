@@ -1,5 +1,7 @@
-import { Alert, Badge, Button, Loader, Table, Text, Title } from "@mantine/core";
+import { Alert, Button, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
+import DataGrid from "../../../ui-shared/DataGrid";
+import { LoadingSkeleton, StatusChip } from "../../../ui-shared/phase711";
 import { describeError, getOnboardings, ONBOARDING_STEPS, type OnboardingRow } from "../api";
 import { formatWhen } from "../theme";
 import { STEP_LABELS } from "./Stepper";
@@ -12,6 +14,7 @@ function progress(row: OnboardingRow): string {
 export default function OnboardingsView({ devUser }: { devUser: string }) {
   const [rows, setRows] = useState<OnboardingRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!devUser) return;
@@ -20,7 +23,7 @@ export default function OnboardingsView({ devUser }: { devUser: string }) {
       .then((list) => current && (setRows(list), setError(null)))
       .catch((err: unknown) => current && setError(describeError(err)));
     return () => { current = false; };
-  }, [devUser]);
+  }, [devUser, attempt]);
 
   return (
     <section>
@@ -28,36 +31,23 @@ export default function OnboardingsView({ devUser }: { devUser: string }) {
         <Title order={2}>Onboardings</Title>
         <Button component="a" href="#/onboard" size="lg" data-testid="onboard-a-file">Onboard a file</Button>
       </div>
-      {error && <Alert role="alert" color="red" mt="md">{error}</Alert>}
-      {!error && rows === null && <Loader size="sm" mt="md" aria-label="Loading onboardings" />}
+      {error && <><Alert role="alert" color="red" mt="md">{error}</Alert>
+        <Button variant="default" mt="sm" onClick={() => setAttempt((value) => value + 1)}>Try again</Button></>}
+      {!error && rows === null && <LoadingSkeleton label="Loading onboardings" />}
       {rows !== null && rows.length === 0 && (
         <div className="empty" style={{ marginTop: 16 }}>No onboardings yet. Start with Onboard a file.</div>
       )}
       {rows !== null && rows.length > 0 && (
-        <Table.ScrollContainer minWidth={560} mt="md">
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Feed</Table.Th><Table.Th>Step</Table.Th><Table.Th>Status</Table.Th>
-                <Table.Th>Progress</Table.Th><Table.Th>Updated</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {rows.map((row) => (
-                <Table.Tr key={row.id} data-testid={`onboarding-row-${row.feed_code}`}>
-                  <Table.Td>
-                    <a href={`#/onboarding/${row.id}`}>{row.feed_name}</a>
-                    <Text size="xs" c="dimmed">{row.feed_code}</Text>
-                  </Table.Td>
-                  <Table.Td>{STEP_LABELS[row.current_step]}</Table.Td>
-                  <Table.Td><Badge tt="none" variant="default">{row.status}</Badge></Table.Td>
-                  <Table.Td>{progress(row)}</Table.Td>
-                  <Table.Td>{formatWhen(row.updated_at)}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
+        <div style={{ marginTop: 16 }}><DataGrid rows={rows} rowKey={(row) => row.id} aria-label="Onboardings"
+          rowProps={(row) => ({ "data-testid": `onboarding-row-${row.feed_code}` })} columns={[
+            { key: "feed", label: "Feed", value: (row) => row.feed_name, render: (row) => <>
+              <a href={`#/onboarding/${row.id}`}>{row.feed_name}</a><Text size="xs" c="dimmed">{row.feed_code}</Text>
+            </> },
+            { key: "step", label: "Step", value: (row) => STEP_LABELS[row.current_step] },
+            { key: "status", label: "Status", value: (row) => row.status, render: (row) => <StatusChip tone={row.status === "done" ? "good" : "neutral"}>{row.status}</StatusChip> },
+            { key: "progress", label: "Progress", value: progress },
+            { key: "updated", label: "Updated", value: (row) => row.updated_at, render: (row) => formatWhen(row.updated_at) },
+          ]} /></div>
       )}
     </section>
   );

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,7 @@ from core.domain.glossary import GlossaryElement
 from core.domain.product import ProductWithElements
 from core.entitlement.decide import decide, route_to_access
 from core.repositories.configuration import MappingRepository
+from core.repositories.certifications import LoadCertificationRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.grants import ProductGrantRepository
 from core.repositories.loads import LoadRepository
@@ -90,6 +91,18 @@ class DictionaryRow(BaseModel):
     label: str  # the column header: an approved rename's label, else the element's name
 
 
+class ProductCertification(BaseModel):
+    trust_score: float
+    rows: int
+    flagged_rows: int
+
+
+class LineageStage(BaseModel):
+    stage: str
+    name: str
+    rows: int | None
+
+
 class ProductPage(StepResult):
     outcome: Literal["product_page"] = "product_page"
     code: str
@@ -105,6 +118,8 @@ class ProductPage(StepResult):
     paused_since: datetime | None = None  # the feed is paused (phase 7.9): the product keeps its last release
     columns: list[str]  # element keys, in the feed's mapping order
     dictionary: list[DictionaryRow]
+    certification: ProductCertification | None = None
+    lineage: list[LineageStage] = Field(default_factory=list)
 
 
 class ProductNotFound(StepResult):
@@ -222,13 +237,29 @@ def product_page(session: Session, *, code: str, user: UserLike, identity: Ident
     labels = _labels(session, load.id) if load is not None else {}
     keys = _columns(session, product)
     elements = {e.key: e for e in GlossaryRepository(session).list_current() if e.key in set(keys)}
+    certification = None
+    lineage = []
+    # Operational details are shown only with the same entitlement as the released rows.
+    # Never expose raw file/storage paths or a newer held load's score.
+    if entitled and load is not None:
+        cert = LoadCertificationRepository(session).for_load(load.id)
+        if cert is not None:
+            certification = ProductCertification(
+                trust_score=float(cert.trust_score), rows=cert.rows, flagged_rows=cert.flagged_rows)
+        labels_by_stage = {"raw": "Source", "curated": "Curated", "validated": "Validated",
+                           "standard": "Standard model"}
+        lineage = [LineageStage(stage=stage.stage, name=labels_by_stage[stage.stage], rows=stage.rows_out)
+                   for stage in LoadRepository(session).stages(load.id) if stage.outcome == "stage_completed"]
+        lineage.append(LineageStage(stage="product", name=product.name,
+                                    rows=freshness.rows if freshness else None))
     return ProductPage(
         code=product.code, name=product.name, description=product.description, domain=product.domain,
         domain_label=domain_label(product.domain), owner=Owner(id=product.owner_id,
                                                               name=_owner_name(identity, product.owner_id)),
         visibility=product.visibility, access="entitled" if entitled else "not_entitled_visible", route=route,
         freshness=freshness, paused_since=_paused_since(session, product), columns=keys,
-        dictionary=[_dictionary_row(elements[k], labels.get(k)) for k in keys])
+        dictionary=[_dictionary_row(elements[k], labels.get(k)) for k in keys],
+        certification=certification, lineage=lineage)
 
 
 def _dictionary_row(element: GlossaryElement, label: str | None) -> DictionaryRow:

@@ -1,5 +1,6 @@
-import { Anchor, Badge, Button, Checkbox, Group, Text, Textarea, Title } from "@mantine/core";
+import { Anchor, Button, Checkbox, Group, Text, Textarea, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
+import { LoadingSkeleton, StatusChip } from "../../../ui-shared/phase711";
 import {
   apiGet,
   apiPost,
@@ -92,6 +93,7 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
       <Title order={2} mb="xs">Requirement</Title>
       <Anchor href="#/requests" size="sm">Back to My requests</Anchor>
       {error && <Text className="bad" role="alert" data-testid="error">{error}</Text>}
+      {!page && !error && <LoadingSkeleton label="Loading the requirement" />}
       {page && (
         <>
           <div className={warn ? "result warn" : "result"} role="status" data-testid="requirement-message">
@@ -106,8 +108,8 @@ export default function RequirementView({ devUser, requirementId }: { devUser: s
             <Text mt="sm" data-testid="product">
               Product: <strong>{page.product.name}</strong> ({page.product.code}){" "}
               {page.product.entitled
-                ? <Badge tt="none" color="var(--amz-success)">Available</Badge>
-                : <Badge tt="none" color="var(--amz-warning)" c="var(--amz-on-bright)">Access restricted</Badge>}
+                ? <StatusChip tone="good">Available</StatusChip>
+                : <StatusChip tone="attention">Access restricted</StatusChip>}
               {page.product.route && <span className="route" data-testid="product-route"> {page.product.route}.</span>}
             </Text>
           )}

@@ -1,5 +1,6 @@
 import { Anchor, Button, Table, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
+import { LoadingSkeleton } from "../../../ui-shared/phase711";
 import { apiGet, apiPost, describeError, type FindSourceResponse, type RequestSummary } from "../api";
 import { formatWhen } from "../theme";
 import { STEPS } from "./RequirementView";
@@ -55,8 +56,10 @@ export default function RequestsView({ devUser }: { devUser: string }) {
   return (
     <section>
       <Title order={2} mb="md">My requests</Title>
-      {error && <Text className="bad" role="alert" data-testid="error">{error}</Text>}
-      {requests && requests.length === 0 && <Text data-testid="no-requests">No requests yet.</Text>}
+      {error && <><Text className="bad" role="alert" data-testid="error">{error}</Text>
+        <Button variant="default" onClick={() => setReload((value) => value + 1)}>Try again</Button></>}
+      {!requests && !error && <LoadingSkeleton label="Loading your requests" />}
+      {requests && requests.length === 0 && <div className="empty" data-testid="no-requests">No requests yet.</div>}
       {requests && requests.length > 0 && (
         <Table.ScrollContainer minWidth={800}>
           <Table data-testid="requests" verticalSpacing="xs">

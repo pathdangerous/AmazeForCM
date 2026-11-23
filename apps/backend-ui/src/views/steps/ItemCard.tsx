@@ -8,10 +8,12 @@ export type Choice = { value: number | string; label: string };
 
 // Warning, info and the marker are fills with dark text; the subtle fill carries the normal text colour.
 function Tag({ id, text, fill }: { id: string; text: string; fill: string }) {
+  const background = id === "pre_accepted" ? "#DBEAFE" : id === "needs_decision" ? "#FFEDD5" : fill;
+  const color = id === "pre_accepted" ? "#1E3A8A" : id === "needs_decision" ? "#9A3412" : "var(--amz-text)";
   return (
     <span data-testid={`item-badge-${id}`} style={{
-      background: fill, color: fill === "var(--amz-subtle)" ? "var(--amz-text)" : "var(--amz-on-bright)",
-      borderRadius: 4, padding: "1px 8px", fontSize: 12, marginRight: 6,
+      background, color,
+      borderRadius: 10, padding: "2px 10px", fontSize: 12, marginRight: 6, fontWeight: 600,
     }}>{text}</span>
   );
 }
@@ -60,8 +62,8 @@ export default function ItemCard({ item, actions, choices, children }: {
       {canAct && (
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           {!item.pre_accepted && (
-            <Button size="xs" disabled={actions.busy || (asks && choice === undefined)}
-                    onClick={() => actions.decide(item, "approved", choice)}>Approve</Button>
+            <Button size="xs" aria-label="Approve" disabled={actions.busy || (asks && choice === undefined)}
+                    onClick={() => actions.decide(item, "approved", choice)}>Accept</Button>
           )}
           {!rejecting && (
             <Button size="xs" variant="default" disabled={actions.busy} onClick={() => setRejecting(true)}>Reject</Button>

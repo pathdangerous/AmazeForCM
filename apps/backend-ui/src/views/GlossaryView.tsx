@@ -1,5 +1,7 @@
 import { Anchor, Button, Group, Radio, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
+import DataGrid from "../../../ui-shared/DataGrid";
+import { LoadingSkeleton } from "../../../ui-shared/phase711";
 import {
   apiGet, decideProposal, describeError, words, type ConfigProposal, type DomainCount, type ElementDetail,
   type ElementOption, type GlossaryElement,
@@ -252,37 +254,26 @@ export default function GlossaryView({ devUser, canDecide, changed, people, onCh
       {error && <Text className="bad" role="alert">{error}</Text>}
 
       {elements !== null && elements.length === 0 && <div className="empty">No elements match.</div>}
+      {elements === null && !error && <LoadingSkeleton label="Loading glossary elements" />}
 
       {elements !== null && elements.length > 0 && (
-        <Table.ScrollContainer minWidth={900}>
-          <Table data-testid="glossary-table" highlightOnHover verticalSpacing="xs">
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Name</Table.Th><Table.Th>Key</Table.Th><Table.Th>Domain</Table.Th><Table.Th>Type</Table.Th>
-                <Table.Th>Definition</Table.Th><Table.Th>Aliases</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {elements.map((e) => (
-                <Table.Tr
-                  key={e.key}
-                  className="clickable"
-                  aria-selected={selectedKey === e.key}
-                  tabIndex={0}
-                  onClick={() => setSelectedKey(e.key === selectedKey ? null : e.key)}
-                  onKeyDown={(ev) => ev.key === "Enter" && setSelectedKey(e.key === selectedKey ? null : e.key)}
-                >
-                  <Table.Td>{e.name}</Table.Td>
-                  <Table.Td><code>{e.key}</code></Table.Td>
-                  <Table.Td>{domainLabel(domains, e.domain)}</Table.Td>
-                  <Table.Td>{e.data_type}</Table.Td>
-                  <Table.Td>{e.definition}</Table.Td>
-                  <Table.Td>{e.aliases.join(", ")}</Table.Td>
-                </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
+        <DataGrid rows={elements} rowKey={(element) => element.key} aria-label="Glossary elements" data-testid="glossary-table"
+          pageSize={10} columns={[
+            { key: "name", label: "Name", value: (e) => e.name },
+            { key: "key", label: "Key", value: (e) => e.key, render: (e) => <code>{e.key}</code> },
+            { key: "domain", label: "Domain", value: (e) => domainLabel(domains, e.domain) },
+            { key: "type", label: "Type", value: (e) => e.data_type },
+            { key: "definition", label: "Definition", value: (e) => e.definition },
+            { key: "aliases", label: "Aliases", value: (e) => e.aliases.join(", ") },
+          ]} rowProps={(e) => ({
+            className: "clickable", "aria-selected": selectedKey === e.key, tabIndex: 0,
+            onClick: () => setSelectedKey(e.key === selectedKey ? null : e.key),
+            onKeyDown: (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault(); setSelectedKey(e.key === selectedKey ? null : e.key);
+              }
+            },
+          })} />
       )}
 
       {detail && (

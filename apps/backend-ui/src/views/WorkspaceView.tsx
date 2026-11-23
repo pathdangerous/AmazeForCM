@@ -1,5 +1,6 @@
-import { Alert, Button, Loader, Text, Title } from "@mantine/core";
+import { Alert, Button, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
+import { LoadingSkeleton, StickyFooter } from "../../../ui-shared/phase711";
 import {
   apiGet, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline, getWorkspace,
   goBack, ONBOARDING_STEPS, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
@@ -86,7 +87,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
       </section>
     );
   }
-  if (!ws) return <Loader size="sm" aria-label="Loading the workspace" data-testid="workspace-loading" />;
+  if (!ws) return <LoadingSkeleton label="Loading the workspace" testId="workspace-loading" />;
 
   const current = ws.current_step;
   const shown = viewed ?? current;
@@ -170,13 +171,12 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
 
   let main;
   if (!view) {
-    main = <Loader size="sm" aria-label="Loading the step" data-testid="step-loading" />;
+    main = <LoadingSkeleton label="Loading the step" testId="step-loading" />;
   } else if (shown === "product_ready" && shownState === "done") {
     main = <ProductReadyPanel feedCode={ws.feed_code} />;
   } else if (atCurrent && state === "agent_working") {
     main = (
       <div data-testid="workspace-working" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <Loader size="sm" />
         <Text>{ws.progress ?? "The agent is working"}</Text>
       </div>
     );
@@ -228,34 +228,39 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   }
 
   return (
-    <section>
-      <Title order={2} mb="sm">Onboarding {ws.feed_code}</Title>
+    <section className="workspace-page">
+      <div className="workspace-heading">
+        <div><div className="breadcrumbs"><a href="#/overview">Home</a> / <a href="#/onboardings">Onboardings</a> / {ws.feed_code}</div>
+          <Title order={2}>Onboarding {ws.feed_code}</Title>
+          {ws.inputs && <Text size="sm" c="dimmed">
+            {ws.inputs.row_count !== null && `${ws.inputs.row_count} rows`}
+            {ws.inputs.row_count !== null && ws.inputs.column_count !== null && " · "}
+            {ws.inputs.column_count !== null && `${ws.inputs.column_count} columns`}
+          </Text>}
+        </div>
+        <a href="#/onboardings" className="amz-button">Save and exit</a>
+      </div>
       {fourEyes && (
         <div role="note" style={{ background: "var(--amz-info)", color: "var(--amz-on-bright)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
           <div>Four-eyes is on: a second person decides the next step</div>
           <div>Use Feeds for the multi-role flow</div>
         </div>
       )}
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-        <div style={{ flex: "0 0 230px" }}>
-          <Stepper steps={ws.steps} current={current} viewed={shown} onOpen={(s) => { setViewed(s === current ? null : s); setViewedWs(null); }} />
-        </div>
-        <div style={{ flex: "1 1 360px", minWidth: 0 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+      <Stepper steps={ws.steps} current={current} viewed={shown} onOpen={(s) => { setViewed(s === current ? null : s); setViewedWs(null); }} />
+      <div className="workspace-body">
+        <div className="workspace-step-content">
+          <div className="workspace-step-heading">
             <Title order={3} size="h4">{STEP_LABELS[shown]}</Title>
             <StateBadge state={shownState} />
           </div>
           {main}
         </div>
-        <div style={{ flex: "0 0 300px" }}>
+        <div>
           <AgentPanel step={shown} items={items} notes={view?.agent_notes ?? []} inputs={view?.inputs ?? null}
                       timeline={timeline} people={people} />
         </div>
       </div>
-      <div data-testid="workspace-footer" style={{
-        position: "sticky", bottom: 0, marginTop: 16, padding: "10px 12px", background: "var(--amz-panel)",
-        borderTop: "1px solid var(--amz-line)", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
-      }}>
+      <StickyFooter data-testid="workspace-footer">
         <Button data-testid="workspace-back" variant="default" disabled={!backTo || busy}
                 onClick={() => backTo && void act(() => goBack(id, backTo, devUser))}>
           {backTo ? `Go back to ${STEP_LABELS[backTo]}` : "Back"}
@@ -271,7 +276,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
         <Button data-testid="workspace-approve" disabled={!ws.can_approve || busy || !atCurrent} onClick={() => void approve()}>
           {approveLabel}
         </Button>
-      </div>
+      </StickyFooter>
     </section>
   );
 }

@@ -1,5 +1,6 @@
 import { Anchor, Badge, Button, Group, NativeSelect, Radio, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { useEffect, useState, type ReactNode } from "react";
+import { LoadingSkeleton } from "../../../ui-shared/phase711";
 import {
   apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type GlossaryRun,
   type Owner, type SignoffOutcome, type User,
@@ -275,8 +276,9 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
       return decision === "approved" ? `Mapped to ${choice}.` : "Rejected: its candidates are not proposed again.";
     });
 
-  if (loadError && !page) return <Text className="bad" role="alert">{loadError}</Text>;
-  if (!page) return <Text className="muted">Loading…</Text>;
+  if (loadError && !page) return <div className="amz-error"><Text className="bad" role="alert">{loadError}</Text>
+    <Button variant="default" mt="sm" onClick={onChange}>Try again</Button></div>;
+  if (!page) return <LoadingSkeleton label="Loading feed…" />;
 
   const { feed, profile } = page;
   const specOnly = profile?.outcome === "spec_only_low_confidence";

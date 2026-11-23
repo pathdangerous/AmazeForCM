@@ -109,6 +109,15 @@ async def test_the_preview_is_the_first_100_rows_in_row_order_with_labels(releas
     assert preview["rows"][99][0] == "syn-0100"
 
 
+async def test_product_has_real_certification_and_completed_stage_lineage(released, client):
+    page = (await client.get(f"{BASE}/products/syn_loadable", headers=RILEY)).json()
+    assert page["certification"] == {"trust_score": 100.0, "rows": 150, "flagged_rows": 0}
+    assert page["lineage"]
+    assert page["lineage"][-1] == {"stage": "product", "name": page["name"], "rows": 150}
+    assert any(stage["stage"] == "standard" and stage["rows"] == 150 for stage in page["lineage"])
+    assert all(stage["rows"] is None or stage["rows"] >= 0 for stage in page["lineage"])
+
+
 async def test_a_small_product_previews_all_its_rows(world, client):
     deliver(world, volume_csv(7, 0))
     preview = (await client.get(f"{BASE}/products/syn_loadable/preview", headers=RILEY)).json()
@@ -148,7 +157,9 @@ async def test_a_restricted_product_is_visible_but_refused_without_a_grant(world
     groups = (await client.get(f"{BASE}/catalogue", headers=RILEY)).json()
     (product,) = [p for g in groups for p in g["products"] if p["code"] == "syn_secret"]
     assert (product["access"], product["route"]) == ("not_entitled_visible", route)
-    assert (await client.get(f"{BASE}/products/syn_secret", headers=RILEY)).json()["access"] == "not_entitled_visible"
+    hidden = (await client.get(f"{BASE}/products/syn_secret", headers=RILEY)).json()
+    assert hidden["access"] == "not_entitled_visible"
+    assert hidden["certification"] is None and hidden["lineage"] == []
     for tail in ("preview", "download.csv", "download.xlsx"):
         refused = await client.get(f"{BASE}/products/syn_secret/{tail}", headers=RILEY)
         assert refused.status_code == 403 and refused.json()["detail"] == {"outcome": "not_entitled", "route": route}
@@ -173,6 +184,7 @@ async def test_a_product_with_no_released_load_is_no_data(world, client, make_pr
         assert response.status_code == 404 and response.json()["detail"] == {"outcome": "no_data"}
     page = (await client.get(f"{BASE}/products/syn_empty", headers=RILEY)).json()
     assert page["freshness"] is None
+    assert page["certification"] is None and page["lineage"] == []
 
 
 async def test_a_later_held_load_does_not_hide_the_last_released_one(world, client):

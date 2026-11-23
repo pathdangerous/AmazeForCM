@@ -1,5 +1,6 @@
-import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
+import { Button, Group, Table, Text, Title } from "@mantine/core";
 import { useState, type ReactNode } from "react";
+import { StatusChip } from "../../../ui-shared/phase711";
 import { apiPost, describeError, words, type FeedPage, type LoadOnPage } from "../api";
 import { formatWhen } from "../theme";
 
@@ -17,8 +18,7 @@ const PURPOSE: Record<string, string> = { go_live_test: "test load for go-live",
 // Phase 7.5: a load's status as a badge; its words stay the status's own (the story reads them).
 function StatusBadge({ status }: { status: string }) {
   const good = status === "loaded" || status === "released";
-  const color = good ? "var(--amz-success)" : status === "received" ? undefined : "var(--amz-danger)";
-  return <Badge variant={color ? "filled" : "default"} color={color} tt="none">{words(status)}</Badge>;
+  return <StatusChip tone={good ? "good" : status === "received" ? "neutral" : "attention"}>{words(status)}</StatusChip>;
 }
 
 function Arrival({ load }: { load: LoadOnPage }) {
