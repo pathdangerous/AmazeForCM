@@ -13,7 +13,7 @@ cleanup() {
   wait 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
-setsid "$python" -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000 &
+LLM_PROVIDER="${DEV_LLM_PROVIDER:-mock}" setsid "$python" -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000 &
 pids+=("$!")
 (cd apps/backend-ui && exec setsid npm run dev) &
 pids+=("$!")
