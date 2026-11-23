@@ -111,6 +111,16 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
 - **Done when:** fresh runtime setup, both B10 stories, both UI suites and the full Python suite pass;
   both apps work through port 5000 and locally. Push the phase branch; do not merge.
 
+## Phase 7.11 — UI redesign
+
+- Owner-approved references: `docs/design/phase-7.11/`; implementation plan:
+  `docs/plans/phase-7.11.md`.
+- Match the supplied tokens and mockups with Mantine and shared components.
+  Operations overview uses real data only; existing behavior and test IDs stay intact.
+- **Done when:** both UI suites, full Python suite, both B10 stories, contrast and
+  keyboard checks pass; screens are written to `docs/phase75-screenshots/phase711/`.
+  Push `phase-7.11`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
