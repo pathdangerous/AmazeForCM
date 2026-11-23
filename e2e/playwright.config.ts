@@ -9,7 +9,9 @@ import { defineConfig } from "@playwright/test";
 export function servers(fourEyes: boolean) {
   return [
     {
-      command: ".venv\\Scripts\\python.exe -m e2e.serve_api", // relative to cwd, the repository root
+      command: (process.platform === "win32"
+        ? ".venv\\Scripts\\python.exe"
+        : ".runtime/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14") + " -m e2e.serve_api",
       cwd: "..",
       url: "http://127.0.0.1:8000/api/health",
       reuseExistingServer: false,
