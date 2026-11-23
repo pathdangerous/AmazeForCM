@@ -100,6 +100,17 @@ Built in two parts (phase 3 plan): **3a** without agents (Known source?, S4 fetc
   `raised_at`, `coverage_titles`, `element_names`, the builder's own rule for `why_none`; notification links at
   five sites. Each polish line's fate is in `docs/ui-polish.md`.
 
+## Phase 7.9 — Feed lifecycle
+
+- Existing scope and results: `docs/plans/phase-7.9.md`.
+
+## Phase 7.10 — One entrance, two personas
+
+- Owner-approved scope: reproducible Replit setup, one preview entrance, Marketplace under `/market/`,
+  and shared development persona selection. Plan: `docs/plans/phase-7.10.md`.
+- **Done when:** fresh runtime setup, both B10 stories, both UI suites and the full Python suite pass;
+  both apps work through port 5000 and locally. Push the phase branch; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
