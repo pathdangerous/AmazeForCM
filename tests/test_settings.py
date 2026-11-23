@@ -153,6 +153,7 @@ def test_phase_7_8_model_settings_default(tmp_path, monkeypatch):
 
 def test_a_model_setting_is_read_from_an_env_file(tmp_path, monkeypatch):
     monkeypatch.delenv("LLM_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("LLM_RETRY_AFTER_CAP_SECONDS", raising=False)
     env_file = tmp_path / ".env"
     env_file.write_text("LLM_TIMEOUT_SECONDS=5\nLLM_RETRY_AFTER_CAP_SECONDS=0\n", encoding="utf-8")
     settings = load_settings(env_file)

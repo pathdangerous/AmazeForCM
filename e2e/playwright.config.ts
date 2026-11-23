@@ -29,7 +29,7 @@ export function servers(fourEyes: boolean) {
     {
       command: "npm run dev",
       cwd: "../apps/consumer-ui",
-      url: "http://127.0.0.1:5174",
+      url: "http://127.0.0.1:5174/market/",
       reuseExistingServer: false,
       timeout: 120_000,
     },

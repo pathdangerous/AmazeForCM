@@ -7,7 +7,7 @@ import { expect, test, type Page } from "@playwright/test";
 // load, "Ready", then a delivery with a column missing, which is held and told to people.
 
 const BACKEND = "http://127.0.0.1:5173/";
-const CONSUMER = "http://127.0.0.1:5174/";
+const CONSUMER = "http://127.0.0.1:5174/market/";
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 
 const RILEY = ["dev-requester", "Riley Requester"] as const;

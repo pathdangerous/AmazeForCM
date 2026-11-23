@@ -8,7 +8,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 // ready; the story is the test of behaviour.
 
 const BACKEND = "http://127.0.0.1:5173/";
-const CONSUMER = "http://127.0.0.1:5174/";
+const CONSUMER = "http://127.0.0.1:5174/market/";
 const REPO = fileURLToPath(new URL("../../", import.meta.url));
 const SET = process.env.SHOTS_SET ?? "before";
 const ONLY = process.env.SHOTS_ONLY ? new Set(process.env.SHOTS_ONLY.split(",").map((s) => s.trim())) : null;

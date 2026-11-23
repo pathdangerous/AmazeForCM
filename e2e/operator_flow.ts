@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 // Mock provider (LLM_PROVIDER=mock), amaze_test / e2e_story. NOT RUN when written (budget rule of the session).
 
 export const BACKEND = "http://127.0.0.1:5173/";
-export const CONSUMER = "http://127.0.0.1:5174/";
+export const CONSUMER = "http://127.0.0.1:5174/market/";
 export const REPO = fileURLToPath(new URL("../", import.meta.url));
 export const OPERATOR = ["dev-operator", "Olive Operator"] as const;
 export const RILEY = ["dev-requester", "Riley Requester"] as const;
