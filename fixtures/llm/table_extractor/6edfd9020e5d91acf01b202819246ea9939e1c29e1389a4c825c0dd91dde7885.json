@@ -1,0 +1,6 @@
+{
+  "header": ["id", "name", "qty"],
+  "rows": [["1", "Ann", "5"], ["2", "Bob", "6"], ["3", "Cy", null]],
+  "confidence": 0.9,
+  "notes": ["Synthetic recorded table for the test image PDF (tests/test_intake_pdf.py image_pdf)."]
+}
