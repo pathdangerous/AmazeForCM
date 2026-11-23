@@ -7,7 +7,8 @@ import { consume, REPO, upload, walk } from "../operator_flow";
 // docs/phase78-screenshots/<SHOTS_SET>/. Not part of the story run.
 //   cd e2e; $env:SHOTS_SET="final"; npx playwright test -c playwright.workspace.config.ts
 const SET = process.env.SHOTS_SET ?? "final";
-const DIR = `${REPO}docs/phase78-screenshots/${SET}/`;
+const DIR = SET === "phase711" ? `${REPO}docs/phase75-screenshots/phase711/`
+  : `${REPO}docs/phase78-screenshots/${SET}/`;
 
 async function shot(page: Page, name: string) {
   mkdirSync(DIR, { recursive: true });

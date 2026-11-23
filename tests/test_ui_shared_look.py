@@ -68,11 +68,15 @@ def test_both_apps_hand_the_one_theme_to_mantine():
         assert re.search(r"cssVariablesResolver=\{cssVariablesResolver\}", main), ui
 
 
-def test_both_apps_use_one_content_width():
-    """Checkpoint 1 addition A2: consumer-ui takes backend-ui's content width (header, status strip, main, footer)."""
-    widths = {ui: set(re.findall(r"max-width: (\d+)px", (APPS / ui / "index.html").read_text(encoding="utf-8")))
-              for ui in UIS}
-    assert widths == {"backend-ui": {"1200"}, "consumer-ui": {"1200"}}
+def test_phase711_uses_shared_shell_styles_and_approved_market_width():
+    """Phase 7.11 replaces the old 1200px shell with the approved sidebar and 1280px marketplace."""
+    for ui in UIS:
+        main = (APPS / ui / "src" / "main.tsx").read_text(encoding="utf-8")
+        assert 'ui-shared/phase711.css' in main
+    css = (APPS / "ui-shared" / "phase711.css").read_text(encoding="utf-8")
+    for selector in (".market-shell .app-header-inner", ".market-shell .app-main", ".market-shell > footer"):
+        assert re.search(re.escape(selector) + r"\s*\{[^}]*max-width:\s*1280px", css)
+    assert "236px" in css
 
 
 def test_every_date_goes_through_the_one_formatter():

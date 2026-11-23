@@ -56,6 +56,12 @@ export async function walk(page: Page, shot: Shot = none) {
     const current = page.locator('[data-testid^="step-"][aria-current="step"]');
     const step = (await current.count()) > 0 ? ((await current.first().getAttribute("data-testid")) ?? "step") : "step";
     await shot(page, `W3-${String(turn).padStart(2, "0")}-${step}`);
+    // A screenshot can span an automatically completed step. Re-read the real
+    // current step before deciding anything, rather than acting on a stale snapshot.
+    await settle(page);
+    const stepChanged = async () => (await current.count()) > 0
+      && (await current.first().getAttribute("data-testid")) !== step;
+    if (await stepChanged()) continue;
 
     if (await page.getByTestId("summary-page").isVisible()) {
       await page.getByLabel("Open to every user").check(); // the owner chooses visibility at go-live
@@ -100,9 +106,11 @@ export async function walk(page: Page, shot: Shot = none) {
     // the last step's approval may already have finished the onboarding: then there is nothing more to approve
     await expect(async () => {
       if (await ready.isVisible()) return;
+      if (await stepChanged()) return; // an automatic transition needs a fresh decision pass
       await expect(next).toBeEnabled({ timeout: 1_000 });
     }).toPass({ timeout: 30_000 });
     if (await ready.isVisible()) break;
+    if (await stepChanged()) continue;
     await next.click();
   }
   await expect(page.getByText("The product is ready for consumers.")).toBeVisible();
