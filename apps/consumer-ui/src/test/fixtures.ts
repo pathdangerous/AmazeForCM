@@ -44,7 +44,8 @@ export function stubFetch(routes: Routes) {
 // The answers every screen of the shell asks for.
 export function shellRoutes(user: User = USERS[0]): Routes {
   return {
-    "GET /api/dev/users?app=consumer": USERS,
+    "GET /api/dev/users": USERS,
+    "GET /api/health": { status: "ok", database: "ok", adapters: {}, unavailable: [], four_eyes: true },
     "GET /api/me": user,
   };
 }

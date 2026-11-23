@@ -10,7 +10,7 @@ import SearchView from "./views/SearchView";
 import StatusLine from "./views/StatusLine";
 
 const TITLE = "Amaze Marketplace";
-const STORAGE_KEY = "amaze.consumer-ui.devUser";
+import { choosePersona, initialUser, personaUsers, remember } from "../../ui-shared/devPersona";
 
 // Views, chosen by the URL hash (#/search). No router library (phase 2 plan, decision 16).
 // Phase 3 adds #/requirement/<id>, reached from My requests and after a raise; it is not in the nav.
@@ -28,22 +28,6 @@ function routeFromHash(): Route {
   return { view: path in VIEWS ? (path as View) : "search" };
 }
 
-function remembered(): string | null {
-  try {
-    return localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function remember(userId: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, userId);
-  } catch {
-    // storage blocked: the choice simply is not remembered
-  }
-}
-
 export default function App() {
   const [route, setRoute] = useState<Route>(routeFromHash);
   const [users, setUsers] = useState<User[]>([]);
@@ -58,11 +42,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    apiGet<User[]>("/api/dev/users?app=consumer")
-      .then((list) => {
+    Promise.all([apiGet<User[]>("/api/dev/users"), apiGet<{ four_eyes: boolean }>("/api/health")])
+      .then(([all, health]) => {
+        const list = personaUsers(all, health.four_eyes);
         setUsers(list);
-        const saved = remembered();
-        setSelected(list.some((u) => u.id === saved) ? (saved as string) : (list[0]?.id ?? ""));
+        setSelected(initialUser(list, "consumer"));
       })
       .catch((err: unknown) => {
         setUsers([]);
@@ -102,7 +86,10 @@ export default function App() {
           <div className="who">
             <label htmlFor="dev-user">Dev user</label>
             <NativeSelect id="dev-user" data-testid="dev-user" value={selected}
-                          onChange={(e) => setSelected(e.currentTarget.value)}
+                          onChange={(e) => {
+                            const user = users.find(u => u.id === e.currentTarget.value);
+                            if (user && choosePersona(user, "consumer")) setSelected(user.id);
+                          }}
                           data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
             <span data-testid="signed-in-as">
               {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}

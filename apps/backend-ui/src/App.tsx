@@ -12,7 +12,7 @@ import StatusView from "./views/StatusView";
 import UploadView from "./views/UploadView";
 
 const TITLE = "Amaze Backend Workbench";
-const STORAGE_KEY = "amaze.backend-ui.devUser";
+import { choosePersona, initialUser, personaUsers, remember } from "../../ui-shared/devPersona";
 
 // Views, chosen by the URL hash (#/status). No router library (plan, assumption 17).
 const VIEWS = {
@@ -47,22 +47,6 @@ function feedFromHash(): string | null {
   return match ? match[1] : null;
 }
 
-function remembered(): string | null {
-  try {
-    return localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function remember(userId: string): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, userId);
-  } catch {
-    // storage blocked: the choice simply is not remembered
-  }
-}
-
 export default function App() {
   const [view, setView] = useState<View>(viewFromHash);
   const [feedId, setFeedId] = useState<string | null>(feedFromHash);
@@ -88,13 +72,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    apiGet<User[]>("/api/dev/users?app=backend")
-      .then((list) => {
+    Promise.all([apiGet<User[]>("/api/dev/users"), apiGet<{ four_eyes: boolean }>("/api/health")])
+      .then(([all, health]) => {
+        const list = personaUsers(all, health.four_eyes);
         setUsers(list);
-        const saved = remembered();
-        setSelected(list.some((u) => u.id === saved) ? (saved as string) : (list[0]?.id ?? ""));
+        setSelected(initialUser(list, "backend"));
       })
-      .catch(() => setUsers([]));
+      .catch((err: unknown) => { setUsers([]); setMeError(describeError(err)); });
   }, []);
 
   useEffect(() => {
@@ -133,7 +117,10 @@ export default function App() {
           <div className="who">
             <label htmlFor="dev-user">Dev user</label>
             <NativeSelect id="dev-user" data-testid="dev-user" value={selected} w={240} style={{ flex: "none" }}
-                          onChange={(e) => setSelected(e.currentTarget.value)}
+                          onChange={(e) => {
+                            const user = users.find(u => u.id === e.currentTarget.value);
+                            if (user && choosePersona(user, "backend")) setSelected(user.id);
+                          }}
                           data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
             <span data-testid="signed-in-as" className="who-name" aria-label="Signed in user">
               {me ? me.display_name : meError ? <span className="who-error">{meError}</span> : ""}
