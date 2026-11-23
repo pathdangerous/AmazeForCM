@@ -238,6 +238,7 @@ class StepInputs(BaseModel):
     expected_score: ExpectedScore | None = None  # go-live: the score the test load predicts (computed)
     # rules step (T7): the templates a person may pick for a rule of their own: rule_key, description, sql, element_keys
     rule_templates: list[dict[str, Any]] = []
+    completion: dict[str, Any] | None = None  # go-live (T2): the completion report, as plain data
 
 
 class Workspace(BaseModel):

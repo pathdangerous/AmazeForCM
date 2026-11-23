@@ -393,6 +393,17 @@ export type OnboardingItem = {
   origin?: "agent" | "manual"; author?: string | null; // a manual item (T7) has an author and no model call
   decided_by: string | null; decided_at: string | null; // the latest approval decision; null while pending
 };
+// T2: GET /api/amaze/feeds/{id}/completion, and `inputs.completion` at go-live
+export type Completion = {
+  feed_id: string; columns_in_file: number; ready_for_go_live: boolean; words: string[];
+  mappings: { done: number; pending: number; excluded: number; undecided: number;
+              mapped_columns: { column: string; element_key: string }[]; excluded_columns: string[] };
+  transformations: { current: { column: string; steps: string[] }[]; pending: number };
+  rules: { current: { rule_key: string; description: string; backtest_status: string; flagged_rows: number | null;
+                      total_rows: number | null; made_by: string }[]; pending: number };
+  actions: { by_agent: number; by_person: number; rejected: number; pending: number };
+  items: { agent: number; manual: number; manual_by_kind: Record<string, number>; agent_by_kind: Record<string, number> };
+};
 // A rule the rules step offers a person to pick instead of writing SQL (T7).
 export type RuleTemplate = { template: string; rule_key: string; description: string; sql: string; element_keys: string[] };
 // What a person types to add an item at a stage (core/domain/manual.py); the API answers 409 or 422 with a message.
@@ -433,6 +444,7 @@ export type StepInputs = {
   load_breakdown?: LoadBreakdown | null; // first load: per rule, the score and the next action (computed)
   expected_score?: ExpectedScore | null; // go-live: the score the test load predicts (computed)
   rule_templates?: RuleTemplate[]; // rules step: templates a person may pick (T7)
+  completion?: Completion | null; // go-live: the completion report (T2), read only
 };
 export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
 export type Visibility = "open" | "restricted";

@@ -92,3 +92,22 @@ test("the summary item that needs a decision has Approve once", () => {
   show({ items: [reviewItem({ pre_accepted: false, needs_decision: true })] });
   expect(screen.getAllByRole("button", { name: "Approve" }).length).toBe(1);
 });
+
+test("the completion report is shown in plain words with each rule's back-test and what was left out (T2)", () => {
+  const completion = {
+    feed_id: "f", columns_in_file: 4, ready_for_go_live: true,
+    words: ["3 of 4 columns mapped, 1 left out, 0 waiting for the steward, 0 not decided."],
+    mappings: { done: 3, pending: 0, excluded: 1, undecided: 0, mapped_columns: [], excluded_columns: ["Scratch"] },
+    transformations: { current: [], pending: 0 },
+    rules: { current: [{ rule_key: "px_present", description: "d", backtest_status: "ran", flagged_rows: 2, total_rows: 70, made_by: "manual" },
+                       { rule_key: "id_present", description: "d", backtest_status: "not_back_tested", flagged_rows: null, total_rows: null, made_by: "agent" }],
+             pending: 0 },
+    actions: { by_agent: 1, by_person: 1, rejected: 0, pending: 0 }, items: { agent: 5, manual: 2, manual_by_kind: {}, agent_by_kind: {} },
+  };
+  show({ inputs: stepInputs({ completion }) });
+  const box = screen.getByTestId("completion-report");
+  expect(box.textContent).toContain("3 of 4 columns mapped, 1 left out");
+  expect(box.textContent).toContain("Left out: Scratch");
+  expect(box.textContent).toContain("px_present (added by hand): flagged 2 of 70 rows in its back-test");
+  expect(box.textContent).toContain("id_present (agent): not back-tested");
+});

@@ -29,6 +29,24 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
         })}
         {counts.map((f) => <li key={f.label}>{`${f.label}: ${f.value}`}</li>)}
       </ul>
+      {ws.inputs?.completion && (
+        <div data-testid="completion-report" style={{ marginBottom: 12 }}>
+          <Text fw={600}>Completion report</Text>
+          <ul>{ws.inputs.completion.words.map((w) => <li key={w}>{w}</li>)}</ul>
+          {ws.inputs.completion.mappings.excluded_columns.length > 0 && (
+            <Text size="sm">{`Left out: ${ws.inputs.completion.mappings.excluded_columns.join(", ")}`}</Text>
+          )}
+          <ul aria-label="Rules and their back-tests" style={{ margin: "4px 0" }}>
+            {ws.inputs.completion.rules.current.map((r) => (
+              <li key={r.rule_key}>
+                {`${r.rule_key} (${r.made_by === "manual" ? "added by hand" : "agent"}): `}
+                {r.backtest_status === "ran" ? `flagged ${r.flagged_rows} of ${r.total_rows} rows in its back-test`
+                  : r.backtest_status === "not_back_tested" ? "not back-tested" : "no back-test stored"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {review && <Text mb="xs">{asText(p.summary) || review.summary}</Text>}
       {notes.length > 0 && (
         <>

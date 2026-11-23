@@ -408,6 +408,14 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     await advance_to(w, oid, "go_live")
     at_go_live = await workspace_of(w, oid)
     assert at_go_live["visibility"] == "open" and any(f["label"] == "Test load" for f in at_go_live["inputs"]["facts"])
+    # T2: the completion report, in the go-live step and as its own read-only route
+    report = await w.client.get(f"/api/amaze/feeds/{confirmed['feed_id']}/completion", headers=OP)
+    assert report.status_code == 200, report.text
+    assert report.json() == at_go_live["inputs"]["completion"]
+    assert report.json()["mappings"]["done"] > 0 and report.json()["items"]["manual"] >= 2  # the mapping and the rule
+    assert (await w.client.get(f"/api/amaze/feeds/{UUID(int=9)}/completion", headers=OP)).status_code == 404
+    assert (await w.client.get(f"/api/amaze/feeds/{confirmed['feed_id']}/completion", headers=REQUESTER)).status_code in (200, 403)
+    w.session.rollback()
     assert all(f["value"] and "0 of 0" not in f["value"] for f in at_go_live["inputs"]["facts"])
     # the owner chooses the visibility here: a next registration version, then the go-live as before
     await call(w, "POST", f"/{oid}/approve", json={"visibility": "restricted"})

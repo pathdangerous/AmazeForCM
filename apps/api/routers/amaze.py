@@ -105,6 +105,7 @@ from core.steps.s11_go_live import (
     go_live_plan,
 )
 from core.steps.s11_go_live import record_summary as record_go_live_summary  # s02 has a record_summary too
+from core.steps.completion import CompletionReport, completion_report
 from core.steps.s02_profile import decide_profile_action
 from core.steps.s02_profile import ProfileResult, ProfileSummary, profile_plan, record_profile, record_summary, \
     run_profile, summary_input
@@ -261,6 +262,16 @@ def _backend_team(identity: Identity) -> list[str]:
 @router.get("/feeds/{feed_id}", response_model=FeedPage)
 def feed_detail(feed_id: UUID, session: DbSession, catalogue: Catalogue) -> FeedPage:
     return _page(session, feed_id, catalogue)
+
+
+@router.get("/feeds/{feed_id}/completion", response_model=CompletionReport)
+def feed_completion(feed_id: UUID, session: DbSession) -> CompletionReport:
+    """Phase 7.12, T2: what is done, pending and left out before go-live, and who made each item. Read only, no model."""
+    def work():
+        FeedRepository(session).get(feed_id)  # FeedNotFound: 404
+        return completion_report(session, feed_id)
+
+    return read(session, work)
 
 
 @router.get("/owners", response_model=list[Owner])
