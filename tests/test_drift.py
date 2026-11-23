@@ -124,6 +124,22 @@ def test_the_second_delivery_reports_its_drift_proposes_actions_and_leads_to_cod
     assert v1.version == 1
 
 
+def test_the_decision_route_can_answer_for_an_action_and_for_a_column_left_out(db_session, glossary, tmp_path):
+    """The route answered 500 after committing (its result union lacked these two); found by the demo story."""
+    from apps.api.routers.amaze import DecisionResponse
+    from core.steps.feed_page import proposal_on_page
+    from core.steps.s06_map import ColumnExcluded
+
+    w = released(db_session, glossary, tmp_path)
+    deliver_v2(w)
+    action = next(a for a in drift_of_feed(db_session, w.feed_id).actions if a.action == "map_new_column")
+    decided = decide_profile_action(db_session, proposal_id=action.proposal_id, user=OPERATOR, decision="approved")
+    answer = DecisionResponse(result=decided, proposal=proposal_on_page(db_session, action.proposal_id))
+    assert answer.result.action == "map_new_column" and answer.proposal.status == "approved"
+    assert DecisionResponse(result=ColumnExcluded(proposal_id=action.proposal_id, source_field="x"),
+                            proposal=answer.proposal).result.source_field == "x"
+
+
 def test_a_person_adds_a_drift_action_by_hand(db_session, glossary, tmp_path):
     w = released(db_session, glossary, tmp_path)
     deliver_v2(w)

@@ -112,7 +112,8 @@ from core.steps.drift import DriftView, add_drift_action, drift_of_feed
 from core.repositories.code_versions import CodeVersionNotFound, CodeVersionRepository
 from core.steps.codegen import code_for_feed
 from core.steps.completion import CompletionReport, completion_report
-from core.steps.s02_profile import decide_profile_action
+from core.steps.s02_profile import ProfileActionDecided, decide_profile_action
+from core.steps.s06_map import ColumnExcluded
 from core.steps.s02_profile import ProfileResult, ProfileSummary, profile_plan, record_profile, record_summary, \
     run_profile, summary_input
 from core.steps.s03_signoff import SignoffResult, sign_off
@@ -510,7 +511,8 @@ class DecisionBody(BaseModel):
 
 class DecisionResponse(BaseModel):
     result: (Mapped | MappingRejected | ElementDecided | RuleAwaitsChecker | RuleStored | RuleRejected
-             | ApprovedScheduled | RejectedBackToStep | TransformationStored | TransformationRejected)
+             | ApprovedScheduled | RejectedBackToStep | TransformationStored | TransformationRejected
+             | ColumnExcluded | ProfileActionDecided)  # 7.12: a column left out (T7); a profile or drift action (T1, T4)
     proposal: ProposalOnPage
 
 
