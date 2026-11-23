@@ -22,6 +22,10 @@ export type DomainCount = { domain: string; label: string; count: number };
 // Read-only operational facts. Missing certification is null, never a fabricated zero.
 export type OperationsOverview = {
   days: number;
+  // phase 7.12, T5: deliveries that drifted in the period, and the actions selected in it by who carries them out
+  drift_events?: { load_id: string; feed_id: string; feed_code: string; at: string; outcome: string | null; new_columns: number;
+                   missing_columns: number; type_changes: number; order_changed: boolean }[];
+  actions?: { by_agent: number; by_hand: number; pending: number };
   feeds_live: number;
   feeds_paused: number;
   onboardings_active: number;

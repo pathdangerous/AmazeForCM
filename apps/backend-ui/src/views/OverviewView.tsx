@@ -52,6 +52,10 @@ export default function OverviewView({ devUser }: { devUser: string }) {
     <div className="page-heading">
       <div><div className="breadcrumbs">Home / Overview</div><h1>Operations overview</h1></div>
       <div className="page-actions">
+        <div role="group" aria-label="View" data-testid="overview-view">
+          <button type="button" className="amz-button" aria-pressed={days === 1} onClick={() => setDays(1)}>Daily</button>
+          <button type="button" className="amz-button" aria-pressed={days === 30} onClick={() => setDays(30)}>Monthly</button>
+        </div>
         <label>Period<select value={days} onChange={(event) => setDays(Number(event.currentTarget.value) as 1 | 7 | 30)}>
           <option value={7}>Last 7 days</option><option value={1}>Last 24 hours</option><option value={30}>Last 30 days</option>
         </select></label>
@@ -90,6 +94,15 @@ export default function OverviewView({ devUser }: { devUser: string }) {
             </div>)}
           </SectionCard>}
         </div>
+        {data.actions && <SectionCard title={days === 1 ? "Drift and actions today" : days === 30 ? "Drift and actions this month" : "Drift and actions"}>
+          <div data-testid="overview-actions">
+            <p>{`Actions selected in the period: ${data.actions.by_agent} applied by agents, ${data.actions.by_hand} done by hand; ${data.actions.pending} waiting for a decision.`}</p>
+            {(data.drift_events ?? []).length === 0 ? <p className="overview-note">No delivery drifted in this period.</p>
+              : <ul data-testid="overview-drift">{(data.drift_events ?? []).map((e) => <li key={e.load_id}>
+                <a href={`#/feed/${e.feed_id}`}>{e.feed_code}</a>{` ${formatWhen(e.at)}: ${e.new_columns} new, ${e.missing_columns} missing, ${e.type_changes} type changes${e.order_changed ? ", order changed" : ""}`}
+              </li>)}</ul>}
+          </div>
+        </SectionCard>}
         <SectionCard title="Recent loads" bare actions={<div className="page-actions">
           <span className="overview-note">All loads in period · scheduled and go-live tests</span>
           <div className="column-chooser">

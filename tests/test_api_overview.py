@@ -96,3 +96,38 @@ async def test_pending_decisions_are_real_and_limited_to_the_callers_roles(clien
     }]
     checker = (await client.get("/api/amaze/overview", headers={"X-Dev-User": "dev-checker"})).json()
     assert checker["pending_decisions"] == []
+
+
+async def test_a_pending_manual_or_rule_made_item_is_in_the_queue_with_who_made_it(client, db_session):
+    """7.12: an item with no logged call (a person's, or code's) must not vanish from the queue."""
+    from core.repositories.proposals import ProposalRepository
+
+    feed = FeedRepository(db_session).create_candidate(code="overview_made", name="Made")
+    repo = ProposalRepository(db_session)
+    by_hand = repo.create_manual(kind="mapping", feed_id=feed.id, author="dev-operator", required_approver_roles=["data_steward"],
+                                 payload={"source_field": "px", "column_type": None, "candidates": ["x"], "recommended": "x",
+                                          "reason": "By hand."})
+    by_rules = repo.create_by_rule(kind="profile_action", feed_id=feed.id, required_approver_roles=["backend_team"],
+                                   payload={"action": "map_new_column", "columns": ["c"], "reason": "New.", "applied_by": "agent"})
+    queue = {p["proposal_id"]: p for p in (await client.get("/api/amaze/overview", headers=OPERATOR)).json()["pending_decisions"]}
+    assert queue[str(by_hand.id)]["agent"] == "added by dev-operator"
+    assert queue[str(by_rules.id)]["agent"] == "rules"
+
+
+async def test_the_overview_counts_drift_events_and_actions_by_who_applies_them(client, db_session):
+    from core.repositories.proposals import ProposalRepository
+    from tests.conftest import dev_user_for
+
+    feed = FeedRepository(db_session).create_candidate(code="overview_drift", name="Drift")
+    registered_feed(db_session, feed.id)
+    repo = ProposalRepository(db_session)
+    for applied in ("agent", "agent", "manual"):
+        p = repo.create_by_rule(kind="profile_action", feed_id=feed.id, required_approver_roles=["backend_team"],
+                                payload={"action": "map_new_column", "columns": ["c"], "reason": "New.", "applied_by": applied})
+        repo.record_decision(p.id, user=dev_user_for("backend_team"), decision="approved")
+    repo.create_by_rule(kind="profile_action", feed_id=feed.id, required_approver_roles=["backend_team"],
+                        payload={"action": "review_rule", "columns": [], "reason": "Up.", "applied_by": "manual"})
+    data = (await client.get("/api/amaze/overview?days=30", headers=OPERATOR)).json()
+    assert data["actions"] == {"by_agent": 2, "by_hand": 1, "pending": 1}
+    assert data["drift_events"] == []  # no delivery drifted: nothing is invented
+    assert (await client.get("/api/amaze/overview?days=1", headers=OPERATOR)).json()["days"] == 1

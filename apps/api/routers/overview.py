@@ -58,8 +58,32 @@ class Quality(BaseModel):
     by_feed: list[FeedQuality]
 
 
+class DriftEvent(BaseModel):
+    """T4: a delivery that drifted from the last accepted structure (step 12's report, as stored on the load)."""
+
+    load_id: UUID
+    feed_id: UUID
+    feed_code: str
+    at: datetime
+    outcome: str | None
+    new_columns: int
+    missing_columns: int
+    type_changes: int
+    order_changed: bool
+
+
+class ActionCounts(BaseModel):
+    """Profile and drift actions a person selected in the period, by who carries them out; and those still waiting."""
+
+    by_agent: int
+    by_hand: int
+    pending: int
+
+
 class Overview(BaseModel):
     days: int
+    drift_events: list[DriftEvent] = []
+    actions: ActionCounts = ActionCounts(by_agent=0, by_hand=0, pending=0)
     feeds_live: int
     feeds_paused: int
     onboardings_active: int
@@ -122,7 +146,7 @@ def overview(
     proposals = session.execute(
         select(ProposalRow, FeedRow, ProposalLogEntry.agent_name, OnboardingSessionRow.id)
         .join(FeedRow, FeedRow.id == ProposalRow.feed_id)
-        .join(ProposalLogEntry, ProposalLogEntry.id == ProposalRow.proposal_log_id)
+        .outerjoin(ProposalLogEntry, ProposalLogEntry.id == ProposalRow.proposal_log_id)  # a manual or rule-made item has none
         .outerjoin(OnboardingSessionRow, OnboardingSessionRow.feed_id == FeedRow.id)
         .where(ProposalRow.status == "pending",
                ProposalRow.required_approver_roles.op("&&")(user.roles))
@@ -131,6 +155,7 @@ def overview(
     pending = []
     for proposal, feed, agent, session_id in proposals:
         payload = proposal.payload
+        agent = agent or ("rules" if proposal.origin == "rule" else f"added by {proposal.author}")
         summary = next((payload[key] for key in ("summary", "reason", "source_field", "column")
                         if isinstance(payload.get(key), str) and payload[key]), proposal.kind.replace("_", " "))
         pending.append(PendingDecision(
@@ -138,7 +163,22 @@ def overview(
             session_id=session_id, kind=proposal.kind, summary=summary, agent=agent,
             confidence=_confidence(payload),
         ))
+    drift_events = []
+    for load, feed, _ in records:
+        found = (load.arrival_detail or {}).get("drift")
+        if found and load.purpose == "scheduled":
+            drift_events.append(DriftEvent(
+                load_id=load.id, feed_id=feed.id, feed_code=feed.code, at=load.received_at, outcome=load.arrival_outcome,
+                new_columns=len(found.get("new_columns", [])), missing_columns=len(found.get("missing_columns", [])),
+                type_changes=len(found.get("type_changes", [])), order_changed=bool(found.get("order_changed"))))
+    actions = session.execute(select(ProposalRow.status, ProposalRow.payload, ProposalRow.decided_at)
+                              .where(ProposalRow.kind == "profile_action")).all()
+    selected = [payload for status, payload, decided in actions if status == "approved" and decided is not None and decided >= since]
+    counts = ActionCounts(by_agent=sum(p.get("applied_by") == "agent" for p in selected),
+                          by_hand=sum(p.get("applied_by") == "manual" for p in selected),
+                          pending=sum(status == "pending" for status, _, _ in actions))
     return Overview(
+        drift_events=drift_events, actions=counts,
         days=days, feeds_live=stages.get("registered", 0), feeds_paused=stages.get("paused", 0),
         onboardings_active=active, loads_count=len(recent),
         average_trust_score=sum(scores) / len(scores) if scores else None,

@@ -114,6 +114,12 @@ def test_the_second_delivery_reports_its_drift_proposes_actions_and_leads_to_cod
     assert any(a["proposal_id"] == str(action.proposal_id) and a["action"] == "map_new_column"
                for a in __import__("core.steps.s02_profile", fromlist=["x"]).selected_actions(db_session, w.feed_id))
 
+    from apps.api.routers.overview import overview
+
+    shown = overview(OPERATOR, db_session, w.settings, days=1)  # the Daily view: this delivery's drift, and the action counts
+    assert [(e.feed_code, e.new_columns, e.order_changed) for e in shown.drift_events] == [("syn_security_master", 1, True)]
+    assert shown.actions.by_agent >= 1 and shown.actions.pending >= 0
+
     assert len(CodeVersionRepository(db_session).list_for_feed(w.feed_id)) == 1  # nothing new until the next go-live
     assert v1.version == 1
 
