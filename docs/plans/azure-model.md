@@ -19,4 +19,13 @@ and report aggregate calls and mean latency without model/deployment identifiers
 
 ## Results
 
-Pending verification.
+- Launcher RED: 2 failed; GREEN: 2 passed in 0.33s.
+- Dev health: HTTP 200, llm=azure_openai, unavailable=none.
+- Live suite: 12 passed, 3279 deselected in 24.28s. Ten successful agent calls,
+  11 HTTP requests including a retry, mean latency 1676.1ms. The other two checks
+  are the call-budget guard and the existing live-marker selection test.
+- Secret-value scan passed for the diff and new files; no credential values emitted.
+- Default mock suite: 3279 passed in 241.23s (0:04:01), exit 0, with live tests
+  excluded and external HTTP transports blocked for unmarked tests.
+- Restored main's single exposed port mapping after Replit's automatic port additions;
+  the final configuration diff contains only the requested Azure environment changes.

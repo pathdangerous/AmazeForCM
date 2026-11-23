@@ -20,6 +20,32 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
 from ports.secrets.base import SecretNotFound
+
+
+@pytest.fixture(autouse=True)
+def block_external_http_in_non_live_tests(request, monkeypatch):
+    """Real Azure credentials may exist in Secrets; only marked live tests may use them."""
+    if request.node.get_closest_marker("live"):
+        return
+    import httpx
+    import httpx2
+
+    for module in (httpx, httpx2):
+        original = module.HTTPTransport.handle_request
+        original_async = module.AsyncHTTPTransport.handle_async_request
+
+        def guarded(self, req, _original=original):
+            if req.url.host not in ("localhost", "127.0.0.1", "::1"):
+                raise AssertionError("Non-live tests cannot make external HTTP calls")
+            return _original(self, req)
+
+        async def guarded_async(self, req, _original=original_async):
+            if req.url.host not in ("localhost", "127.0.0.1", "::1"):
+                raise AssertionError("Non-live tests cannot make external HTTP calls")
+            return await _original(self, req)
+
+        monkeypatch.setattr(module.HTTPTransport, "handle_request", guarded)
+        monkeypatch.setattr(module.AsyncHTTPTransport, "handle_async_request", guarded_async)
 from ports.secrets.env import EnvSecrets
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

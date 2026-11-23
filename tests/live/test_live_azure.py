@@ -24,6 +24,9 @@ from agents.registry import PROMPT_VERSIONS
 from agents.review_summariser import ReviewSummariserAgent
 from agents.rule_recommender import RuleRecommenderAgent
 from agents.source_discovery import SourceDiscoveryAgent
+from agents.table_extractor import TableExtractorAgent
+from agents.transformation import TransformationAgent
+from core.domain.transformation import ColumnToTransform, TransformationInput
 from core.domain.glossary import GlossaryElementDraft
 from core.domain.go_live import ReviewSummaryInput
 from core.domain.mapping import ColumnToMap, GlossaryBuilderInput, MappingInput, NewColumn
@@ -34,8 +37,8 @@ from core.domain.sourcing import (AssistantInput, CandidateRef, ChannelRef, Cove
 from core.steps.candidates import candidate_list
 from ports.llm.azure_openai import AzureOpenAIProvider
 from ports.llm.base import LLMResult
-from ports.storage.local import LocalBlobStore
 from tests.onboarded import COLUMN
+from tests.test_agent_table_extractor import extraction_input
 
 pytestmark = pytest.mark.live
 
@@ -45,11 +48,22 @@ GLOSSARY = [GlossaryElementDraft(**{k: e[k] for k in ("key", "name", "domain", "
             for e in json.loads(SEED.read_text(encoding="utf-8"))["elements"]]
 FEED = uuid.uuid4()
 calls: list[str] = []
+latencies: list[int] = []
+http_requests = 0
 
 
 @pytest.fixture(scope="module")
-def blobs(tmp_path_factory):
-    return LocalBlobStore(tmp_path_factory.mktemp("live-blob"))
+def blobs():
+    class MemoryBlobs:
+        def __init__(self):
+            self.rows = {}
+
+        def put(self, key, data):
+            self.rows[key] = data
+
+        def exists(self, key):
+            return key in self.rows
+    return MemoryBlobs()
 
 
 @pytest.fixture(scope="module")
@@ -69,7 +83,9 @@ def ask(provider, blobs, agent_cls, agent_input) -> LLMResult:
     assert isinstance(agent_input, agent_cls.input_schema)
     result = provider.complete(prompt_id=prompt_id, prompt_version=PROMPT_VERSIONS[prompt_id],
                                messages=prompt.render(agent_input), response_schema=agent_cls.output_schema)
-    print(f"live {prompt_id}: latency_ms={result.latency_ms} model_version={result.model_version}")
+    global http_requests
+    http_requests = provider.requests_made
+    latencies.append(result.latency_ms)
     assert isinstance(result.output, agent_cls.output_schema)
     assert result.latency_ms > 0
     assert result.model_version
@@ -155,3 +171,17 @@ def test_review_summariser(provider, blobs):
 
 def test_the_call_count_stays_within_the_guard(provider):
     assert len(calls) <= MAX_CALLS
+
+
+def test_table_extractor(provider, blobs):
+    ask(provider, blobs, TableExtractorAgent, extraction_input())
+
+
+def test_transformation(provider, blobs):
+    column = ColumnToTransform(
+        source_field="ticker", element_key="ticker", element_type="string", duckdb_type="VARCHAR",
+        null_count=0, row_count=3, placeholder_values=[], placeholder_count=0,
+        text_date_format=None, date_format_ambiguous=False, all_empty=False, constant=False,
+    )
+    ask(provider, blobs, TransformationAgent, TransformationInput(
+        feed_id=FEED, feed_code="syn_live", columns=[column]))
