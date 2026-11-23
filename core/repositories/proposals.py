@@ -55,6 +55,18 @@ class ProposalRepository:
         self._session.flush()
         return Proposal.model_validate(row)
 
+    def create_manual(self, *, kind: ProposalKind, payload: dict[str, Any], required_approver_roles: list[str],
+                      feed_id: UUID, author: str) -> Proposal:
+        """A proposal made by a person (migration 0028): pending, autonomy A1, `author` set, and NO logged call: no model
+        was called, and a made-up proposal_log row would be a false record (rule 4). The database refuses a manual item
+        with a log row or without an author, and any kind but the four a person may add."""
+        draft = ProposalDraft(kind=kind, payload=payload, autonomy="A1", required_approver_roles=required_approver_roles,
+                              feed_id=feed_id)
+        row = ProposalRow(proposal_log_id=None, origin="manual", author=author, status="pending", **draft.model_dump())
+        self._session.add(row)
+        self._session.flush()
+        return Proposal.model_validate(row)
+
     def get(self, proposal_id: UUID) -> Proposal:
         return Proposal.model_validate(self._row(proposal_id))
 

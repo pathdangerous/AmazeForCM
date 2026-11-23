@@ -49,6 +49,7 @@ from core.repositories.errors import (
     ConfigurationChangedMeanwhile,
     FeedNotProfiled,
     FeedNotRegistered,
+    ManualRuleRefused,
     NotAnApprover,
     NothingToMap,
     ProposalAlreadyDecided,
@@ -344,6 +345,26 @@ def _one_delivery(content: bytes, columns, live, timeout: float, steps_of=None):
         return (rows, results), None
     finally:
         box.close()
+
+
+# ---------------------------------------------------------------- a rule a person wrote (phase 7.11, T7)
+
+
+def check_manual_rule(agent_input: RuleRecommenderInput, rule: ProposedRule, *, own_key: str | None = None,
+                      connector_factory: Callable[[str], SourceConnector], rule_timeout_seconds: float,
+                      blob_store: BlobStore | None = None) -> ProposedRule:
+    """Back-test a rule a person added or edited with exactly the code an agent's rules go through (_checked), no
+    session and no connection held. `own_key` is the rule's key when it is an edit of a pending proposal (that key is
+    taken by the proposal being edited). Returns the rule with its back-test; ManualRuleRefused says why not: a refusal
+    (not a plain SELECT, an element the feed does not map, an error or timeout), or more than half the history flagged."""
+    if own_key is not None:
+        agent_input = agent_input.model_copy(update={
+            "existing_keys": [k for k in agent_input.existing_keys if k != own_key]})
+    checked = _checked(agent_input, RuleRecommenderOutput(rules=[rule]), connector_factory, rule_timeout_seconds,
+                       blob_store).rules[0]
+    if checked.verdict != "kept":
+        raise ManualRuleRefused(checked.reason or "The rule did not pass its back-test.")
+    return checked
 
 
 # ---------------------------------------------------------------- propose

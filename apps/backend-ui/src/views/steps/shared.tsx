@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { OnboardingItem, Workspace } from "../../api";
+import type { ManualItemBody, OnboardingItem, Workspace } from "../../api";
 
 // What the workspace view hands to every step panel: the item decisions and the edit in progress.
 export type ItemActions = {
@@ -13,6 +13,9 @@ export type ItemActions = {
   startEdit: (item: OnboardingItem) => void;
   saveEdit: (item: OnboardingItem, payload: Record<string, unknown>) => void;
   cancelEdit: () => void;
+  // T7: add an item by hand at this stage; true when it was added (the form closes), false when the API refused it
+  add?: (body: ManualItemBody) => Promise<boolean>;
+  addError?: string | null; // the API's message for the last refused add
 };
 
 export type PanelProps = { ws: Workspace; items: OnboardingItem[]; actions: ItemActions };

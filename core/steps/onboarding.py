@@ -38,13 +38,14 @@ import logging
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from core.domain.manual import ManualGlossary, ManualMapping, ManualNote, ManualRule, ManualTransformation
 from core.domain.mapping import GlossaryProposalPayload, MappingProposalPayload
 from core.domain.onboarding import (
     ONBOARDING_STEPS,
@@ -61,13 +62,18 @@ from core.domain.onboarding import (
     Workspace,
 )
 from core.domain.proposal import Proposal
-from core.domain.rules import RuleProposalPayload
+from core.domain.rules import ProposedRule, RuleProposalPayload, RuleRecommenderInput
 from core.domain.transformation import TransformationProposalPayload
 from core.engine.run import execute_load, plan_load, record_load
 from core.repositories.errors import (
     BackNotAllowed,
+    ColumnAlreadyMapped,
     DecisionNeeded,
+    FeedNotProfiled,
+    FeedNotRegistered,
+    ItemAlreadyPending,
     JobSuperseded,
+    ManualItemRefused,
     NotAnApprover,
     NothingToMap,
     NothingToTransform,
@@ -75,6 +81,7 @@ from core.repositories.errors import (
     ProposalEditRefused,
     RunSuperseded,
     SameApproverTwice,
+    SourceFieldNotMapped,
     StepJobActive,
     StepNotEnterable,
     StepNotReady,
@@ -104,7 +111,14 @@ from core.steps.s03_signoff import sign_off
 from core.steps.s04_register import NoOwner, register_feed, revise_visibility
 from core.steps.s05_glossary import builder_input, claim_run, decide_element, fail_run, record_run
 from core.steps.s06_map import decide_mapping, mapping_input, record_mappings
-from core.steps.s09_rules import RuleAwaitsChecker, backtest_for, decide_rule, record_rules, rules_input
+from core.steps.s09_rules import (
+    RuleAwaitsChecker,
+    backtest_for,
+    check_manual_rule,
+    decide_rule,
+    record_rules,
+    rules_input,
+)
 from core.steps.s10_transform import (
     decide_transformation,
     effective_key_policy,
@@ -279,6 +293,8 @@ def _describe(proposal: Proposal, confidence: float | None = None) -> tuple[str 
         reason = _built_reason(kind, p, confidence)
     if kind == "mapping":
         chosen = p.get("recommended")
+        if p.get("excluded"):
+            return p.get("source_field"), f"{p.get('source_field')}: left out (not loaded)", reason
         return p.get("source_field"), (f"{p.get('source_field')} -> {chosen}" if chosen
                                        else f"{p.get('source_field')}: tie between {', '.join(p.get('candidates', []))}"), reason
     if kind == "glossary_element":
@@ -316,7 +332,10 @@ def _step_items(session: Session, sess: OnboardingSession, step: str) -> list[On
     accepted = {e.proposal_id for e in events if e.event == "pre_accepted" and e.proposal_id is not None}
     proposals = ProposalRepository(session)
     items = []
-    for raw in answers[-1].detail.get("proposal_ids", []):
+    # T7: what people added after the agent's latest answer sits beside its proposals
+    added = [str(e.proposal_id) for e in events[events.index(answers[-1]) + 1:]
+             if e.step == step and e.event == "item_added" and e.proposal_id is not None]
+    for raw in [*answers[-1].detail.get("proposal_ids", []), *added]:
         chain = _chain(session, raw)
         tip = chain[-1]
         approvals = proposals.approvals(tip.id)
@@ -330,7 +349,8 @@ def _step_items(session: Session, sess: OnboardingSession, step: str) -> list[On
             confidence=confidence, pre_accepted=is_accepted,
             needs_decision=tip.status == "pending" and not is_accepted and waiting is None, waiting_for=waiting,
             edited=tip.edited_from is not None, edited_by=tip.edited_by, edited_from=tip.edited_from, reason=reason,
-            payload=tip.payload, decided_by=approvals[-1].decided_by if approvals else None,
+            payload=tip.payload, origin=tip.origin, author=tip.author,
+            decided_by=approvals[-1].decided_by if approvals else None,
             decided_at=approvals[-1].created_at if approvals else None))
     return items
 
@@ -883,6 +903,13 @@ def _approve_profile(session: Session, sess: OnboardingSession, pending: list[On
 
 
 def _checked_payload(kind: str, payload: dict[str, Any]) -> None:
+    if kind == "mapping" and payload.get("excluded"):
+        raise ProposalEditRefused("A column that is left out has nothing to edit: reject the item and add it again")
+    if kind == "review_summary":  # the database lets only the notes change; here, that they are notes
+        notes = payload.get("notes", [])
+        if not isinstance(notes, list) or not all(isinstance(n, dict) and str(n.get("text", "")).strip() for n in notes):
+            raise ProposalEditRefused("The notes of a review summary are a list of notes, each with its text")
+        return
     model = {"glossary_element": GlossaryProposalPayload, "mapping": MappingProposalPayload,
              "transformation": TransformationProposalPayload, "rule": RuleProposalPayload}.get(kind)
     if model is None:
@@ -920,6 +947,159 @@ def edit_item(session: Session, *, session_id: UUID, proposal_id: UUID, payload:
     return new
 
 
+# ---------------------------------------------------------------- add an item by hand (phase 7.11, T7; migration 0028)
+
+# who decides a manual item: the roles of the agent whose item it stands in for (agents/<name>.py approver_roles)
+MANUAL_ROLES: dict[str, list[str]] = {"glossary_element": ["glossary_owner"], "mapping": ["data_steward"],
+                                      "transformation": ["data_steward"], "rule": ["data_steward", "checker"]}
+
+
+def _step_for_adding(session: Session, session_id: UUID, kind: str) -> tuple[OnboardingSession, str]:
+    sess = _locked(session, session_id)
+    step = sess.current_step
+    if sess.status == "done" or STEP_OF_KIND.get(kind) != step:
+        raise StepNotEnterable(f"A {kind} item is added at {STEP_OF_KIND.get(kind, 'no step')}; "
+                               f"this onboarding is on {step}")
+    if sess.step_states[step] not in ("ready", "needs_decision"):
+        raise StepNotReady(f"{step} is {sess.step_states[step]}: add items once the step has its answer")
+    return sess, step
+
+
+def _profile_column(session: Session, feed_id: UUID, column: str):
+    profile = FeedProfileRepository(session).latest(feed_id)
+    found = next((c for c in profile.columns if c.name == column), None) if profile else None
+    if found is None:
+        raise ManualItemRefused(f"The file has no column {column!r}")
+    return found
+
+
+def _rule_from(item: ManualRule, agent_input: RuleRecommenderInput) -> ProposedRule:
+    """A ProposedRule from the template the person picked (its rule key, among the offers), or the person's own."""
+    if item.template is None:
+        return ProposedRule(rule_key=item.rule_key, description=item.description, sql=item.sql,
+                            element_keys=list(item.element_keys), template=None)
+    offers = [o for e in agent_input.elements for o in e.templates] + list(agent_input.feed_templates)
+    offer = next((o for o in offers if o.rule_key == item.template), None)
+    if offer is None:
+        raise ManualItemRefused(f"No template with the rule key {item.template!r} is offered for this feed")
+    return ProposedRule(rule_key=offer.rule_key, description=offer.description, sql=offer.sql,
+                        element_keys=list(offer.element_keys), template=offer.template)
+
+
+def manual_rule_input(session: Session, *, session_id: UUID, item: ManualRule | None, ctx: OnboardingContext,
+                      edit_of: UUID | None = None, edited: dict[str, Any] | None = None
+                      ) -> tuple[RuleRecommenderInput, ProposedRule, str | None]:
+    """Read only: what the back-test of a rule a person wrote needs (step 09's input), the rule, and the key of the
+    pending proposal it edits. Called first, then the transaction ends, then check_manual_rule() runs with no connection
+    held, then add_item() (or edit_item()) writes. ItemAlreadyPending, ManualItemRefused, and step 09's own refusals
+    of the feed (FeedNotRegistered, NothingToMap)."""
+    sess = OnboardingRepository(session).get(session_id)
+    agent_input = rules_input(session, feed_id=sess.feed_id, catalogue=_catalogue(session, ctx.settings))
+    if edit_of is not None:  # an edit of a pending rule (an agent's or a person's): its new SQL is back-tested too
+        old = ProposalRepository(session).get(edit_of)
+        _checked_payload("rule", edited or {})
+        rule = ProposedRule(rule_key=old.payload["rule_key"], description=edited["description"], sql=edited["sql"],
+                            element_keys=list(edited["element_keys"]), template=edited.get("template"))
+        return agent_input, rule, old.payload["rule_key"]
+    rule = _rule_from(item, agent_input)
+    if any(p.payload["rule_key"] == rule.rule_key
+           for p in ProposalRepository(session).list_for_feed(sess.feed_id, "rule", "pending")):
+        raise ItemAlreadyPending(f"Rule {rule.rule_key} already has a pending item: edit or reject it first")
+    return agent_input, rule, None
+
+
+def checked_rule_payload(agent_input: RuleRecommenderInput, rule: ProposedRule, own_key: str | None, *,
+                         ctx: OnboardingContext) -> dict[str, Any]:
+    """No session. The rule's payload with its back-test, or ManualRuleRefused."""
+    checked = check_manual_rule(agent_input, rule, own_key=own_key, connector_factory=ctx.connector,
+                                rule_timeout_seconds=ctx.settings.rule_timeout_seconds, blob_store=ctx.blob_store)
+    return RuleProposalPayload(rule_key=checked.rule_key, sql=checked.sql, description=checked.description,
+                               element_keys=checked.element_keys, template=checked.template,
+                               backtest=checked.backtest).model_dump(mode="json")
+
+
+def _manual_payload(session: Session, feed_id: UUID, item, rule_payload: dict[str, Any] | None) -> dict[str, Any]:
+    proposals, glossary = ProposalRepository(session), GlossaryRepository(session)
+    if isinstance(item, ManualRule):
+        if rule_payload is None:
+            raise ManualItemRefused("A rule is back-tested before it is added: use manual_rule_input() and "
+                                    "checked_rule_payload() first")
+        return rule_payload
+    column = _profile_column(session, feed_id, item.source_field)
+    if proposals.pending_for_column(item.kind, feed_id, item.source_field) is not None:
+        raise ItemAlreadyPending(f"Column {item.source_field!r} already has a pending {item.kind} item: "
+                                 "edit or reject it first")
+    mappings = {m.source_field: m.element_key for m in MappingRepository(session).current_for_feed(feed_id)}
+    if isinstance(item, ManualGlossary):
+        exists = glossary.exists(item.option.key)
+        if item.option.kind == "new_element" and exists:
+            raise ManualItemRefused(f"{item.option.key} is already in the glossary: add an alias to it instead")
+        if item.option.kind == "alias" and not exists:
+            raise ManualItemRefused(f"{item.option.key} is not in the glossary: add it as a new element instead")
+        return GlossaryProposalPayload(
+            source_field=item.source_field, outcome="proposed" if item.option.kind == "new_element" else "duplicate_alias",
+            options=[item.option], recommended=0, reason=item.reason, run_id=None).model_dump(mode="json")
+    if isinstance(item, ManualMapping):
+        if item.excluded:
+            if item.source_field in mappings:
+                raise ColumnAlreadyMapped(f"Column {item.source_field!r} is mapped to {mappings[item.source_field]}: "
+                                          "only an unmapped column is left out")
+            return {"source_field": item.source_field, "column_type": column.type, "candidates": [],
+                    "recommended": None, "reason": item.reason, "excluded": True}
+        if not glossary.exists(item.element_key):
+            raise ManualItemRefused(f"{item.element_key} is not in the glossary")
+        return MappingProposalPayload(source_field=item.source_field, column_type=column.type,
+                                      candidates=[item.element_key], recommended=item.element_key,
+                                      reason=item.reason).model_dump(mode="json")
+    if isinstance(item, ManualTransformation):
+        if item.source_field not in mappings:
+            raise SourceFieldNotMapped(f"Column {item.source_field!r} has no mapping; map it before cleaning it")
+        return TransformationProposalPayload(
+            source_field=item.source_field, element_key=mappings[item.source_field],
+            steps=[s.model_dump(mode="json") for s in item.steps], reason=item.reason,
+            confidence=1.0).model_dump(mode="json")
+    raise ManualItemRefused(f"A {item.kind} item cannot be added")
+
+
+def add_item(session: Session, *, session_id: UUID, item, user: User,
+             rule_payload: dict[str, Any] | None = None) -> Proposal:
+    """A person adds an item to the current step. A manual item is a proposal like any other (rule 1): origin `manual`,
+    `author`, pending until approved, and no model call, so no proposal_log row (migration 0028 refuses a log row on it).
+    The author's own acceptance counts as an edit's does (`pre_accepted` by the author); with four-eyes on, the approval
+    steps still need a second person. A rule needs its `rule_payload` (checked_rule_payload(): the back-test). On a go-live
+    note the summary is edited, not added to: its notes are the only thing that changes (`edited` event).
+    StepNotEnterable, StepNotReady, ItemAlreadyPending, ColumnAlreadyMapped, SourceFieldNotMapped, ManualItemRefused,
+    ManualRuleRefused (from checked_rule_payload), NotAnApprover."""
+    sess, step = _step_for_adding(session, session_id, item.kind)
+    sessions, proposals = OnboardingRepository(session), ProposalRepository(session)
+    if isinstance(item, ManualNote):
+        return _add_note(session, sess, step, item, user)
+    roles = MANUAL_ROLES[item.kind]
+    if not set(roles) & set(user.roles):
+        raise NotAnApprover(f"A {item.kind} item is decided by {roles}; {user.id} has {user.roles}")
+    payload = _manual_payload(session, sess.feed_id, item, rule_payload)
+    created = proposals.create_manual(kind=item.kind, payload=payload, required_approver_roles=roles,
+                                      feed_id=sess.feed_id, author=user.id)
+    sessions.add_event(session_id, step=step, event="item_added", actor=user.id, proposal_id=created.id,
+                       detail={"author": user.id, "author_name": user.display_name, "kind": item.kind})
+    sessions.add_event(session_id, step=step, event="pre_accepted", actor=user.id, proposal_id=created.id,
+                       detail={"reason": "added by the person who will approve it"})
+    sessions.set_step_state(session_id, step, _settled_state(_step_items(session, sessions.get(session_id), step)))
+    return created
+
+
+def _add_note(session: Session, sess: OnboardingSession, step: str, item: ManualNote, user: User) -> Proposal:
+    pending = [i for i in _step_items(session, sess, step) if i.kind == "review_summary" and i.status == "pending"]
+    if not pending:
+        raise StepNotReady("There is no go-live summary waiting for a note")
+    old = pending[0]
+    note = {"author": user.id, "author_name": user.display_name, "text": item.note,
+            "at": datetime.now(UTC).isoformat()}
+    payload = {**old.payload, "notes": [*old.payload.get("notes", []), note]}
+    new = edit_item(session, session_id=sess.id, proposal_id=old.proposal_id, payload=payload, user=user)
+    return new
+
+
 # ---------------------------------------------------------------- what the audit trail and the screen read
 
 
@@ -931,9 +1111,30 @@ def timeline(session: Session, *, session_id: UUID) -> list[TimelineEntry]:
                              proposal_id=e.proposal_id, detail=e.detail)
                for e in OnboardingRepository(session).events(session_id)]
     proposals = ProposalRepository(session)
+    names = {e.proposal_id: e.detail.get("author_name") for e in OnboardingRepository(session).events(session_id)
+             if e.event == "item_added"}
     for kinds in STEP_KINDS.values():
         for kind in kinds:
             for p in proposals.list_for_feed(sess.feed_id, kind):
+                if p.origin == "manual":  # no model call, so no logged call to show (migration 0028)
+                    who = names.get(p.id) or p.author
+                    facts = {"kind": p.kind, "status": p.status, "origin": "manual", "author": p.author,
+                             "author_name": who}
+                    if p.edited_from is not None:
+                        entries.append(TimelineEntry(
+                            at=p.created_at, kind="edit", actor=p.edited_by or "unknown", step=STEP_OF_KIND[kind],
+                            title=f"{kind} edited", proposal_id=p.id,
+                            detail={**facts, "edited_from": str(p.edited_from), "edited_by": p.edited_by}))
+                    else:
+                        entries.append(TimelineEntry(at=p.created_at, kind="proposal", actor=p.author or "unknown",
+                                                     step=STEP_OF_KIND[kind], title=f"{kind} added by {who}",
+                                                     proposal_id=p.id, detail=facts))
+                    for a in proposals.approvals(p.id):
+                        entries.append(TimelineEntry(
+                            at=a.created_at, kind="approval", actor=a.decided_by, step=STEP_OF_KIND[kind],
+                            title=f"{kind} {a.decision} ({a.role}, step {a.step})", proposal_id=p.id,
+                            detail={"decision": a.decision, "role": a.role, "step": a.step, "note": a.note}))
+                    continue
                 call = session.get(ProposalLogEntry, p.proposal_log_id)
                 facts = {"kind": p.kind, "status": p.status, "agent": call.agent_name, "provider": call.provider,
                          "model": call.model, "model_version": call.model_version, "prompt_id": call.prompt_id,
@@ -1006,6 +1207,27 @@ def _fact(facts: list[InputFact], label: str, count: int | None, unit: str = "")
         facts.append(InputFact(label=label, value=f"{count}{unit}"))
 
 
+def _unused_rule_templates(session: Session, feed_id: UUID, settings: Settings) -> list[dict[str, Any]]:
+    """The templates a person may pick for a manual rule: the feed's offers whose rule key no stored rule, live proposal or
+    rejection already has (T7). Empty when the feed has nothing to write rules for yet."""
+    try:
+        agent_input = rules_input(session, feed_id=feed_id, catalogue=_catalogue(session, settings))
+    except (NothingToMap, FeedNotRegistered, FeedNotProfiled):
+        return []
+    taken = {r.rule_key for r in RuleRepository(session).current_for_feed(feed_id)}
+    taken |= set(RuleRepository(session).rejected_keys(feed_id))
+    taken |= {p.payload["rule_key"] for p in ProposalRepository(session).list_for_feed(feed_id, "rule")
+              if p.status in ("pending", "approved")}
+    offers = [o for e in agent_input.elements for o in e.templates] + list(agent_input.feed_templates)
+    seen: set[str] = set()
+    found = []
+    for offer in offers:
+        if offer.rule_key not in taken and offer.rule_key not in seen:
+            seen.add(offer.rule_key)
+            found.append(offer.model_dump(mode="json"))
+    return found
+
+
 def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem],
                  settings: Settings) -> StepInputs | None:
     """"Inputs it saw" for a step, from the database only: counts, names and flags, never a sample value."""
@@ -1033,6 +1255,7 @@ def _step_inputs(session: Session, sess: OnboardingSession, step: str, items: li
         _fact(facts, "Mapped columns", len(MappingRepository(session).current_for_feed(feed_id)))
     if step == "rules":
         _fact(facts, "Rules proposed", len(items))
+        found["rule_templates"] = _unused_rule_templates(session, feed_id, settings)
     if step == "go_live":
         _fact(facts, "Approved rules", len(RuleRepository(session).current_for_feed(feed_id)))
         _fact(facts, "Transformations", len(TransformationRepository(session).current_for_feed(feed_id)))
@@ -1093,6 +1316,8 @@ def workspace(session: Session, *, session_id: UUID, settings: Settings | None =
 
     notes = []
     for item in items:
+        if item.origin == "manual":
+            continue  # no model was called: there is no agent's note (migration 0028)
         call = session.get(ProposalLogEntry, ProposalRepository(session).get(item.proposal_id).proposal_log_id)
         notes.append(AgentNote(proposal_id=item.proposal_id, agent=call.agent_name, provider=call.provider,
                                model=call.model, model_version=call.model_version, prompt_id=call.prompt_id,

@@ -311,6 +311,31 @@ class ProposalEditRefused(RepositoryError):
     """The database refused an edit of a proposal (migration 0024): nothing changed, the old proposal is still pending."""
 
 
+# ---- manual items (phase 7.11, T7; migration 0028)
+
+
+class ManualItemRefused(RepositoryError):
+    """An item a person added is not valid: a column the file lacks, an element that does not exist, a payload the
+    kind refuses. Nothing was written. The API answers 422."""
+
+
+class ManualRuleRefused(ManualItemRefused):
+    """A manual rule failed its back-test (step 09's code): not a plain SELECT, an element the feed does not map, an
+    error or timeout, or it flags more than half the history. `reason` says which; nothing was written."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+class ItemAlreadyPending(RepositoryError):
+    """The column (or rule key) already has a pending item: edit or reject it first. The API answers 409."""
+
+
+class ColumnAlreadyMapped(RepositoryError):
+    """Only an unmapped column can be excluded: this one has a mapping. The API answers 409."""
+
+
 # ---- the onboarding workspace (phase 7.8, task 5.3); the API answers each with 409
 
 

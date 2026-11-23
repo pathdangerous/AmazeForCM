@@ -2,11 +2,12 @@ import { Alert, Button, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingSkeleton, StickyFooter } from "../../../ui-shared/phase711";
 import {
-  apiGet, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline, getWorkspace,
+  addItem, apiGet, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline, getWorkspace,
   goBack, ONBOARDING_STEPS, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
   type TimelineEntry, type Visibility, type Workspace,
 } from "../api";
 import AgentPanel from "./AgentPanel";
+import AddItem from "./steps/AddItem";
 import Stepper, { StateBadge, STEP_LABELS } from "./Stepper";
 import FirstLoadPanel from "./steps/FirstLoadPanel";
 import GlossaryPanel from "./steps/GlossaryPanel";
@@ -32,6 +33,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const [visibilityChoice, setVisibilityChoice] = useState<Visibility | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const [keyPolicyError, setKeyPolicyError] = useState<string | null>(null);
   const [fourEyes, setFourEyes] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEntry[] | null>(null);
@@ -126,7 +128,21 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const rerun = () => act(() => enterStep(id, current, devUser));
 
   const actions: ItemActions = {
-    readOnly: !atCurrent, busy, marked, editing, editError, people,
+    readOnly: !atCurrent, busy, marked, editing, editError, people, addError,
+    add: async (body) => {
+      setBusy(true);
+      setAddError(null);
+      try {
+        setWs((await addItem(id, body, devUser)).workspace);
+        setMarked([]);
+        return true;
+      } catch (err: unknown) {
+        setAddError(describeError(err)); // the API's 409 or 422 message, in the form (a rule's back-test says why)
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
     decide: (item, decision, choice, note) => void act(async () => (await decideItem(id, item.proposal_id, decision, devUser, choice, note)).workspace),
     startEdit: (item) => { setEditError(null); setEditing(item.proposal_id); },
     cancelEdit: () => { setEditing(null); setEditError(null); },
@@ -254,6 +270,9 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
             <StateBadge state={shownState} />
           </div>
           {main}
+          {view && atCurrent && (state === "ready" || state === "needs_decision") && (
+            <AddItem step={shown} ws={view} actions={actions} />
+          )}
         </div>
         <div>
           <AgentPanel step={shown} items={items} notes={view?.agent_notes ?? []} inputs={view?.inputs ?? null}

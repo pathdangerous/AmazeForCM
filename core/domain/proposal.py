@@ -29,7 +29,9 @@ PROPOSAL_KINDS: tuple[str, ...] = get_args(ProposalKind)
 
 Autonomy = Literal["A1", "A2"]  # A3 is not used in the PoC
 ProposalStatus = Literal["pending", "approved", "rejected", "superseded"]  # superseded: edited (phase 7.8, 0024)
-EDITABLE_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule")  # what an edit may change
+EDITABLE_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule",
+                                    "review_summary")  # what an edit may change (a review summary: its notes only)
+MANUAL_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule")  # what a person may add (0028)
 Decision = Literal["approved", "rejected"]
 
 
@@ -58,7 +60,9 @@ class Proposal(BaseModel):
 
     id: UUID
     created_at: datetime
-    proposal_log_id: UUID
+    proposal_log_id: UUID | None  # None for a manual item (0028): no model was called
+    origin: Literal["agent", "manual"] = "agent"
+    author: str | None = None  # who made a manual item
     kind: ProposalKind
     payload: dict[str, Any]
     autonomy: Autonomy

@@ -304,6 +304,32 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     assert again["decided_by"] == "dev-operator" and again["decided_at"]  # the latest approval decision (task 7.3c)
     await call(w, "POST", f"/{oid}/items/{first['proposal_id']}/decision", json={"decision": "approved"}, expect=409)
     w.session.rollback()
+
+    # T7, mapping: reject the agent's item for a column, map it by hand to an element the agent never offered; a second
+    # item for the column is 409; a column the file lacks is 422; the item says it was added by a person (no model call)
+    target = next(i for i in on_mapping["items"] if i["status"] == "pending" and i["proposal_id"] != first["proposal_id"])
+    await call(w, "POST", f"/{oid}/items/{target['proposal_id']}/decision",
+               json={"decision": "rejected", "note": "I will map it myself."})
+    free = w.session.execute(text("SELECT key FROM glossary_elements g WHERE data_type = 'string' AND NOT EXISTS "
+                                  "(SELECT 1 FROM mappings m WHERE m.element_key = g.key) ORDER BY key")).scalars().first()
+    by_hand = {"kind": "mapping", "source_field": target["column"], "element_key": free, "reason": "The desk says so."}
+    logged = w.session.execute(text("SELECT count(*) FROM proposal_log")).scalar_one()
+    added = await call(w, "POST", f"/{oid}/items", json=by_hand)
+    assert (added["proposal"]["origin"], added["proposal"]["author"], added["proposal"]["proposal_log_id"]) == (
+        "manual", "dev-operator", None)
+    assert w.session.execute(text("SELECT count(*) FROM proposal_log")).scalar_one() == logged
+    mine = next(i for i in added["workspace"]["items"] if i["proposal_id"] == added["proposal"]["id"])
+    assert (mine["origin"], mine["author"], mine["pre_accepted"], mine["needs_decision"]) == (
+        "manual", "dev-operator", True, False)
+    assert mine["proposal_id"] not in {n["proposal_id"] for n in added["workspace"]["agent_notes"]}  # no agent's note
+    await call(w, "POST", f"/{oid}/items", json=by_hand, expect=409)
+    w.session.rollback()
+    await call(w, "POST", f"/{oid}/items", json={**by_hand, "source_field": "not_a_column"}, expect=422)
+    w.session.rollback()
+    await call(w, "POST", f"/{oid}/items", json={"kind": "mapping", "source_field": "x"}, expect=422)  # neither one
+    w.session.rollback()
+    await call(w, "POST", f"/{oid}/items", json={**by_hand, "kind": "rule"}, expect=422)  # not a valid rule item
+    w.session.rollback()
     await advance_to(w, oid, "transformations")
 
     # transformations: the agent doubts one item; Approve & next says which (409 decision_needed with the items)
@@ -349,6 +375,33 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     await call(w, "POST", f"/{oid}/items/{UUID(int=1)}/edit", expect=404, json={"payload": payload})
     w.session.rollback()
 
+    # T7, rules: a manual rule that fails its back-test is a named 422, and nothing is written; one that passes is
+    # added; an agent's rule is edited (back-tested again) and another is rejected
+    await advance_to(w, oid, "rules")
+    element = w.session.execute(text("SELECT element_key FROM mappings ORDER BY created_at LIMIT 1")).scalar_one()
+    rule = {"kind": "rule", "rule_key": "api_probe_rule", "description": "Nothing is ever flagged.",
+            "sql": "SELECT _row FROM curated WHERE 1 = 0", "element_keys": [element]}
+    rules_before = w.session.execute(text("SELECT count(*) FROM proposals WHERE kind = 'rule'")).scalar_one()
+    refusal = await call(w, "POST", f"/{oid}/items", json={**rule, "sql": "DROP TABLE curated"}, expect=422)
+    assert refusal["detail"]
+    w.session.rollback()
+    assert w.session.execute(text("SELECT count(*) FROM proposals WHERE kind = 'rule'")).scalar_one() == rules_before
+    manual_rule = await call(w, "POST", f"/{oid}/items", json=rule)
+    assert manual_rule["proposal"]["origin"] == "manual" and manual_rule["proposal"]["payload"]["backtest"]["status"]
+    await call(w, "POST", f"/{oid}/items", json=rule, expect=409)
+    w.session.rollback()
+    agent_rules = [i for i in (await workspace_of(w, oid))["items"] if i["kind"] == "rule" and i["status"] == "pending"
+                   and i["origin"] == "agent"]
+    assert len(agent_rules) >= 2
+    reworded = await call(w, "POST", f"/{oid}/items/{agent_rules[0]['proposal_id']}/edit", json={
+        "payload": {**agent_rules[0]["payload"], "description": "Reworded by the steward."}})
+    assert reworded["proposal"]["edited_by"] == "dev-operator" and reworded["proposal"]["origin"] == "agent"
+    await call(w, "POST", f"/{oid}/items/{reworded['proposal']['id']}/edit", expect=422, json={
+        "payload": {**reworded["proposal"]["payload"], "sql": "DROP TABLE curated"}})
+    w.session.rollback()
+    await call(w, "POST", f"/{oid}/items/{agent_rules[1]['proposal_id']}/decision",
+               json={"decision": "rejected", "note": "Wrong for this data."})
+
     # rules, go-live (the owner is the operator); then the first load
     await advance_to(w, oid, "go_live")
     at_go_live = await workspace_of(w, oid)
@@ -384,13 +437,18 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     # the timeline: the events, the proposals with their logged calls, the edit with its editor, the approvals
     trail = await call(w, "GET", f"/{oid}/timeline")
     assert {t["kind"] for t in trail} == {"event", "proposal", "edit", "approval"}
-    [edit] = [t for t in trail if t["kind"] == "edit"]
+    [edit] = [t for t in trail if t["kind"] == "edit" and t["proposal_id"] == edited["proposal"]["id"]]
+    assert {t["detail"]["edited_by"] for t in trail if t["kind"] == "edit"} == {"dev-operator"}  # also T7's rule edit
     assert edit["actor"] == "dev-operator" and edit["detail"]["edited_by"] == "dev-operator"
     assert edit["proposal_id"] == edited["proposal"]["id"]
     approved_events = [t for t in trail if t["kind"] == "event" and t["title"] == "approved"]
     assert any(t["proposal_id"] == first["proposal_id"] and t["actor"] == "dev-operator" for t in approved_events)
-    assert {"entered", "agent_done", "pre_accepted", "edited", "approved", "back", "stale"} <= {
+    assert {"entered", "agent_done", "pre_accepted", "edited", "approved", "back", "stale", "item_added"} <= {
         t["title"] for t in trail if t["kind"] == "event"}
+    added_by = [t for t in trail if t["kind"] == "proposal" and " added by " in t["title"]]  # T7: no logged call to show
+    assert {t["title"].split(" added by ")[0] for t in added_by} == {"mapping", "rule"}
+    assert all(t["actor"] == "dev-operator" and t["detail"]["origin"] == "manual" and "model" not in t["detail"]
+               for t in added_by)
     final = await call(w, "GET", "")
     assert final[0]["status"] == "done" and final[0]["model_calls"] > 5
 
@@ -640,6 +698,20 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
             ("superseded",)]
         assert committed(engine, "SELECT event, actor FROM onboarding_events WHERE proposal_id = :p ORDER BY at",
                          p=new_id) == [("edited", "dev-operator"), ("pre_accepted", "dev-operator")]
+
+        # a manual item (T7): the proposal with its author and no logged call, and its two events
+        item = pending[2]
+        await r.call("POST", f"/{oid}/items/{item['proposal_id']}/decision",
+                     json={"decision": "rejected", "note": "I will map it myself."})
+        free = committed(engine, "SELECT key FROM glossary_elements g WHERE data_type = 'string' AND NOT EXISTS "
+                                 "(SELECT 1 FROM mappings m WHERE m.element_key = g.key) ORDER BY key LIMIT 1")[0][0]
+        added = await r.call("POST", f"/{oid}/items", json={
+            "kind": "mapping", "source_field": item["column"], "element_key": free, "reason": "By hand."})
+        new_id = added["proposal"]["id"]
+        assert committed(engine, "SELECT origin, author, proposal_log_id IS NULL, status FROM proposals WHERE id = :p",
+                         p=new_id) == [("manual", "dev-operator", True, "pending")]
+        assert committed(engine, "SELECT event, actor FROM onboarding_events WHERE proposal_id = :p ORDER BY at",
+                         p=new_id) == [("item_added", "dev-operator"), ("pre_accepted", "dev-operator")]
 
         # back: the stale steps and the new job
         went_back = await r.call("POST", f"/{oid}/back", json={"to_step": "glossary"})

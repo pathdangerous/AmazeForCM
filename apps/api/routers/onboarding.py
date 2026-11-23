@@ -9,7 +9,9 @@ POST /api/amaze/onboardings/{id}/approve          Approve & next; 409 decision_n
 POST /api/amaze/onboardings/{id}/back             {to_step}: later steps become stale and the step reruns
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/decision   one item, by the decision code of
                                                   POST /api/amaze/proposals/{id}/decision (decide_proposal)
-POST /api/amaze/onboardings/{id}/items/{proposal_id}/edit       {payload}: a new version, "edited by"
+POST /api/amaze/onboardings/{id}/items/{proposal_id}/edit       {payload}: a new version, "edited by" (a rule is back-tested again)
+POST /api/amaze/onboardings/{id}/items                          a manual item (T7): {kind: glossary_element | mapping |
+                                                  transformation | rule | review_summary, ...}; 409 pending, 422 invalid
 PUT  /api/amaze/onboardings/{id}/key-policy       the feed's duplicate-key policy (step 10)
 GET  /api/amaze/onboardings/{id}/timeline         the audit trail: events, proposals with their calls, edits, approvals
 
@@ -38,19 +40,23 @@ from apps.api.deps import (
 from apps.api.routers.amaze import DecisionBody, decide_proposal
 from apps.api.transactions import in_transaction, read
 from core.domain.common import NonBlank
+from core.domain.manual import ManualItem, ManualRule
 from core.domain.onboarding import ApproveOptions, StepAdvance, StepName, TimelineEntry, Workspace
 from core.domain.proposal import Proposal
 from core.domain.transformation import KeyColumns, KeyPolicy, KeyPolicyName
-from core.repositories.errors import DecisionNeeded, ProposalNotFound
+from core.repositories.errors import DecisionNeeded, ManualRuleRefused, ProposalNotFound
 from core.repositories.feeds import FeedRepository
 from core.repositories.onboarding import OnboardingRepository
 from core.repositories.proposals import ProposalRepository
 from core.steps.onboarding import (
     OnboardingContext,
+    add_item,
     approve_and_next,
     back,
+    checked_rule_payload,
     edit_item,
     enter_step,
+    manual_rule_input,
     timeline,
     workspace,
 )
@@ -116,6 +122,11 @@ class ItemDecided(BaseModel):
 
 
 class ItemEdited(BaseModel):
+    proposal: Proposal
+    workspace: Workspace
+
+
+class ItemAdded(BaseModel):
     proposal: Proposal
     workspace: Workspace
 
@@ -202,13 +213,43 @@ def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session
     return ItemDecided(result=result, workspace=_view(session, session_id, settings))
 
 
+@router.post("/{session_id}/items", response_model=ItemAdded,
+             responses={409: {"description": "the column or rule key has a pending item, or the step is not ready"},
+                        422: {"description": "the item is not valid (a rule that fails its back-test says why)"}})
+def add(session_id: UUID, body: ManualItem, session: DbSession, user: Operator, ctx: Context,
+        settings: AppSettings) -> ItemAdded:
+    """A person adds an item to the current step (phase 7.11, T7): a manual proposal, no model call. A rule is read, then
+    back-tested with no connection held (step 09's code), then written."""
+    rule_payload = None
+    if isinstance(body, ManualRule):
+        agent_input, proposed, own = read(
+            session, lambda: manual_rule_input(session, session_id=session_id, item=body, ctx=ctx))
+        rule_payload = _back_tested(agent_input, proposed, own, ctx)
+    proposal = in_transaction(session, lambda: add_item(session, session_id=session_id, item=body, user=user,
+                                                        rule_payload=rule_payload))
+    return ItemAdded(proposal=proposal, workspace=_view(session, session_id, settings))
+
+
+def _back_tested(agent_input, proposed, own, ctx) -> dict[str, Any]:
+    try:
+        return checked_rule_payload(agent_input, proposed, own, ctx=ctx)
+    except ManualRuleRefused as exc:  # named, never a 500: the person sees why the SQL was refused
+        raise HTTPException(status_code=422, detail=exc.reason) from None
+
+
 @router.post("/{session_id}/items/{proposal_id}/edit", response_model=ItemEdited,
              responses={409: {"description": "the item is no longer pending"},
                         422: {"description": "the edited payload is not valid for its kind"}})
-def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession, user: Operator,
+def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession, user: Operator, ctx: Context,
          settings: AppSettings) -> ItemEdited:
+    payload = body.payload
+    kind = read(session, lambda: ProposalRepository(session).get(proposal_id).kind)
+    if kind == "rule":  # an edited rule is back-tested again, like a new one (T7)
+        agent_input, proposed, own = read(session, lambda: manual_rule_input(
+            session, session_id=session_id, item=None, ctx=ctx, edit_of=proposal_id, edited=payload))
+        payload = _back_tested(agent_input, proposed, own, ctx)
     proposal = in_transaction(session, lambda: edit_item(session, session_id=session_id, proposal_id=proposal_id,
-                                                         payload=body.payload, user=user))
+                                                         payload=payload, user=user))
     return ItemEdited(proposal=proposal, workspace=_view(session, session_id, settings))
 
 

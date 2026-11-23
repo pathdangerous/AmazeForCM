@@ -15,6 +15,7 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
   const testLoad = facts.find((f) => f.label === "Test load");
   const counts = facts.filter((f) => f.label !== "Test load");
   const before = ONBOARDING_STEPS.slice(1, ONBOARDING_STEPS.indexOf("go_live"));
+  const notes = (Array.isArray(p.notes) ? p.notes : []).map(asRecord); // T7: notes people added to the summary
   const highlights = asList(p.highlights);
   const risks = asList(p.risks);
   const expected = ws.inputs?.expected_score ?? null; // computed from the test load's records, not model text
@@ -29,6 +30,14 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
         {counts.map((f) => <li key={f.label}>{`${f.label}: ${f.value}`}</li>)}
       </ul>
       {review && <Text mb="xs">{asText(p.summary) || review.summary}</Text>}
+      {notes.length > 0 && (
+        <>
+          <Text fw={600}>Notes</Text>
+          <ul data-testid="summary-notes">
+            {notes.map((n, i) => <li key={i}>{`${asText(n.author_name) || asText(n.author)}: ${asText(n.text)}`}</li>)}
+          </ul>
+        </>
+      )}
       {highlights.length > 0 && (
         <>
           <Text fw={600}>Highlights</Text>

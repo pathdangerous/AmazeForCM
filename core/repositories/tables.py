@@ -144,7 +144,9 @@ class ProposalRow(Base):
 
     id: Mapped[uuid.UUID] = _id()
     created_at: Mapped[datetime] = _created_at(clock=True)  # default changed in migration 0004
-    proposal_log_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposal_log.id"))
+    proposal_log_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposal_log.id"))  # 0028: NULL when manual
+    origin: Mapped[str] = mapped_column(Text, default="agent", server_default="agent")  # 0028: agent | manual
+    author: Mapped[str | None] = mapped_column(Text)  # 0028: who made a manual item
     kind: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
     autonomy: Mapped[str] = mapped_column(Text)

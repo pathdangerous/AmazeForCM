@@ -188,7 +188,7 @@ class GlossaryProposalPayload(BaseModel):
     recommended: int | None
     clashes: list[str] = Field(default_factory=list)  # the existing elements it hits
     reason: str
-    run_id: UUID
+    run_id: UUID | None  # None: a person added it (0028), from no glossary run
     # where the new element's unit came from: "model" (the agent gave it), "seed" (step 05 filled it from
     # fixtures/glossary/units.json); None when the proposal has no new element or the element has no unit
     unit_source: Literal["model", "seed"] | None = None

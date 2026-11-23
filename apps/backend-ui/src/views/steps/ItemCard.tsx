@@ -42,6 +42,7 @@ export default function ItemCard({ item, actions, choices, children }: {
         <div>
           {pending && item.pre_accepted && <Tag id="pre_accepted" text="Pre-accepted" fill="var(--amz-info)" />}
           {pending && item.needs_decision && <Tag id="needs_decision" text="needs decision" fill="var(--amz-warning)" />}
+          {item.origin === "manual" && <Tag id="manual" text={`added by ${actions.people?.[item.author ?? ""] ?? item.author}`} fill="var(--amz-subtle)" />}
           {item.edited && <Tag id="edited" text={item.edited_by ? `edited by ${item.edited_by}` : "edited"} fill="var(--amz-marker)" />}
           {!pending && <Tag id="status" text={item.status} fill="var(--amz-subtle)" />}
         </div>

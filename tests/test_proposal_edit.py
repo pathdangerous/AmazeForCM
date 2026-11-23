@@ -169,8 +169,8 @@ def test_only_a_person_who_could_decide_it_may_edit(s, repo, feed):
     assert repo.get(old.id).status == "pending"
 
 
-@pytest.mark.parametrize("kind", ["profile_summary", "review_summary", "scope"])
-def test_only_four_kinds_can_be_edited(s, repo, make_proposal, steward, kind):
+@pytest.mark.parametrize("kind", ["profile_summary", "scope"])  # 0028: a review summary can be edited, its notes only
+def test_only_four_kinds_and_a_summarys_notes_can_be_edited(s, repo, make_proposal, steward, kind):
     old = make_proposal(kind=kind, roles=("data_steward",))
     with pytest.raises(WrongProposalKind):
         repo.edit(old.id, payload={"note": "changed"}, user=steward)

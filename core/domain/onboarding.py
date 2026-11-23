@@ -26,7 +26,8 @@ SessionStatus = Literal["active", "done"]
 SESSION_STATUSES: tuple[str, ...] = get_args(SessionStatus)
 
 EventName = Literal["entered", "agent_queued", "agent_started", "agent_done", "agent_failed", "pre_accepted",
-                    "edited", "approved", "rejected", "back", "stale", "done", "call_cap_reached"]
+                    "edited", "approved", "rejected", "back", "stale", "done", "call_cap_reached",
+                    "item_added"]  # item_added: a person added an item (0028)
 EVENT_NAMES: tuple[str, ...] = get_args(EventName)
 
 JobStatus = Literal["queued", "running", "done", "failed", "discarded"]
@@ -139,6 +140,8 @@ class OnboardingItem(BaseModel):
     edited_from: UUID | None
     reason: str | None
     payload: dict[str, Any]
+    origin: Literal["agent", "manual"] = "agent"  # 0028: a manual item has an author and no model call
+    author: str | None = None
     decided_by: str | None = None  # the user id of the latest approval decision on this proposal; None while pending
     decided_at: datetime | None = None
 
@@ -233,6 +236,8 @@ class StepInputs(BaseModel):
     load_summary: str | None = None  # first load: one sentence about the latest scheduled load (same rows as the facts)
     load_breakdown: LoadBreakdown | None = None  # first load: per rule, the score and the next action
     expected_score: ExpectedScore | None = None  # go-live: the score the test load predicts (computed)
+    # rules step (T7): the templates a person may pick for a rule of their own: rule_key, description, sql, element_keys
+    rule_templates: list[dict[str, Any]] = []
 
 
 class Workspace(BaseModel):

@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0027"  # old: "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0028"  # old: "0027" (phase 7.11, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -223,6 +223,12 @@ REVIEWED_NULLABLE_CHECKS = {
     "proposals.ck_proposals_names_a_column":
         "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
         "source_field; kind and payload are NOT NULL: never NULL",
+    # 0028 (phase 7.11, T7). Their NULL cases are in test_db_manual_items.py.
+    "proposals.ck_proposals_origin_matches_source":
+        "proposal_log_id IS NULL / author IS NULL spelt out on both branches; length(btrim(author)) is only reached "
+        "when author IS NOT NULL; origin is NOT NULL: never NULL",
+    "proposals.ck_proposals_manual_kinds":
+        "origin = 'agent' first (NOT NULL); a manual row needs feed_id IS NOT NULL spelt out; kind is NOT NULL",
     # 0018 (phase 6 plan, section 6). Their NULL cases are in test_db_rule_guards.py and test_db_load_guards.py.
     "proposals.ck_proposals_names_a_rule":
         "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
@@ -1125,3 +1131,62 @@ def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):
         with migrated_engine.begin() as connection:
             connection.execute(text("DELETE FROM requirements WHERE id = :id"), {"id": row_id})
         command.upgrade(config, "head")
+
+
+# ---------------------------------------------------------------- 0028 (phase 7.11, T7): manual items
+
+GUARDS_0028 = ("amaze_guard_proposal_edit", "amaze_edit_proposal", "amaze_require_mapping_matches_proposal",
+               "amaze_delete_feed")
+
+
+def _0028_state(engine):
+    with engine.connect() as connection:
+        return {
+            "functions": {name: connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :n "
+                "AND p.pronamespace = current_schema()::regnamespace"), {"n": name}).scalar_one()
+                for name in GUARDS_0028},
+            "columns": sorted(c["name"] for c in inspect(connection).get_columns("proposals")),
+            "log_nullable": [c["nullable"] for c in inspect(connection).get_columns("proposals")
+                             if c["name"] == "proposal_log_id"],
+            "view": connection.execute(text("SELECT pg_get_viewdef('proposal_audit'::regclass)")).scalar_one(),
+            "events": connection.execute(text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'ck_onboarding_events_event' "
+                "AND connamespace = current_schema()::regnamespace")).scalar_one(),
+        }
+
+
+def test_0028_makes_a_proposal_agent_or_manual_and_downgrade_restores_0027(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0027")
+    before = _0028_state(engine)
+    command.upgrade(config, "0028")
+    up = _0028_state(engine)
+    assert {"origin", "author"} <= set(up["columns"]) and not {"origin", "author"} & set(before["columns"])
+    assert up["log_nullable"] == [True] and before["log_nullable"] == [False]
+    assert "item_added" in up["events"] and "item_added" not in before["events"]
+    assert "LEFT JOIN" in up["view"].upper() and "LEFT JOIN" not in before["view"].upper()
+    assert "p_origin" in up["functions"]["amaze_require_mapping_matches_proposal"]
+    assert "a manual item has no logged call" in up["functions"]["amaze_delete_feed"]
+    assert "a manual item has no logged call" not in before["functions"]["amaze_delete_feed"]
+    command.downgrade(config, "0027")
+    assert _0028_state(engine) == before
+    command.upgrade(config, "0028")
+    assert _0028_state(engine) == up
+
+
+def test_0028_downgrade_refuses_while_a_manual_item_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0028")
+    with engine.begin() as connection:
+        feed = connection.execute(text("INSERT INTO feeds (code, name) VALUES ('syn_a', 'A') RETURNING id")).scalar_one()
+        connection.execute(text(
+            "INSERT INTO proposals (proposal_log_id, kind, payload, autonomy, required_approver_roles, feed_id, origin, "
+            "author) VALUES (NULL, 'rule', CAST(:p AS jsonb), 'A1', ARRAY['data_steward', 'checker'], :feed, "
+            "'manual', 'dev-operator')"),
+            {"feed": feed,
+             "p": '{"rule_key": "r", "sql": "SELECT 1", "description": "d", "backtest": {"status": "not_back_tested"}}'})
+    with pytest.raises(DBAPIError, match="migration 0028 cannot be downgraded"):
+        command.downgrade(config, "0027")

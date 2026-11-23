@@ -389,8 +389,19 @@ export type OnboardingItem = {
   proposal_id: string; kind: string; column: string | null; summary: string; status: string; confidence: number | null;
   pre_accepted: boolean; needs_decision: boolean; waiting_for: string | null; edited: boolean; edited_by: string | null;
   edited_from: string | null; reason: string | null; payload: Record<string, unknown>;
+  origin?: "agent" | "manual"; author?: string | null; // a manual item (T7) has an author and no model call
   decided_by: string | null; decided_at: string | null; // the latest approval decision; null while pending
 };
+// A rule the rules step offers a person to pick instead of writing SQL (T7).
+export type RuleTemplate = { template: string; rule_key: string; description: string; sql: string; element_keys: string[] };
+// What a person types to add an item at a stage (core/domain/manual.py); the API answers 409 or 422 with a message.
+export type ManualItemBody =
+  | { kind: "glossary_element"; source_field: string; reason: string;
+      option: { kind: "new_element"; key: string; element: Record<string, unknown> } | { kind: "alias"; key: string; alias: string } }
+  | { kind: "mapping"; source_field: string; reason: string; element_key?: string; excluded?: boolean }
+  | { kind: "transformation"; source_field: string; reason: string; steps: Record<string, unknown>[] }
+  | { kind: "rule"; template?: string; rule_key?: string; sql?: string; description?: string; element_keys?: string[] }
+  | { kind: "review_summary"; note: string };
 export type AgentNote = {
   proposal_id: string; agent: string; provider: string; model: string; model_version: string; prompt_id: string;
   prompt_version: string; latency_ms: number; input_ref: string; reasoning: string | null;
@@ -419,6 +430,7 @@ export type StepInputs = {
   load_summary?: string | null; // first load: one sentence about the latest scheduled load
   load_breakdown?: LoadBreakdown | null; // first load: per rule, the score and the next action (computed)
   expected_score?: ExpectedScore | null; // go-live: the score the test load predicts (computed)
+  rule_templates?: RuleTemplate[]; // rules step: templates a person may pick (T7)
 };
 export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
 export type Visibility = "open" | "restricted";
@@ -461,6 +473,8 @@ export const decideItem = (id: string, proposalId: string, decision: "approved" 
                            choice?: number | string, note?: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/decision`,
                                     { decision, ...(choice === undefined ? {} : { choice }), ...(note ? { note } : {}) }, devUser);
+export const addItem = (id: string, body: ManualItemBody, devUser: string) =>
+  apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items`, body, devUser);
 export const editItem = (id: string, proposalId: string, payload: Record<string, unknown>, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/edit`, { payload }, devUser);
 

@@ -28,6 +28,7 @@ from core.domain.configuration import Mapping
 from core.domain.mapping import ColumnToMap, MappingInput, MappingProposalPayload
 from core.repositories.configuration import MappingRepository
 from core.repositories.errors import (
+    ColumnAlreadyMapped,
     ElementAlreadyMapped,
     FeedNotProfiled,
     FeedNotRegistered,
@@ -103,7 +104,24 @@ class MappingRejected(BaseModel):
     rejected: list[str]
 
 
+class ColumnExcluded(BaseModel):
+    """Not an outcome (phase 7.11, T7): the steward approved leaving the column out. No mappings row is written, so the
+    column stays unmapped and the engine does not load it; the agent is not asked about it again."""
+
+    model_config = ConfigDict(frozen=True)
+
+    proposal_id: UUID
+    source_field: str
+
+
 # ---------------------------------------------------------------- propose
+
+
+def excluded_columns(session: Session, feed_id: UUID) -> set[str]:
+    """The columns of the feed whose latest approved mapping proposal says: leave it out (and that have no mapping)."""
+    mapped = {m.source_field for m in MappingRepository(session).current_for_feed(feed_id)}
+    return {p.payload["source_field"] for p in ProposalRepository(session).list_for_feed(feed_id, "mapping", "approved")
+            if p.payload.get("excluded")} - mapped
 
 
 def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,
@@ -127,7 +145,8 @@ def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,
         if proposals.pending_for_column("mapping", feed_id, column) is not None:
             raise MappingAlreadyProposed(f"Column {column!r} of feed {feed.code!r} already has a pending proposal")
     else:
-        chosen = [c for c in profile.columns if c.name not in current
+        left_out = excluded_columns(session, feed_id)  # a person left these out (T7): not asked about again
+        chosen = [c for c in profile.columns if c.name not in current and c.name not in left_out
                   and proposals.pending_for_column("mapping", feed_id, c.name) is None]
         if not chosen:
             raise NothingToMap(f"Feed {feed.code!r} has no column left to map")
@@ -225,6 +244,14 @@ def decide_mapping(session: Session, *, proposal_id: UUID, user: User, decision:
         raise ProposalAlreadyDecided(f"Proposal {proposal_id} is already {proposal.status}")
     if "data_steward" not in user.roles:
         raise NotAnApprover(f"Proposal {proposal_id} needs role data_steward; {user.id} has {user.roles}")
+    if proposal.payload.get("excluded"):  # T7: leaving a column out writes no mapping
+        proposals.record_decision(proposal_id, user=user, decision=decision, note=note)
+        if decision == "rejected":
+            return MappingRejected(proposal_id=proposal_id, rejected=[])
+        if any(m.source_field == proposal.payload["source_field"]
+               for m in MappingRepository(session).current_for_feed(proposal.feed_id)):
+            raise ColumnAlreadyMapped(f"Column {proposal.payload['source_field']!r} was mapped meanwhile; it is not left out")
+        return ColumnExcluded(proposal_id=proposal_id, source_field=proposal.payload["source_field"])
     payload = MappingProposalPayload(**proposal.payload)
     if decision == "rejected":
         proposals.record_decision(proposal_id, user=user, decision="rejected", note=note)

@@ -115,7 +115,8 @@ function stepOf(d: StepDraft): { step?: Record<string, unknown>; problem?: strin
   return { step: { op: "placeholder_to_null", values } };
 }
 
-function TransformationFields({ payload, onSave }: FormProps) {
+// Also the step list of "Add item" at the transformations stage (AddItem.tsx): the same steps, the same checks.
+export function TransformationFields({ payload, onSave, saveLabel = "Save edit" }: FormProps & { saveLabel?: string }) {
   const counter = useRef(0);
   const next = () => ++counter.current;
   const [steps, setSteps] = useState<StepDraft[]>(() =>
@@ -186,7 +187,7 @@ function TransformationFields({ payload, onSave }: FormProps) {
           {problems.map((p) => <li key={p}>{p}</li>)}
         </ul>
       )}
-      <SaveBar onSave={save} />
+      <SaveBar onSave={save} label={saveLabel} />
     </>
   );
 }
@@ -211,8 +212,8 @@ function RuleFields({ payload, onSave }: FormProps) {
   );
 }
 
-function SaveBar({ onSave }: { onSave: () => void }) {
-  return <Button size="xs" mt="xs" mr="xs" onClick={onSave}>Save edit</Button>;
+function SaveBar({ onSave, label = "Save edit" }: { onSave: () => void; label?: string }) {
+  return <Button size="xs" mt="xs" mr="xs" onClick={onSave}>{label}</Button>;
 }
 
 // The kind-specific edit form of one item (task 7.3b). Every control has a label; the checks run before anything is sent;
