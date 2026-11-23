@@ -78,7 +78,8 @@ def test_the_transformation_agent_gets_no_glossary_only_the_element_key_and_type
     agent_input = transform_input(db_session, feed_id=master_mapped(db_session, tmp_path))
     assert len(agent_input.columns) == len(MAPPED)  # one entry per mapped column, none per glossary element
     assert "closing_prices_x" not in agent_input.model_dump_json()
-    assert sorted(agent_input.model_dump()) == ["columns", "feed_code", "feed_id", "profile_actions", "samples"]
+    assert sorted(agent_input.model_dump()) == ["columns", "feed_code", "feed_id", "profile_actions", "profile_actions_decided",
+                                                      "samples"]
 
 
 def test_the_mapping_agent_gets_at_most_ten_candidates_per_column(db_session, lookalike_feed):

@@ -65,7 +65,7 @@ from core.steps.candidates import candidate_list, covered_by, glossary_payloads,
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.matching import words
 from core.steps.result import StepResult
-from core.steps.s02_profile import selected_actions
+from core.steps.s02_profile import excluded_by_actions, selected_actions
 from core.steps.s1_scope import RunsAgent
 from core.steps.samples import samples_for_model
 from ports.config import Settings
@@ -186,11 +186,15 @@ def builder_input(session: Session, run: GlossaryRun, settings: Settings | None 
     asked = {p.payload.get("source_field") for p in ProposalRepository(session).list_for_feed(run.feed_id,
                                                                                                "glossary_element")}
     skipped, columns = {}, []
+    left_out = excluded_by_actions(session, run.feed_id)  # a selected exclude_column action: not asked about (T1)
     if run.reason == "structure_change":  # step 12 parked these columns: only they are asked about, none sent back
         looked_at, sent_back = [c for c in profile.columns if c.name in set(run.columns)], ()
     else:
         looked_at, sent_back = profile.columns, run.columns
     for column in new_columns(looked_at, profile.spec, sent_back=sent_back):
+        if column.name in left_out:
+            skipped[column.name] = "left_out"
+            continue
         why = covered_by(column, glossary, mapped=mapped, asked=asked)
         if why is not None:
             skipped[column.name] = SKIPPED[why]

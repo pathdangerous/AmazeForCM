@@ -168,6 +168,10 @@ def _profile_actions(issues: list[dict[str, Any]], key_columns: list[str]) -> li
                             "params": {"format": fmt.group(1)} if fmt else {},
                             "reason": f"{columns[0]} holds dates as text, so it is read as a date. {detail}"})
         elif issue["kind"] in ("all_empty", "placeholder_only"):
+            if issue["kind"] == "placeholder_only":  # cleaned, not left out: a person may still add "leave it out"
+                actions.append({"action": "placeholder_to_null", "columns": columns, "applied_by": "agent", "params": {},
+                                "reason": f"{columns[0]} holds only placeholders, so they become empty. {detail}"})
+                continue
             actions.append({"action": "exclude_column", "columns": columns, "applied_by": "manual", "params": {},
                             "reason": f"{columns[0]} has no real value in any row, so it is better left out."})
         elif issue["kind"] == "constant":
@@ -393,15 +397,20 @@ def transformation(data: dict[str, Any]) -> dict[str, Any]:
     those spellings. A text date column mapped to a date element: parse_date with the detected format (confidence 0.6
     when the format is ambiguous, so a person checks it), after the placeholder step. Nothing else: no steps."""
     answers = []
+    chosen = {(a["action"], c) for a in data.get("profile_actions", []) for c in a.get("columns", [])}
+    decided = bool(data.get("profile_actions_decided"))  # 7.12: the profile step proposed actions; only a selected one counts
     for column in data.get("columns", []):
         steps: list[dict[str, Any]] = []
         parts: list[str] = []
         confidence = 0.95
-        if column.get("placeholder_count") and column.get("placeholder_values"):
+        name = column["source_field"]
+        if column.get("placeholder_count") and column.get("placeholder_values") and (
+                not decided or ("placeholder_to_null", name) in chosen):
             steps.append({"op": "placeholder_to_null", "values": list(column["placeholder_values"])})
             parts.append(f"{column['placeholder_count']} cell(s) hold a placeholder "
                          f"({', '.join(column['placeholder_values'])}), so they become empty")
-        if column.get("text_date_format") and column.get("element_type") == "date":
+        if column.get("text_date_format") and column.get("element_type") == "date" and (
+                not decided or ("parse_date", name) in chosen):
             steps.append({"op": "parse_date", "format": column["text_date_format"]})
             ambiguous = bool(column.get("date_format_ambiguous"))
             parts.append(f"the text dates are read as {column['text_date_format']}"

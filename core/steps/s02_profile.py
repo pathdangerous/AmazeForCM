@@ -234,6 +234,18 @@ def selected_actions(session: Session, feed_id: UUID) -> list[dict]:
             for p in ProposalRepository(session).list_for_feed(feed_id, "profile_action", "approved")]
 
 
+def excluded_by_actions(session: Session, feed_id: UUID) -> set[str]:
+    """The columns a selected (approved) `exclude_column` action leaves out: the later agents are not asked about them."""
+    return {c for a in selected_actions(session, feed_id) if a["action"] == "exclude_column" for c in a["columns"]}
+
+
+def actions_were_proposed(session: Session, feed_id: UUID) -> bool:
+    """True when the feed's profile step proposed any action (selected or not): then a cleaning step is proposed only for
+    a column whose action was selected. A feed that never had actions is cleaned from the facts alone, as before."""
+    return any(ProposalRepository(session).list_for_feed(feed_id, "profile_action", status)
+               for status in ("approved", "rejected", "pending"))
+
+
 def todo_actions(session: Session, feed_id: UUID) -> list[dict]:
     """The selected actions a person said they would do themselves: the to-do list on the feed."""
     return [a for a in selected_actions(session, feed_id) if a["applied_by"] == "manual"]

@@ -128,6 +128,8 @@ class TransformationInput(BaseModel):
     columns: list[ColumnToTransform]
     samples: dict[str, list[str]] = {}
     profile_actions: list[dict[str, Any]] = Field(default_factory=list)  # T1: selected profile actions
+    # True when the profile step proposed actions: then clean a column only if an action for it was selected
+    profile_actions_decided: bool = False
 
 
 class ColumnTransforms(BaseModel):

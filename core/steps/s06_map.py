@@ -46,7 +46,7 @@ from core.repositories.proposals import ProposalRepository
 from core.steps.candidates import candidate_list, kept_elements
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.result import StepResult
-from core.steps.s02_profile import selected_actions
+from core.steps.s02_profile import excluded_by_actions, selected_actions
 from core.steps.s05_glossary import queue_run
 from core.steps.s1_scope import RunsAgent
 from ports.identity.base import User
@@ -121,8 +121,9 @@ class ColumnExcluded(BaseModel):
 def excluded_columns(session: Session, feed_id: UUID) -> set[str]:
     """The columns of the feed whose latest approved mapping proposal says: leave it out (and that have no mapping)."""
     mapped = {m.source_field for m in MappingRepository(session).current_for_feed(feed_id)}
-    return {p.payload["source_field"] for p in ProposalRepository(session).list_for_feed(feed_id, "mapping", "approved")
-            if p.payload.get("excluded")} - mapped
+    chosen = {p.payload["source_field"] for p in ProposalRepository(session).list_for_feed(feed_id, "mapping", "approved")
+              if p.payload.get("excluded")}
+    return (chosen | excluded_by_actions(session, feed_id)) - mapped  # also a selected exclude_column profile action
 
 
 def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,

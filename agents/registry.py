@@ -28,18 +28,22 @@ PROMPT_VERSIONS: dict[str, str] = {
     "source_discovery": "v1",
     "discovery_assistant": "v1",
     "profiler": "v3",  # v3 (phase 7.12, T1): glossary fit and actions; v2 stays on disk
-    "glossary_builder": "v2",  # v2 (phase 7.8): units, plain names, optional samples; v1 stays on disk
-    "mapping": "v1",
-    "rule_recommender": "v1",
+    "glossary_builder": "v3",  # v3 (7.12): profile_actions; v2 (7.8): units, plain names, optional samples; v1, v2 stay
+    "mapping": "v2",  # v2 (7.12): profile_actions; v1 stays on disk
+    "rule_recommender": "v2",  # v2 (7.12): profile_actions; v1 stays on disk
     "review_summariser": "v2",  # v2 (phase 7.8, S8): the input has no visibility; v1 stays on disk
     "table_extractor": "v1",
-    "transformation": "v1",
+    "transformation": "v2",  # v2 (7.12): profile_actions; v1 stays on disk
 }
 
 PROMPT_FILE_HASHES: dict[str, str] = {
     "discovery_assistant.v1.yaml": "ad80a7a9430302ee8b84bf1eb0aaf70806be15631dd766df4ceba794156f0af0",
     "glossary_builder.v1.yaml": "b0a179a2943d24bb202fd16162492bab7e6d7b4a7f77309ad07d76929300a378",
     "glossary_builder.v2.yaml": "52b331eb8e82b7c01c6d75a5d2b2223febb68a666fe867167245c32a04f01e6a",
+    "glossary_builder.v3.yaml": "e38e716d282963d94736b1e28173b52630a79b65b7856cdd5ab5b8a4a6e2604f",
+    "mapping.v2.yaml": "c773134418cc57fd24e2a01b00548627cb9ea930c0b4ef627e1f2514887865b2",
+    "transformation.v2.yaml": "f68866da61b5f2d318ab3fe6f67a52d5f48185be7daa64fe82473237df75fbd7",
+    "rule_recommender.v2.yaml": "9a628abd04386e7582b5ffd9ce68607f469bc8ac6f47e3c73055aa842e8b8a93",
     "mapping.v1.yaml": "9afdfcd5605b25a07a26b743f2672f340f3a3251ec87de63671d6f0bb7ed2fc4",
     "intent.v1.yaml": "40ae53c05f86abac70d7993f22e0c78bd8456252d0aaa94f10627a949f0dbb05",
     "profiler.v1.yaml": "9b0b2ab260def592ebe306abacab4c30420ce28aab4a71e3c66b1cdd52c66d51",

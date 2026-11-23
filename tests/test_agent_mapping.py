@@ -120,7 +120,7 @@ def test_the_log_row_names_mappingagent(db_session, tmp_path):
     run = MappingAgent(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "blob")).run(
         db_session, mapping_input(feed.id, column("coupon", "DOUBLE")))
     entry = db_session.get(ProposalLogEntry, run.log_id)
-    assert (entry.agent_name, entry.prompt_id, entry.prompt_version) == ("MappingAgent", "mapping", "v1")
+    assert (entry.agent_name, entry.prompt_id, entry.prompt_version) == ("MappingAgent", "mapping", "v2")
     assert run.proposals[0].proposal_log_id == entry.id
 
 

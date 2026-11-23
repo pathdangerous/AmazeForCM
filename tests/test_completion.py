@@ -28,7 +28,7 @@ def test_the_report_counts_mappings_excluded_columns_rules_actions_and_who_made_
 
     assert db_session.scalar(select(func.count()).select_from(ProposalLogEntry)) == calls  # no model, nothing written
     m = report.mappings
-    assert m.excluded_columns == [first.column] and m.excluded == 1
+    assert first.column in m.excluded_columns and m.excluded == len(m.excluded_columns) >= 1  # also columns a selected action left out
     assert m.done == len(m.mapped_columns) > 0 and m.pending == 0
     assert first.column not in {c.column for c in m.mapped_columns}
     assert m.done + m.excluded + m.undecided == report.columns_in_file

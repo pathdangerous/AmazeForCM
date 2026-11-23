@@ -134,3 +134,56 @@ def test_a_person_adds_an_action_and_no_model_is_called(db_session, glossary, tm
 
 def test_settings_default_keeps_samples_off():  # the facts above never needed a sample value
     assert Settings(_env_file=None).send_sample_values is False
+
+
+# ---------------------------------------------------------------- selected actions change the later proposals (7.12 A)
+
+
+def actions_of(w, kind, applied_by=None):
+    return [i for i in view(w).items if i.kind == "profile_action" and i.payload["action"] == kind
+            and (applied_by is None or i.payload["applied_by"] == applied_by)]
+
+
+def test_an_approved_cleaning_action_gets_its_transformation_and_a_rejected_one_does_not(db_session, glossary, tmp_path):
+    w = make_world(db_session, tmp_path)
+    work(w)
+    placeholders = actions_of(w, "placeholder_to_null", "agent")
+    assert len(placeholders) >= 2
+    refused, kept = placeholders[0], placeholders[1]
+    decide_profile_action(db_session, proposal_id=refused.proposal_id, user=OPERATOR, decision="rejected", note="Keep them.")
+    dates = actions_of(w, "parse_date")
+    cleaned = {p.payload["columns"][0] for p in placeholders}
+    for leave in actions_of(w, "exclude_column"):  # these columns stay mapped, so a transformation is possible
+        if leave.payload["columns"][0] in cleaned:
+            decide_profile_action(db_session, proposal_id=leave.proposal_id, user=OPERATOR, decision="rejected", note="Keep.")
+    approve(w)
+    run_to(w, "transformations")
+    steps = {i.column: [s["op"] for s in i.payload["steps"]] for i in view(w).items if i.kind == "transformation"}
+    assert "placeholder_to_null" in steps[kept.payload["columns"][0]]  # approved: the agent proposes it
+    assert refused.payload["columns"][0] not in steps  # rejected: no transformation for that column
+    assert dates and "parse_date" in steps[dates[0].payload["columns"][0]]
+
+
+def test_a_column_left_out_by_an_approved_action_is_not_proposed_to_later_agents_and_a_rejected_one_is(
+        db_session, glossary, tmp_path):
+    w = make_world(db_session, tmp_path)
+    work(w)
+    for name in view(w).inputs.columns[:2]:  # two people-made "leave it out" actions (the mock proposes one per empty column)
+        add_item(db_session, session_id=w.session_id, user=OPERATOR, item=ManualProfileAction(
+            kind="profile_action", action="exclude_column", columns=[name], reason="Not needed."))
+    leave = [i for i in actions_of(w, "exclude_column", "manual") if i.origin == "manual"]
+    assert len(leave) == 2
+    refused, kept = leave[0], leave[1]
+    decide_profile_action(db_session, proposal_id=refused.proposal_id, user=OPERATOR, decision="rejected", note="Keep it.")
+    approve(w)
+    run_to(w, "mapping")
+    from core.steps.s02_profile import excluded_by_actions
+
+    left = excluded_by_actions(db_session, w.feed_id)
+    assert kept.payload["columns"][0] in left and refused.payload["columns"][0] not in left
+    asked = {i.column for i in view(w).items}
+    assert kept.payload["columns"][0] not in asked
+    from core.steps.s06_map import excluded_columns
+
+    assert kept.payload["columns"][0] in excluded_columns(db_session, w.feed_id)
+    assert refused.payload["columns"][0] not in excluded_columns(db_session, w.feed_id)  # rejected: not left out
