@@ -8,7 +8,7 @@ every rule here in a CHECK on the JSON (migration 0023, amaze_valid_transform_st
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
@@ -127,6 +127,7 @@ class TransformationInput(BaseModel):
     feed_code: str
     columns: list[ColumnToTransform]
     samples: dict[str, list[str]] = {}
+    profile_actions: list[dict[str, Any]] = Field(default_factory=list)  # T1: selected profile actions
 
 
 class ColumnTransforms(BaseModel):

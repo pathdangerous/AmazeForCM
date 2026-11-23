@@ -1,7 +1,7 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { itemActions, profileItem, renderWithTheme, stepInputs, workspace } from "../../test/fixtures";
-import ProfilePanel from "./ProfilePanel";
+import ProfilePanel, { plainWords } from "./ProfilePanel";
 
 afterEach(() => {
   cleanup();
@@ -81,4 +81,14 @@ test("no line says 'x of 0'", () => {
 test("the profile item carries its decision controls once", () => {
   show({}, profileItem({ pre_accepted: false, needs_decision: true }));
   expect(screen.getAllByRole("button", { name: "Approve" }).length).toBe(1);
+});
+
+test("the facts code found are said in plain words, and an action says who does it", () => {
+  const lines = plainWords({ incomplete_records: { incomplete: 3, total: 120, required_columns: ["ISIN", "Price"] },
+                             glossary_fit: { matched: ["ISIN"], new: ["Desk"], unmatched: ["Px"] } }, 3);
+  expect(lines[0]).toBe("3 of 120 records are incomplete: each is missing a value in at least one of ISIN, Price.");
+  expect(lines[1]).toContain("1 of 3 columns already match the glossary; 1 are new");
+  expect(plainWords({ incomplete_records: { incomplete: 0, total: 5, required_columns: ["ISIN"] } }, null)[0])
+    .toBe("All 5 records are complete: none is missing a value in ISIN.");
+  expect(plainWords({}, 3)).toEqual([]);
 });

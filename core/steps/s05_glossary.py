@@ -65,6 +65,7 @@ from core.steps.candidates import candidate_list, covered_by, glossary_payloads,
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.matching import words
 from core.steps.result import StepResult
+from core.steps.s02_profile import selected_actions
 from core.steps.s1_scope import RunsAgent
 from core.steps.samples import samples_for_model
 from ports.config import Settings
@@ -208,7 +209,8 @@ def builder_input(session: Session, run: GlossaryRun, settings: Settings | None 
                                 settings or Settings(_env_file=None, send_sample_values=False))
     return BuilderPlan(run=run, skipped=skipped, agent_input=GlossaryBuilderInput(
         run_id=run.id, feed_id=feed.id, source_code=feed.source_code or feed.code, source_name=feed.name,
-        source_domain=source_domain, domains=domains, columns=columns, samples=samples))
+        source_domain=source_domain, domains=domains, columns=columns, samples=samples,
+        profile_actions=selected_actions(session, feed.id)))
 
 
 @cache

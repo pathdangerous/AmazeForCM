@@ -44,7 +44,8 @@ def test_one_profile_summary_proposal_for_the_backend_team(db_session, tmp_path)
     agent = ProfilerAgent(provider=MockProvider(), blob_store=LocalBlobStore(tmp_path / "blob"))
     end_read(db_session)
     run = agent.run(db_session, _input(feed.id, missing=("isin",)))
-    [proposal] = run.proposals
+    [proposal, *actions] = run.proposals  # T1: the summary first, then its actions, all on this one call
+    assert {a.kind for a in actions} <= {"profile_action"}
     assert (proposal.kind, proposal.feed_id, proposal.requirement_id, proposal.required_approver_roles,
             proposal.autonomy) == ("profile_summary", feed.id, None, ["backend_team"], "A2")
     assert proposal.payload["recommended_outcome"] == "meets_with_gaps"
@@ -57,7 +58,8 @@ def test_the_proposal_names_the_profile_and_carries_no_statistics():
                             key_reason="r", confidence=0.3)
     [draft] = ProfilerAgent.to_proposals(None, _input(uuid.uuid4(), profile_id), output)
     assert set(draft.payload) == {"profile_id", "summary", "recommended_outcome", "gaps", "reasons", "key_columns",
-                                  "key_reason", "confidence", "duplicate_key", "unknown_key_columns"}
+                                  "key_reason", "confidence", "duplicate_key", "unknown_key_columns",
+                                  "incomplete_records", "glossary_fit"}  # T1: facts code fills; actions are proposals
     assert draft.payload["profile_id"] == str(profile_id)
 
 

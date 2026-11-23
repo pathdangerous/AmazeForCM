@@ -301,6 +301,16 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
       <FeedLifecycle feed={feed} me={me} devUser={devUser} onChanged={onChange}
                      onDeleted={() => { window.location.hash = "#/feeds"; }} />
 
+      {(page.todo_actions ?? []).length > 0 && (
+        <Section name="todo" title="To do by a person" result={result}>
+          <ul data-testid="todo-actions" style={{ margin: 0, paddingLeft: 18 }}>
+            {(page.todo_actions ?? []).map((t) => (
+              <li key={t.proposal_id}>{`${t.action.replaceAll("_", " ")}: ${t.columns.join(", ") || "the feed"}. ${t.reason}`}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       <Section name="source" title="Source" result={result}>
         {page.source ? (
           <dl>

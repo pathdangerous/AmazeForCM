@@ -27,7 +27,7 @@ PROMPT_VERSIONS: dict[str, str] = {
     "intent": "v1",
     "source_discovery": "v1",
     "discovery_assistant": "v1",
-    "profiler": "v2",
+    "profiler": "v3",  # v3 (phase 7.12, T1): glossary fit and actions; v2 stays on disk
     "glossary_builder": "v2",  # v2 (phase 7.8): units, plain names, optional samples; v1 stays on disk
     "mapping": "v1",
     "rule_recommender": "v1",
@@ -44,6 +44,7 @@ PROMPT_FILE_HASHES: dict[str, str] = {
     "intent.v1.yaml": "40ae53c05f86abac70d7993f22e0c78bd8456252d0aaa94f10627a949f0dbb05",
     "profiler.v1.yaml": "9b0b2ab260def592ebe306abacab4c30420ce28aab4a71e3c66b1cdd52c66d51",
     "profiler.v2.yaml": "aa0dbdd52cb241bc28cccc219d8a61f53ca06d0e0137969eed7970104a898f6f",
+    "profiler.v3.yaml": "47989e0a94ee8714b61b69f58f7f95043334e415703ae004165142c9f6c3232e",
     "review_summariser.v1.yaml": "a0d42d5a0256cf4904367ec3abaf8289db650ad1961d07c1640d25388f2a8baa",
     "review_summariser.v2.yaml": "45599558401c5e5f968d9faa074667b49ff6d7043f12dd949e6391c1170887b4",
     "rule_recommender.v1.yaml": "24571657cbbaffc0488fba3ee1ad8e7f51c52e5a1c51063a9ce148242f3de0ae",

@@ -66,6 +66,7 @@ from core.repositories.transformations import TransformationRepository
 from core.steps.errors import needs_a_note
 from core.steps.result import StepResult
 from core.steps.rule_candidates import element_offers, feed_offers
+from core.steps.s02_profile import selected_actions
 from core.steps.s1_scope import RunsAgent
 from ports.connectors.base import SourceConnector, SourceUnavailable
 from ports.connectors.catalogue import SourceCatalogue
@@ -188,7 +189,8 @@ def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue) 
         connector=feed.connector, history=list(entry.history) if entry else [],
         load_history=[LoadHistoryItem(label=f"load {load.received_at:%Y-%m-%d}", file_ref=load.file_ref)
                       for load in LoadRepository(session).fully_loaded_scheduled(feed_id, LOAD_HISTORY)],
-        transformations=TransformationRepository(session).current_for_feed(feed_id))
+        transformations=TransformationRepository(session).current_for_feed(feed_id),
+        profile_actions=selected_actions(session, feed_id))
 
 
 # ---------------------------------------------------------------- the back-test (no connection held)

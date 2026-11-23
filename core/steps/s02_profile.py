@@ -25,22 +25,44 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from core.domain.profiling import DuplicateKey, FeedProfile, FileProfile, ProfilerInput, ProfilerOutput
+from core.domain.profiling import (
+    DuplicateKey,
+    FeedProfile,
+    FileColumn,
+    FileProfile,
+    GlossaryFit,
+    ProfilerInput,
+    ProfilerOutput,
+)
 from core.domain.requirement import Requirement
 from core.repositories.errors import (
     FeedHasNoFile,
     FeedNotACandidate,
     FeedNotProfiled,
+    NotAnApprover,
     ProfileAlreadySummarised,
     ProfileSuperseded,
+    ProposalAlreadyDecided,
+    WrongProposalKind,
 )
+from core.repositories.glossary import GlossaryRepository
+from core.steps.candidates import MIN_SCORE, SIMILAR, score
+from core.steps.errors import needs_a_note
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
-from core.steps.profiling import ENGINE, NotATable, coverage_of, duplicate_key_found, profile_csv, spec_of
+from core.steps.profiling import (
+    ENGINE,
+    NotATable,
+    coverage_of,
+    duplicate_key_found,
+    incomplete_records_found,
+    profile_csv,
+    spec_of,
+)
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
 from core.steps.samples import samples_for_model
@@ -190,8 +212,60 @@ def summary_input(session: Session, *, feed_id: UUID, settings: Settings | None 
         columns=[c.model_copy(update={"samples": []}) for c in profile.columns],
         samples=samples_for_model(profile.columns, settings or Settings(_env_file=None, send_sample_values=False)),
         issues=profile.issues, file_ref=fetch.blob_ref if fetch else None,
+        glossary_fit=fit_to_glossary(profile.columns, GlossaryRepository(session).list_current()),
         coverage=profile.coverage,
         requirement_titles={c.requirement_id: requirements.get(c.requirement_id).title for c in profile.coverage})
+
+
+def fit_to_glossary(columns: list[FileColumn], elements: list) -> GlossaryFit:
+    """T1, by code: each column against the glossary. matched: a name or alias fits (score at or above SIMILAR);
+    new: nothing is close (below MIN_SCORE); unmatched: something is close, but a person must choose."""
+    matched, new, unmatched = [], [], []
+    for c in columns:
+        best = max((score(c.name, e) for e in elements), default=0.0)
+        (matched if best >= SIMILAR else unmatched if best >= MIN_SCORE else new).append(c.name)
+    return GlossaryFit(matched=matched, new=new, unmatched=unmatched)
+
+
+def selected_actions(session: Session, feed_id: UUID) -> list[dict]:
+    """T1: the profile actions a person selected (approved), as the later agents' inputs hold them. Code, no model."""
+    return [{"proposal_id": str(p.id), "action": p.payload["action"], "columns": p.payload["columns"],
+             "params": p.payload["params"], "applied_by": p.payload["applied_by"], "reason": p.payload["reason"]}
+            for p in ProposalRepository(session).list_for_feed(feed_id, "profile_action", "approved")]
+
+
+def todo_actions(session: Session, feed_id: UUID) -> list[dict]:
+    """The selected actions a person said they would do themselves: the to-do list on the feed."""
+    return [a for a in selected_actions(session, feed_id) if a["applied_by"] == "manual"]
+
+
+class ProfileActionDecided(BaseModel):
+    """Not an outcome: a person selected (approved) or rejected one profile action."""
+
+    model_config = ConfigDict(frozen=True)
+
+    proposal_id: UUID
+    decision: str
+    action: str
+
+
+def decide_profile_action(session: Session, *, proposal_id: UUID, user, decision: str,
+                          note: str | None = None) -> ProfileActionDecided:
+    """The backend team selects (approves) or rejects an action. An action changes no data and no configuration by
+    itself: a selected one is passed to the later agents' inputs, or is a to-do for a person (rule 1)."""
+    proposals = ProposalRepository(session)
+    proposal = proposals.get(proposal_id)
+    if proposal.kind != "profile_action":
+        raise WrongProposalKind(f"Proposal {proposal_id} is a {proposal.kind} proposal, not profile_action")
+    needs_a_note(decision, note)
+    FeedRepository(session).lock(proposal.feed_id)
+    proposal = proposals.lock(proposal_id)
+    if proposal.status != "pending":
+        raise ProposalAlreadyDecided(f"Proposal {proposal_id} is already {proposal.status}")
+    if "backend_team" not in user.roles:
+        raise NotAnApprover(f"Proposal {proposal_id} needs role backend_team; {user.id} has {user.roles}")
+    proposals.record_decision(proposal_id, user=user, decision=decision, note=note)
+    return ProfileActionDecided(proposal_id=proposal_id, decision=decision, action=proposal.payload["action"])
 
 
 def key_facts(output: ProfilerOutput, *, columns: list[str], file: Path | None) -> ProfilerOutput:
@@ -225,7 +299,11 @@ def record_summary(session: Session, *, agent: RunsAgent, agent_input: ProfilerI
 
     def after_answer(output: ProfilerOutput) -> ProfilerOutput:
         names = [c.name for c in agent_input.columns]
-        if blob_store is None or agent_input.file_ref is None or not any(k in names for k in output.key_columns):
+        # T1: facts by code, never from the model; an action naming a column the file lacks is dropped
+        output = output.model_copy(update={
+            "glossary_fit": agent_input.glossary_fit, "incomplete_records": None,
+            "actions": [a for a in output.actions if all(c in names for c in a.columns)]})
+        if blob_store is None or agent_input.file_ref is None:
             return key_facts(output, columns=names, file=None)
         try:
             content = blob_store.get(agent_input.file_ref)
@@ -234,13 +312,18 @@ def record_summary(session: Session, *, agent: RunsAgent, agent_input: ProfilerI
         with tempfile.TemporaryDirectory(prefix="amaze-key-") as folder:
             path = Path(folder) / "file.csv"
             path.write_bytes(content)
+            spec = agent_input.spec
+            requested = [c for c, field in spec.columns.items() if field in spec.elements]
+            required = list(dict.fromkeys([k for k in output.key_columns if k in names] + requested))
+            output = output.model_copy(update={"incomplete_records": incomplete_records_found(path, required)})
             return key_facts(output, columns=names, file=path)
 
     run = agent.run(session, agent_input, before_write=lambda s: _still_the_latest(s, agent_input),
                     after_answer=after_answer)
-    if len(run.proposals) != 1 or run.proposals[0].kind != "profile_summary":
-        raise ValueError("step 02 expects exactly one profile_summary proposal from the agent")
-    proposal = run.proposals[0]
+    summaries = [p for p in run.proposals if p.kind == "profile_summary"]
+    if len(summaries) != 1 or any(p.kind not in ("profile_summary", "profile_action") for p in run.proposals):
+        raise ValueError("step 02 expects exactly one profile_summary proposal (and profile_action proposals)")
+    proposal = summaries[0]
     p = proposal.payload
     return ProfileSummary(proposal_id=proposal.id, log_id=run.log_id, profile_id=agent_input.profile_id,
                           summary=p["summary"], recommended_outcome=p["recommended_outcome"], gaps=p["gaps"],

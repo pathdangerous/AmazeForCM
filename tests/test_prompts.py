@@ -71,7 +71,7 @@ def test_every_agent_in_the_registry_names_a_current_prompt():
         registry.PROMPT_VERSIONS["review_summariser"] == "v2")  # old: v1; S8: v2 drops visibility
     assert (registry.AGENT_PROMPTS["RuleRecommenderAgent"], registry.PROMPT_VERSIONS["rule_recommender"]) == (
         "rule_recommender", "v1")
-    assert (registry.AGENT_PROMPTS["ProfilerAgent"], registry.PROMPT_VERSIONS["profiler"]) == ("profiler", "v2")
+    assert (registry.AGENT_PROMPTS["ProfilerAgent"], registry.PROMPT_VERSIONS["profiler"]) == ("profiler", "v3")  # old: v2; T1: v3 adds actions
     # phase 5: the evaluator uses the mapping agent's prompt (assumption 37)
     assert [registry.AGENT_PROMPTS[a] for a in ("GlossaryBuilderAgent", "MappingAgent", "MappingEvaluator")] == [
         "glossary_builder", "mapping", "mapping"]

@@ -46,6 +46,7 @@ from core.repositories.proposals import ProposalRepository
 from core.steps.candidates import candidate_list, kept_elements
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.result import StepResult
+from core.steps.s02_profile import selected_actions
 from core.steps.s05_glossary import queue_run
 from core.steps.s1_scope import RunsAgent
 from ports.identity.base import User
@@ -160,7 +161,8 @@ def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,
         columns.append(ColumnToMap(name=c.name, type=c.type, null_rate=c.null_rate, distinct_count=c.distinct_count,
                                    candidates=offered, current=current.get(c.name)))
     return MappingInput(feed_id=feed_id, source_code=feed.source_code or feed.code, source_name=feed.name,
-                        source_description=source_description, columns=columns)
+                        source_description=source_description, columns=columns,
+                        profile_actions=selected_actions(session, feed_id))
 
 
 def _still_mappable(session: Session, agent_input: MappingInput) -> None:

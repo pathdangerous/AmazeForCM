@@ -16,6 +16,7 @@ def test_proposal_kinds_are_the_eight_agent_outputs_with_an_approver():
         "scope", "source_list", "profile_summary", "glossary_element", "mapping", "rule", "review_summary",
         "extracted_table",  # phase 7.8, task 2.3
         "transformation",  # phase 7.8, task 4.1
+        "profile_action",  # phase 7.12, T1
     }
 
 

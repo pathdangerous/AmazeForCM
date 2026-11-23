@@ -105,6 +105,7 @@ from core.steps.s11_go_live import (
     go_live_plan,
 )
 from core.steps.s11_go_live import record_summary as record_go_live_summary  # s02 has a record_summary too
+from core.steps.s02_profile import decide_profile_action
 from core.steps.s02_profile import ProfileResult, ProfileSummary, profile_plan, record_profile, record_summary, \
     run_profile, summary_input
 from core.steps.s03_signoff import SignoffResult, sign_off
@@ -471,6 +472,8 @@ def decide_proposal(session: Session, *, proposal_id: UUID, body: DecisionBody, 
             back_to_step=body.back_to_step, today=date.today(), hypercare_days=settings.hypercare_days,
             daily_run_utc=f"{DAILY_FETCH_HOUR:02d}:00", notifier=notifier, backend_team=_backend_team(identity),
             operations=_users_with(identity, "operations"), role_holders=lambda role: _users_with(identity, role))
+    if kind == "profile_action":  # phase 7.12, T1: the backend team selects or rejects an action
+        return decide_profile_action(session, proposal_id=proposal_id, user=user, decision=body.decision, note=body.note)
     if kind == "transformation":  # phase 7.8, task 4.3: the data steward
         return decide_transformation(session, proposal_id=proposal_id, user=user, decision=body.decision,
                                      note=body.note)

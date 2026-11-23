@@ -8,8 +8,14 @@ const SNAKE = /^[a-z][a-z0-9_]*$/;
 const SNAKE_HELP = "Use lower-case letters, digits and underscores, starting with a letter.";
 const DATA_TYPES = ["string", "integer", "decimal", "date", "datetime", "boolean"];
 // The stages where a person may add an item (T7). Profile and drift are not here: their actions do not exist yet.
-export const ADDABLE: StepName[] = ["glossary", "mapping", "transformations", "rules", "go_live"];
+export const ADDABLE: StepName[] = ["profile", "glossary", "mapping", "transformations", "rules", "go_live"];
+const ACTIONS = [
+  { value: "parse_date", label: "Read a column as a date" }, { value: "placeholder_to_null", label: "Turn placeholders into empty" },
+  { value: "key_policy", label: "Decide what happens to a repeated key" }, { value: "exclude_column", label: "Leave a column out" },
+  { value: "add_rule", label: "Add a rule" },
+];
 const LABELS: Partial<Record<StepName, string>> = {
+  profile: "Add action",
   glossary: "Add glossary item", mapping: "Add mapping item", transformations: "Add transformation",
   rules: "Add rule", go_live: "Add note",
 };
@@ -21,6 +27,27 @@ function Column({ ws, value, onChange, error }: { ws: Workspace; value: string; 
   return (
     <NativeSelect label="Column" value={value} w={300} error={error} onChange={(e) => onChange(e.currentTarget.value)}
                   data={[{ value: "", label: "Select a column" }, ...columns.map((c) => ({ value: c, label: c }))]} />
+  );
+}
+
+// T1: an action a person adds at the profile step; they will do it themselves ("I'll do it").
+function ActionForm({ ws, submit }: FormProps) {
+  const [action, setAction] = useState("exclude_column");
+  const [column, setColumn] = useState("");
+  const [reason, setReason] = useState("");
+  const [tried, setTried] = useState(false);
+  const problems = { column: column === "" ? "Choose a column" : undefined, reason: reason.trim() === "" ? "A reason is needed" : undefined };
+  return (
+    <>
+      <NativeSelect label="Action" value={action} w={340} data={ACTIONS} onChange={(e) => setAction(e.currentTarget.value)} />
+      <Column ws={ws} value={column} onChange={setColumn} error={tried ? problems.column : undefined} />
+      <Textarea label="Why" rows={2} value={reason} error={tried ? problems.reason : undefined}
+                onChange={(e) => setReason(e.currentTarget.value)} />
+      <Button size="xs" mt="xs" onClick={() => {
+        setTried(true);
+        if (!problems.column && !problems.reason) submit({ kind: "profile_action", action, columns: [column], reason: reason.trim() });
+      }}>Add item</Button>
+    </>
   );
 }
 
@@ -217,6 +244,7 @@ export default function AddItem({ step, ws, actions }: { step: StepName; ws: Wor
   return (
     <div role="group" aria-label={label} style={{ marginTop: 12, border: "1px solid var(--amz-line)", borderRadius: 6, padding: "8px 12px" }}>
       {actions.addError && <Alert role="alert" color="red" mb="xs">{actions.addError}</Alert>}
+      {step === "profile" && <ActionForm {...props} />}
       {step === "glossary" && <GlossaryForm {...props} />}
       {step === "mapping" && <MappingForm {...props} />}
       {step === "transformations" && <TransformationForm {...props} />}

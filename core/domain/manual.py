@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.domain.common import NonBlank, SnakeName
 from core.domain.mapping import ElementOption
+from core.domain.profiling import ActionKind
 from core.domain.transformation import TransformSteps
 
 
@@ -70,10 +71,20 @@ class ManualRule(_Item):
         return self
 
 
+class ManualProfileAction(_Item):
+    """An action a person adds at the profile step: they do it themselves (`applied_by` is `manual`)."""
+
+    kind: Literal["profile_action"]
+    action: ActionKind
+    columns: list[NonBlank] = Field(default_factory=list)
+    params: dict[str, str] = Field(default_factory=dict)
+    reason: NonBlank
+
+
 class ManualNote(_Item):
     kind: Literal["review_summary"]
     note: NonBlank
 
 
-ManualItem = Annotated[ManualGlossary | ManualMapping | ManualTransformation | ManualRule | ManualNote,
-                       Field(discriminator="kind")]
+ManualItem = Annotated[ManualGlossary | ManualMapping | ManualTransformation | ManualRule | ManualNote
+                       | ManualProfileAction, Field(discriminator="kind")]

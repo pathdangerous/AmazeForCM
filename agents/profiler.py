@@ -21,5 +21,12 @@ class ProfilerAgent(Agent):
     output_schema = ProfilerOutput
 
     def to_proposals(self, agent_input: ProfilerInput, output: ProfilerOutput) -> list[AgentProposal]:
+        dumped = output.model_dump(mode="json")
+        actions = dumped.pop("actions")
+        profile_id = str(agent_input.profile_id)
+        # one proposal for the summary and one per action, all on the same logged call (T1): a person selects each action
         return [AgentProposal(kind="profile_summary", feed_id=agent_input.feed_id,
-                              payload={"profile_id": str(agent_input.profile_id), **output.model_dump(mode="json")})]
+                              payload={"profile_id": profile_id, **dumped}),
+                *[AgentProposal(kind="profile_action", feed_id=agent_input.feed_id,
+                                payload={"profile_id": profile_id, "action": a.pop("action"), **a})
+                  for a in actions]]

@@ -47,6 +47,7 @@ from core.repositories.proposals import ProposalRepository
 from core.repositories.transformations import KeyPolicyRepository, TransformationRepository
 from core.steps.errors import StepInputError, needs_a_note
 from core.steps.result import StepResult
+from core.steps.s02_profile import selected_actions
 from core.steps.s1_scope import RunsAgent
 from core.steps.samples import samples_for_model
 from ports.config import Settings
@@ -151,7 +152,8 @@ def transform_input(session: Session, *, feed_id: UUID, settings: Settings | Non
             placeholder_count=c.placeholder_count, text_date_format=c.text_date_format,
             date_format_ambiguous=c.date_format_ambiguous, all_empty=c.all_empty, constant=c.constant)
             for m, c in open_columns],
-        samples={m.source_field: samples[c.name] for m, c in open_columns if c.name in samples})
+        samples={m.source_field: samples[c.name] for m, c in open_columns if c.name in samples},
+        profile_actions=selected_actions(session, feed.id))
 
 
 # ---------------------------------------------------------------- propose

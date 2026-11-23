@@ -238,8 +238,9 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     ran = w.worker.drain()
     assert [(r.step, r.status) for r in ran] == [("profile", "done")]
     ws = await workspace_of(w, oid)
-    [item] = ws["items"]
-    assert item["kind"] == "profile_summary" and item["pre_accepted"] and not item["needs_decision"]
+    [item] = [i for i in ws["items"] if i["kind"] == "profile_summary"]  # T1: the agent's actions come beside it
+    assert item["pre_accepted"] and not item["needs_decision"]
+    assert {i["kind"] for i in ws["items"]} == {"profile_summary", "profile_action"}
     assert item["payload"]["key_columns"] == ["TICKER_NAME"]
     for column in ("COUNTRY", "REGION", "F_PERIOD", "RECORD_DATE"):
         assert column in item["payload"]["summary"], column
@@ -286,7 +287,8 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     # any earlier step can be viewed, read only; a step never run has no items; an unknown step is 422
     earlier = await call(w, "GET", f"/{oid}", params={"step": "profile"})
     assert earlier["current_step"] == "mapping" and earlier["viewed_step"] == "profile"
-    assert [i["kind"] for i in earlier["items"]] == ["profile_summary"] and earlier["agent_notes"]
+    assert earlier["items"][0]["kind"] == "profile_summary" and {i["kind"] for i in earlier["items"]} == {
+        "profile_summary", "profile_action"} and earlier["agent_notes"]
     assert earlier["can_approve"] is False and earlier["blocked_by"] == "Viewing an earlier step."
     assert earlier["inputs"]["key_columns"] == ["TICKER_NAME"] and earlier["inputs"]["issues"]
     later = await call(w, "GET", f"/{oid}", params={"step": "rules"})
@@ -656,7 +658,10 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
         assert committed(engine, "SELECT visibility FROM feed_registrations") == [("restricted",)]
         assert committed(engine, "SELECT step, status FROM onboarding_jobs WHERE status = 'queued'") == [
             ("glossary", "queued")]
-        assert committed(engine, "SELECT event FROM onboarding_events WHERE event = 'approved'") == [("approved",)]
+        # the summary and each action the agent proposed (T1) were approved
+        assert committed(engine, "SELECT count(*) FROM onboarding_events WHERE event = 'approved'")[0][0] >= 2
+        assert committed(engine, "SELECT count(*) FROM proposals WHERE kind = 'profile_action' AND status <> 'approved'") == [
+            (0,)]
 
         # the key policy: the next version
         await r.call("PUT", f"/{oid}/key-policy", json={"policy": "hold", "key_columns": ["TICKER_NAME"],

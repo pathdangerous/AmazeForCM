@@ -136,6 +136,47 @@ SIGNOFF_OUTCOMES: tuple[str, ...] = get_args(SignoffOutcome)
 # ---------------------------------------------------------------- the ProfilerAgent (assumptions 14 and 15)
 
 
+# ---------------------------------------------------------------- T1 (phase 7.12): facts in plain words, and actions
+
+ActionKind = Literal["parse_date", "placeholder_to_null", "key_policy", "exclude_column", "add_rule"]
+ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
+AppliedBy = Literal["agent", "manual"]  # "agent applies" (a later agent does it from the approved action) or "I'll do it"
+
+
+class IncompleteRecords(BaseModel):
+    """Rows with a null in any required column (the key columns and the columns of the requested items). Counted by code."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    incomplete: int
+    total: int
+    required_columns: list[str]
+
+
+class GlossaryFit(BaseModel):
+    """Each column against the glossary, by code: matched (a name or alias fits), new (nothing is close: the glossary
+    builder will propose an element) or unmatched (something is close, but a person must choose)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    matched: list[str] = []
+    new: list[str] = []
+    unmatched: list[str] = []
+
+
+class ProposedAction(BaseModel):
+    """What the ProfilerAgent proposes to do about something found in the file. A proposal (rule 1): a person selects it
+    (approves) or rejects it. `applied_by` says who carries it out once selected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: ActionKind
+    columns: list[str] = Field(default_factory=list)
+    params: dict[str, str] = Field(default_factory=dict)
+    applied_by: AppliedBy
+    reason: NonBlank
+
+
 class ProfilerInput(BaseModel):
     """What the ProfilerAgent sees: one stored profile, and the title of each requirement it covers."""
 
@@ -155,6 +196,7 @@ class ProfilerInput(BaseModel):
     # at most 5 values per column. The columns above carry no samples.
     issues: list[ProfileIssue] = []
     samples: dict[str, list[str]] = {}
+    glossary_fit: GlossaryFit | None = None  # T1: found by code from the glossary
     # Where the file is stored: used by the step to count duplicates, never shown to the model.
     file_ref: str | None = Field(default=None, exclude=True)
 
@@ -184,6 +226,10 @@ class ProfilerOutput(BaseModel):
     confidence: float = Field(ge=0, le=1)
     duplicate_key: DuplicateKey | None = None
     unknown_key_columns: list[str] = []
+    # T1: the two facts below are filled by code (after_answer); the model only proposes `actions`
+    incomplete_records: IncompleteRecords | None = None
+    glossary_fit: GlossaryFit | None = None
+    actions: list[ProposedAction] = []
 
 
 class FeedProfileDraft(BaseModel):

@@ -24,8 +24,21 @@ function mount(step: Parameters<typeof AddItem>[0]["step"], answer = true, extra
   return addFn;
 }
 
-test("there is no Add item at the profile step, read only, or without an add action", () => {
-  mount("profile");
+test("a profile action: a column and a why, sent as an action a person will do themselves", async () => {
+  const addFn = mount("profile");
+  open("Add action");
+  add();
+  expect(screen.getByText("Choose a column")).toBeTruthy();
+  type("Column", "Name");
+  type("Action", "add_rule");
+  type("Why", "The name must never be empty.");
+  add();
+  await waitFor(() => expect(addFn).toHaveBeenCalledWith({
+    kind: "profile_action", action: "add_rule", columns: ["Name"], reason: "The name must never be empty." }));
+});
+
+test("there is no Add item read only, or without an add action, or at a step that takes none", () => {
+  mount("first_load");
   expect(screen.queryByRole("button")).toBeNull();
   cleanup();
   renderWithTheme(<AddItem step="rules" ws={ws()} actions={itemActions({ add: vi.fn(), readOnly: true })} />);

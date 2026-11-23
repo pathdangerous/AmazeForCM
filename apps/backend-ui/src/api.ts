@@ -127,6 +127,7 @@ export type FeedPage = {
   registration: { owner_id: string; licence: string; permitted_use: string; redistribution: string;
                   visibility: "open" | "restricted"; registered_by: string; created_at: string } | null;
   next_action: "profile" | "summarise" | "sign_off" | "register" | null;
+  todo_actions?: { proposal_id: string; action: string; columns: string[]; reason: string }[]; // phase 7.12, T1
   glossary_run: GlossaryRun | null; // phase 5: the latest
   columns: ColumnMapping[]; // phase 5: a registered feed's mapping table
   rules: RulesOnPage; // phase 6
@@ -401,7 +402,8 @@ export type ManualItemBody =
   | { kind: "mapping"; source_field: string; reason: string; element_key?: string; excluded?: boolean }
   | { kind: "transformation"; source_field: string; reason: string; steps: Record<string, unknown>[] }
   | { kind: "rule"; template?: string; rule_key?: string; sql?: string; description?: string; element_keys?: string[] }
-  | { kind: "review_summary"; note: string };
+  | { kind: "review_summary"; note: string }
+  | { kind: "profile_action"; action: string; columns: string[]; reason: string; params?: Record<string, string> };
 export type AgentNote = {
   proposal_id: string; agent: string; provider: string; model: string; model_version: string; prompt_id: string;
   prompt_version: string; latency_ms: number; input_ref: string; reasoning: string | null;

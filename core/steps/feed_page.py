@@ -46,7 +46,7 @@ from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
 from core.steps.candidates import candidate_list, covered_by, new_columns
-from core.steps.s02_profile import ProfileSummary, _key_part, summary_of
+from core.steps.s02_profile import ProfileSummary, _key_part, summary_of, todo_actions
 from core.steps.s10_transform import EffectiveKeyPolicy, effective_key_policy
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
 
@@ -132,6 +132,17 @@ class TransformationsOnPage(BaseModel):
     key_policy: EffectiveKeyPolicy
 
 
+class TodoAction(BaseModel):
+    """T1: a profile action a person selected and said they would carry out themselves ("I'll do it")."""
+
+    model_config = ConfigDict(frozen=True)
+
+    proposal_id: UUID
+    action: str
+    columns: list[str]
+    reason: str
+
+
 class FeedPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -161,6 +172,7 @@ class FeedPage(BaseModel):
     issues: list[ProfileIssue] = []
     # phase 7.8, task 4.3: step 10 (set by feed_page(); the default keeps a hand-built page valid)
     transformations: TransformationsOnPage | None = None
+    todo_actions: list[TodoAction] = []  # phase 7.12, T1: the manual profile actions still to be done by a person
 
 
 class RuleOnPage(BaseModel):
@@ -390,7 +402,9 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         product=ProductRepository(session).for_feed(feed.id), parked_columns=parked_columns(session, feed.id),
         coverage_titles={c.requirement_id: requirements.get(c.requirement_id).title
                          for c in (latest.coverage if latest else [])},
-        issues=latest.issues if latest else [], transformations=_transformations_on_page(session, feed))
+        issues=latest.issues if latest else [], transformations=_transformations_on_page(session, feed),
+        todo_actions=[TodoAction(**{k: a[k] for k in ("proposal_id", "action", "columns", "reason")})
+                      for a in todo_actions(session, feed.id)])
 
 
 FeedPage.model_rebuild()  # its phase 6 sections are declared below it

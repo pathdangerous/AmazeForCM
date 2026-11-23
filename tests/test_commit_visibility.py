@@ -313,7 +313,11 @@ async def test_summary_commits_the_proposal(own_schema, flow):
     assert committed(own_schema, "SELECT agent_name FROM proposal_log WHERE agent_name = 'ProfilerAgent'") == [
         ("ProfilerAgent",)]
     assert committed(own_schema, "SELECT kind, status, payload->>'recommended_outcome' FROM proposals "
-                                 "WHERE feed_id = :f", f=f.feed_id) == [("profile_summary", "pending", "meets")]
+                                 "WHERE feed_id = :f AND kind = 'profile_summary'", f=f.feed_id) == [
+        ("profile_summary", "pending", "meets")]
+    # T1: its actions are committed with it, on the same call (here the mock proposes one for the feed's key)
+    assert committed(own_schema, "SELECT count(DISTINCT proposal_log_id), count(*) FILTER (WHERE kind = 'profile_action') "
+                                 "FROM proposals WHERE feed_id = :f", f=f.feed_id) == [(1, 1)]
 
 
 @pytest.mark.anyio

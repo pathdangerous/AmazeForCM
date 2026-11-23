@@ -18,6 +18,25 @@ function Figure({ label, value }: { label: string; value: number }) {
   );
 }
 
+// T1: what code found, in plain words for a business user: incomplete records and the fit to the glossary.
+export function plainWords(p: Record<string, unknown>, columnCount: number | null): string[] {
+  const lines: string[] = [];
+  const inc = asRecord(p.incomplete_records);
+  if (typeof inc.total === "number" && typeof inc.incomplete === "number") {
+    const needed = asList(inc.required_columns).join(", ");
+    lines.push(inc.incomplete === 0
+      ? `All ${inc.total} records are complete: none is missing a value in ${needed}.`
+      : `${inc.incomplete} of ${inc.total} records are incomplete: each is missing a value in at least one of ${needed}.`);
+  }
+  const fit = asRecord(p.glossary_fit);
+  const [matched, fresh, unmatched] = [asList(fit.matched), asList(fit.new), asList(fit.unmatched)];
+  if (matched.length + fresh.length + unmatched.length > 0) {
+    const of = columnCount ? ` of ${columnCount} columns` : "";
+    lines.push(`${matched.length}${of} already match the glossary; ${fresh.length} are new (a glossary entry will be proposed) and ${unmatched.length} need a person to match them.`);
+  }
+  return lines;
+}
+
 // The profile step (task 7.3b, item 10): figures, the proposed key, the issues, then the summary and its outcome.
 export default function ProfilePanel({ ws, items, actions }: PanelProps) {
   const inputs = ws.inputs;
@@ -43,6 +62,11 @@ export default function ProfilePanel({ ws, items, actions }: PanelProps) {
           {asText(p.key_reason) && <Text size="sm" c="dimmed">{asText(p.key_reason)}</Text>}
         </div>
       )}
+      {summary && plainWords(p, inputs?.column_count ?? null).length > 0 && (
+        <ul data-testid="profile-plain" aria-label="The file in plain words" style={{ margin: "0 0 12px", paddingLeft: 18 }}>
+          {plainWords(p, inputs?.column_count ?? null).map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      )}
       {inputs && inputs.issues.length > 0 ? (
         <Table.ScrollContainer minWidth={420} mb="md">
           <Table aria-label="Issues found in the file" verticalSpacing="xs">
@@ -65,6 +89,14 @@ export default function ProfilePanel({ ws, items, actions }: PanelProps) {
       <ul style={{ padding: 0, margin: 0 }}>
         {items.map((item) => (
           <ItemCard key={item.proposal_id} item={item} actions={actions}>
+            {item.kind === "profile_action" && (
+              <>
+                <Text mt="xs">{item.reason}</Text>
+                <Text size="sm" data-testid="action-who">
+                  {asText(item.payload.applied_by) === "manual" ? "I'll do it" : "Agent applies"}
+                </Text>
+              </>
+            )}
             {item.kind === "profile_summary" && (
               <>
                 {asText(p.summary) && <Text mt="xs">{asText(p.summary)}</Text>}

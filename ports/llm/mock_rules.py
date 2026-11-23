@@ -150,7 +150,34 @@ def profiler(data: dict[str, Any]) -> dict[str, Any]:
             out["gaps"] = sentences
     if key["key_columns"]:
         out["summary"] += f" Proposed key: {', '.join(key['key_columns'])}."
-    return {**out, **key}
+    return {**out, **key, "actions": _profile_actions(issues, key["key_columns"])}
+
+
+def _profile_actions(issues: list[dict[str, Any]], key_columns: list[str]) -> list[dict[str, Any]]:
+    """T1: deterministic actions from what code found. Placeholders and dates held as text are cleaned by a later agent
+    ("agent applies"); an empty column, a repeated key or a constant column is for a person ("I'll do it")."""
+    actions: list[dict[str, Any]] = []
+    for issue in issues:
+        columns, detail = issue["columns"], issue["detail"]
+        if issue["kind"] == "placeholders":
+            actions.append({"action": "placeholder_to_null", "columns": columns, "applied_by": "agent",
+                            "params": {}, "reason": f"{columns[0]} holds placeholders that should be empty: {detail}"})
+        elif issue["kind"] == "date_as_text":
+            fmt = re.search(r"format ([A-Za-z/.\-]+)", detail)
+            actions.append({"action": "parse_date", "columns": columns, "applied_by": "agent",
+                            "params": {"format": fmt.group(1)} if fmt else {},
+                            "reason": f"{columns[0]} holds dates as text, so it is read as a date. {detail}"})
+        elif issue["kind"] in ("all_empty", "placeholder_only"):
+            actions.append({"action": "exclude_column", "columns": columns, "applied_by": "manual", "params": {},
+                            "reason": f"{columns[0]} has no real value in any row, so it is better left out."})
+        elif issue["kind"] == "constant":
+            actions.append({"action": "add_rule", "columns": columns, "applied_by": "manual", "params": {},
+                            "reason": f"{columns[0]} is the same in every row: a rule would notice when it changes."})
+    if key_columns:
+        actions.append({"action": "key_policy", "columns": key_columns, "applied_by": "manual",
+                        "params": {"policy": "flag"},
+                        "reason": f"Decide what happens when a row repeats {', '.join(key_columns)}."})
+    return actions
 
 
 def _profiler_outcome(data: dict[str, Any]) -> dict[str, Any]:

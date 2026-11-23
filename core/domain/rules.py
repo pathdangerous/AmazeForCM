@@ -9,7 +9,7 @@ answers with (Agent.run(after_answer=...)).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -77,6 +77,7 @@ class RuleRecommenderInput(BaseModel):
     # Phase 7.8, task 4.3: the feed's approved transformations. Code reads the history through them (as the engine
     # would load it); the model is not told, so the field is left out of what it is sent and what is stored.
     transformations: list[Transformation] = Field(default_factory=list, exclude=True)
+    profile_actions: list[dict[str, Any]] = Field(default_factory=list)  # T1: selected profile actions
 
 
 class Delivery(BaseModel):

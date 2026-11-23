@@ -18,6 +18,7 @@ ProposalKind = Literal[
     "scope",             # S1 IntentAgent
     "source_list",       # S2 SourceDiscoveryAgent
     "profile_summary",   # 02 ProfilerAgent
+    "profile_action",    # 02 ProfilerAgent (phase 7.12, T1) or a person: one action, selected or rejected
     "glossary_element",  # 05 GlossaryBuilderAgent
     "mapping",           # 06 MappingAgent
     "rule",              # 09 RuleRecommenderAgent
@@ -31,7 +32,8 @@ Autonomy = Literal["A1", "A2"]  # A3 is not used in the PoC
 ProposalStatus = Literal["pending", "approved", "rejected", "superseded"]  # superseded: edited (phase 7.8, 0024)
 EDITABLE_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule",
                                     "review_summary")  # what an edit may change (a review summary: its notes only)
-MANUAL_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule")  # what a person may add (0028)
+MANUAL_KINDS: tuple[str, ...] = ("glossary_element", "mapping", "transformation", "rule",
+                                  "profile_action")  # what a person may add (0028; profile_action 0029)
 Decision = Literal["approved", "rejected"]
 
 

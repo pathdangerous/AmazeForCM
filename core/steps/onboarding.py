@@ -45,7 +45,14 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from core.domain.manual import ManualGlossary, ManualMapping, ManualNote, ManualRule, ManualTransformation
+from core.domain.manual import (
+    ManualGlossary,
+    ManualMapping,
+    ManualNote,
+    ManualProfileAction,
+    ManualRule,
+    ManualTransformation,
+)
 from core.domain.mapping import GlossaryProposalPayload, MappingProposalPayload
 from core.domain.onboarding import (
     ONBOARDING_STEPS,
@@ -106,7 +113,15 @@ from core.repositories.transformations import TransformationRepository
 from core.repositories.tables import ProposalLogEntry  # not core.proposal_log: that module imports ports.llm
 from core.repositories.upload_sources import UploadSourceRepository
 from core.steps.candidates import candidate_list
-from core.steps.s02_profile import profile_plan, record_profile, record_summary, run_profile, summary_input, summary_of
+from core.steps.s02_profile import (
+    decide_profile_action,
+    profile_plan,
+    record_profile,
+    record_summary,
+    run_profile,
+    summary_input,
+    summary_of,
+)
 from core.steps.s03_signoff import sign_off
 from core.steps.s04_register import NoOwner, register_feed, revise_visibility
 from core.steps.s05_glossary import builder_input, claim_run, decide_element, fail_run, record_run
@@ -149,7 +164,7 @@ SessionFactory = Callable[[], AbstractContextManager[Session]]
 BACKABLE: tuple[str, ...] = ("glossary", "mapping", "transformations", "rules", "go_live")
 AGENT_STEPS: tuple[str, ...] = ("profile", "glossary", "mapping", "transformations", "rules", "go_live")
 STEP_KINDS: dict[str, tuple[str, ...]] = {
-    "profile": ("profile_summary",), "glossary": ("glossary_element",), "mapping": ("mapping",),
+    "profile": ("profile_summary", "profile_action"), "glossary": ("glossary_element",), "mapping": ("mapping",),
     "transformations": ("transformation",), "rules": ("rule",), "go_live": ("review_summary",)}
 STEP_OF_KIND = {kind: step for step, kinds in STEP_KINDS.items() for kind in kinds}
 AGENT_NAMES = {"profile": "ProfilerAgent", "glossary": "GlossaryBuilderAgent", "mapping": "MappingAgent",
@@ -311,6 +326,10 @@ def _describe(proposal: Proposal, confidence: float | None = None) -> tuple[str 
         own = _current_file_delivery(p)
         flags = f" (flags {own['flagged']} of {own['rows']} rows of this file)" if own and own["flagged"] else ""
         return p.get("rule_key"), f"{p.get('rule_key')}: {p.get('description', '')}{flags}", reason
+    if kind == "profile_action":
+        who = "a person does it" if p.get("applied_by") == "manual" else "the agent applies it"
+        cols = ", ".join(p.get("columns", []))
+        return (p.get("columns") or [None])[0], f"{str(p.get('action', '')).replace('_', ' ')}: {cols or 'the feed'} ({who})", reason
     return None, str(p.get("summary") or kind), reason
 
 
@@ -616,8 +635,11 @@ def _finish_job(sf: SessionFactory, ctx: OnboardingContext, job, sess: Onboardin
             s.commit()
             return JobRun(job_id=job.id, session_id=sess.id, step=step, status="done", model_calls=calls)
         pending = [p for kind in STEP_KINDS[step] for p in proposals.list_for_feed(sess.feed_id, kind, "pending")]
-        if step == "profile":
-            pending = pending[-1:]  # one summary per profile; the latest is the item
+        if step == "profile":  # one summary per profile; the latest is the item, with the actions proposed beside it
+            summaries = [p for p in pending if p.kind == "profile_summary"][-1:]
+            wanted = {s.payload["profile_id"] for s in summaries}
+            pending = summaries + [p for p in pending
+                                   if p.kind == "profile_action" and p.payload.get("profile_id") in wanted]
         confidence = {str(p.id): confidence_of(p, work.scores) for p in pending}
         for p in pending:
             value = confidence[str(p.id)]
@@ -883,7 +905,10 @@ def _approve_profile(session: Session, sess: OnboardingSession, pending: list[On
     owner), the licence is the upload source's. Registration queues the glossary run, as it always does."""
     catalogue = _catalogue(session, ctx.settings)
     approved: list[UUID] = []
-    for item in pending:
+    for item in [i for i in pending if i.kind == "profile_action"]:  # T1: the actions still standing are selected
+        decide_profile_action(session, proposal_id=item.proposal_id, user=user, decision="approved")
+        approved.append(item.proposal_id)
+    for item in [i for i in pending if i.kind == "profile_summary"]:
         outcome = item.payload["recommended_outcome"]
         sign_off(session, feed_id=sess.feed_id, user=user, outcome=outcome,
                  gaps=item.payload.get("gaps", []) if outcome == "meets_with_gaps" else [],
@@ -950,7 +975,8 @@ def edit_item(session: Session, *, session_id: UUID, proposal_id: UUID, payload:
 # ---------------------------------------------------------------- add an item by hand (phase 7.12, T7; migration 0028)
 
 # who decides a manual item: the roles of the agent whose item it stands in for (agents/<name>.py approver_roles)
-MANUAL_ROLES: dict[str, list[str]] = {"glossary_element": ["glossary_owner"], "mapping": ["data_steward"],
+MANUAL_ROLES: dict[str, list[str]] = {"profile_action": ["backend_team"], "glossary_element": ["glossary_owner"],
+                                      "mapping": ["data_steward"],
                                       "transformation": ["data_steward"], "rule": ["data_steward", "checker"]}
 
 
@@ -1025,6 +1051,12 @@ def _manual_payload(session: Session, feed_id: UUID, item, rule_payload: dict[st
             raise ManualItemRefused("A rule is back-tested before it is added: use manual_rule_input() and "
                                     "checked_rule_payload() first")
         return rule_payload
+    if isinstance(item, ManualProfileAction):  # T1: an action a person will carry out themselves
+        profile = FeedProfileRepository(session).latest(feed_id)
+        for name in item.columns:
+            _profile_column(session, feed_id, name)
+        return {"profile_id": str(profile.id), "action": item.action, "columns": list(item.columns),
+                "params": dict(item.params), "applied_by": "manual", "reason": item.reason}
     column = _profile_column(session, feed_id, item.source_field)
     if proposals.pending_for_column(item.kind, feed_id, item.source_field) is not None:
         raise ItemAlreadyPending(f"Column {item.source_field!r} already has a pending {item.kind} item: "

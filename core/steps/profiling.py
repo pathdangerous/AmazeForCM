@@ -21,6 +21,7 @@ from core.domain.profiling import (
     DuplicateKey,
     FileColumn,
     FileProfile,
+    IncompleteRecords,
     ItemCoverage,
     ProfileIssue,
     RequirementCoverage,
@@ -157,6 +158,28 @@ def duplicate_key_issue(path: Path, key_columns: list[str]) -> ProfileIssue | No
     more = f"; and {len(groups) - 5} more" if len(groups) > 5 else ""
     return ProfileIssue(kind="duplicate_key", columns=list(key_columns), count=extra,
                         detail=f"{extra} extra row(s) repeat a key. Duplicated: {named}{more}.")
+
+
+def incomplete_records_found(path: Path, required_columns: list[str]) -> IncompleteRecords | None:
+    """T1: how many rows have a null (an empty cell) in any of the required columns, by DuckDB over the file. None when
+    no required column is known or the file lacks every one of them: there is nothing to say then."""
+    if not required_columns:
+        return None
+    connection = duckdb.connect(":memory:")
+    try:
+        try:
+            have = [r[0] for r in connection.execute(f"DESCRIBE SELECT * FROM {_READ}", {"path": str(path)}).fetchall()]
+        except duckdb.Error as exc:
+            raise NotATable(" ".join(str(exc).splitlines()[:2])) from None
+        required = [c for c in required_columns if c in have]
+        if not required:
+            return None
+        missing = " OR ".join(f"{_quoted(c)} IS NULL" for c in required)
+        total, incomplete = connection.execute(
+            f"SELECT count(*), count(*) FILTER (WHERE {missing}) FROM {_READ}", {"path": str(path)}).fetchone()
+    finally:
+        connection.close()
+    return IncompleteRecords(incomplete=incomplete, total=total, required_columns=required)
 
 
 def _duplicate_groups(path: Path, key_columns: list[str]) -> list[tuple]:

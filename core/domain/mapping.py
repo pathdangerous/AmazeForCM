@@ -88,6 +88,8 @@ class GlossaryBuilderInput(BaseModel):
     # D3 (phase 7.8): up to 5 example values for some of the columns above, only through samples_for_model()
     # (SEND_SAMPLE_VALUES); {} otherwise
     samples: dict[str, list[str]] = Field(default_factory=dict)
+    # T1 (phase 7.12): the profile actions a person selected (approved); the agent may use them, never override a person
+    profile_actions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class GlossaryAnswer(BaseModel):
@@ -135,6 +137,7 @@ class MappingInput(BaseModel):
     source_name: str
     source_description: str | None
     columns: list[ColumnToMap]
+    profile_actions: list[dict[str, Any]] = Field(default_factory=list)  # T1: selected profile actions
 
 
 class MappingAnswer(BaseModel):

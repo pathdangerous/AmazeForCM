@@ -327,12 +327,14 @@ def test_the_security_master_goes_from_upload_to_product_ready_with_one_edit_and
     assert [(r.step, r.status) for r in ran] == [("profile", "done")]
     ws = view(w)
     assert ws.current_step == "profile" and ws.steps[1].state == "ready"
-    [item] = ws.items
-    assert item.kind == "profile_summary" and item.pre_accepted and not item.needs_decision
+    [item] = [i for i in ws.items if i.kind == "profile_summary"]  # T1: its actions come beside it
+    assert item.pre_accepted and not item.needs_decision
+    assert {i.kind for i in ws.items} == {"profile_summary", "profile_action"}
     assert item.confidence == pytest.approx(0.9)
-    assert [e.actor for e in events(w, "pre_accepted")] == ["system"]
+    assert {e.actor for e in events(w, "pre_accepted")} == {"system"}  # the summary and each action
     assert ws.model_calls == 1 and ws.model_call_cap == 60
-    [note] = ws.agent_notes
+    note = ws.agent_notes[0]  # one per item: the summary and its actions are the one logged call
+    assert len({n.input_ref for n in ws.agent_notes}) == 1
     assert (note.agent, note.provider, note.prompt_id) == ("ProfilerAgent", "mock", "profiler")
     assert note.input_ref.startswith("agent-inputs/ProfilerAgent/") and note.reasoning
 
