@@ -18,4 +18,8 @@ class EnvSecrets:
         value = read_env([key], env_file=self._env_file)[key]
         if not value:
             raise SecretNotFound(f"Secret {key} is not set (environment or {self._env_file})")
+        if key in {"DATABASE_URL", "TEST_DATABASE_URL", "EVAL_DATABASE_URL"}:
+            for prefix in ("postgresql://", "postgres://"):
+                if value.startswith(prefix):
+                    return "postgresql+psycopg://" + value[len(prefix):]
         return value

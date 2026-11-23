@@ -44,3 +44,23 @@ def test_missing_env_file_still_reads_environment(tmp_path, monkeypatch):
 
 def test_name():
     assert EnvSecrets.name == "env"
+
+
+@pytest.mark.parametrize("key", ["DATABASE_URL", "TEST_DATABASE_URL", "EVAL_DATABASE_URL"])
+@pytest.mark.parametrize("scheme", ["postgresql", "postgres"])
+def test_database_url_scheme_uses_psycopg(key, scheme, monkeypatch):
+    monkeypatch.setenv(key, f"{scheme}://localhost/example")
+    assert EnvSecrets(None).get(key) == "postgresql+psycopg://localhost/example"
+
+
+@pytest.mark.parametrize("key", ["DATABASE_URL", "TEST_DATABASE_URL", "EVAL_DATABASE_URL"])
+def test_explicit_database_driver_is_unchanged(key, monkeypatch):
+    value = "postgresql+psycopg://localhost/example?sslmode=require"
+    monkeypatch.setenv(key, value)
+    assert EnvSecrets(None).get(key) == value
+
+
+def test_non_database_secret_is_not_normalized(monkeypatch):
+    value = "postgres://localhost/example"
+    monkeypatch.setenv("AMAZE_TEST_SECRET", value)
+    assert EnvSecrets(None).get("AMAZE_TEST_SECRET") == value
