@@ -347,7 +347,7 @@ def _one_delivery(content: bytes, columns, live, timeout: float, steps_of=None):
         box.close()
 
 
-# ---------------------------------------------------------------- a rule a person wrote (phase 7.11, T7)
+# ---------------------------------------------------------------- a rule a person wrote (phase 7.12, T7)
 
 
 def check_manual_rule(agent_input: RuleRecommenderInput, rule: ProposedRule, *, own_key: str | None = None,

@@ -3,7 +3,7 @@
 Revision ID: 0028
 Revises: 0027
 
-Phase 7.11, T7 (docs/plans/phase-7.11-t7.md).
+Phase 7.12, T7 (docs/plans/phase-7.12.md).
 
 proposals
 - `origin` ('agent' | 'manual', default 'agent') and `author`. `proposal_log_id` may now be NULL.

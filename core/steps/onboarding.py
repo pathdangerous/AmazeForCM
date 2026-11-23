@@ -947,7 +947,7 @@ def edit_item(session: Session, *, session_id: UUID, proposal_id: UUID, payload:
     return new
 
 
-# ---------------------------------------------------------------- add an item by hand (phase 7.11, T7; migration 0028)
+# ---------------------------------------------------------------- add an item by hand (phase 7.12, T7; migration 0028)
 
 # who decides a manual item: the roles of the agent whose item it stands in for (agents/<name>.py approver_roles)
 MANUAL_ROLES: dict[str, list[str]] = {"glossary_element": ["glossary_owner"], "mapping": ["data_steward"],

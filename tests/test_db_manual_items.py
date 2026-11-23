@@ -1,4 +1,4 @@
-"""Migration 0028 (phase 7.11, T7): a proposal is made by an agent (a logged call, no author) or by a person (an author,
+"""Migration 0028 (phase 7.12, T7): a proposal is made by an agent (a logged call, no author) or by a person (an author,
 no logged call, never a model call). The database refuses anything in between, and a person's mapping may name any
 glossary element that exists, where an agent's must be one of its candidates."""
 

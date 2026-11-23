@@ -1,4 +1,4 @@
-"""Phase 7.11, T7: a person adds, edits and rejects items at every onboarding stage that has agent items. A manual
+"""Phase 7.12, T7: a person adds, edits and rejects items at every onboarding stage that has agent items. A manual
 item is a proposal like any other (rule 1): origin `manual`, an author, pending until approved, and no model call, so
 no proposal_log row (migration 0028). The world is the security master of tests/test_onboarding.py, one operator, with
 four-eyes off, so the author's acceptance counts as an edit's does.

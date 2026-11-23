@@ -1,4 +1,4 @@
-"""What a person types to add an item at an onboarding stage (phase 7.11, T7). One model per proposal kind; each becomes
+"""What a person types to add an item at an onboarding stage (phase 7.12, T7). One model per proposal kind; each becomes
 the same payload an agent's proposal of that kind has, so approval, the engine and the guards read it unchanged.
 
 glossary_element  a new element or an alias, for one column

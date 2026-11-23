@@ -105,7 +105,7 @@ class MappingRejected(BaseModel):
 
 
 class ColumnExcluded(BaseModel):
-    """Not an outcome (phase 7.11, T7): the steward approved leaving the column out. No mappings row is written, so the
+    """Not an outcome (phase 7.12, T7): the steward approved leaving the column out. No mappings row is written, so the
     column stays unmapped and the engine does not load it; the agent is not asked about it again."""
 
     model_config = ConfigDict(frozen=True)

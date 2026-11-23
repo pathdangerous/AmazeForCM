@@ -311,7 +311,7 @@ class ProposalEditRefused(RepositoryError):
     """The database refused an edit of a proposal (migration 0024): nothing changed, the old proposal is still pending."""
 
 
-# ---- manual items (phase 7.11, T7; migration 0028)
+# ---- manual items (phase 7.12, T7; migration 0028)
 
 
 class ManualItemRefused(RepositoryError):

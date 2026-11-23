@@ -218,7 +218,7 @@ def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session
                         422: {"description": "the item is not valid (a rule that fails its back-test says why)"}})
 def add(session_id: UUID, body: ManualItem, session: DbSession, user: Operator, ctx: Context,
         settings: AppSettings) -> ItemAdded:
-    """A person adds an item to the current step (phase 7.11, T7): a manual proposal, no model call. A rule is read, then
+    """A person adds an item to the current step (phase 7.12, T7): a manual proposal, no model call. A rule is read, then
     back-tested with no connection held (step 09's code), then written."""
     rule_payload = None
     if isinstance(body, ManualRule):

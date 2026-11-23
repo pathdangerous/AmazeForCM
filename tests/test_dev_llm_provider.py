@@ -3,9 +3,17 @@ import os
 from pathlib import Path
 import subprocess
 
+import shutil
+import sys
+
 import pytest
 
+# On Windows the `bash` on PATH is WSL's, which drops the Windows environment and cannot read Windows paths.
+needs_bash = pytest.mark.skipif(sys.platform == "win32" or shutil.which("bash") is None,
+                                reason="needs bash (Linux/Replit only)")
 
+
+@needs_bash
 @pytest.mark.parametrize("override, expected", [(None, "mock"), ("azure_openai", "azure_openai")])
 def test_api_provider_is_scoped_to_the_child(override, expected):
     source = Path("scripts/dev.sh").read_text()

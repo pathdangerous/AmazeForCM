@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0028"  # old: "0027" (phase 7.11, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0028"  # old: "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -223,7 +223,7 @@ REVIEWED_NULLABLE_CHECKS = {
     "proposals.ck_proposals_names_a_column":
         "feed_id IS NOT NULL spelt out; COALESCE(jsonb_typeof(...) = 'string', false) for a missing or null "
         "source_field; kind and payload are NOT NULL: never NULL",
-    # 0028 (phase 7.11, T7). Their NULL cases are in test_db_manual_items.py.
+    # 0028 (phase 7.12, T7). Their NULL cases are in test_db_manual_items.py.
     "proposals.ck_proposals_origin_matches_source":
         "proposal_log_id IS NULL / author IS NULL spelt out on both branches; length(btrim(author)) is only reached "
         "when author IS NOT NULL; origin is NOT NULL: never NULL",
@@ -1133,7 +1133,7 @@ def test_0008_keeps_existing_requirements(migrated_engine, test_database_url):
         command.upgrade(config, "head")
 
 
-# ---------------------------------------------------------------- 0028 (phase 7.11, T7): manual items
+# ---------------------------------------------------------------- 0028 (phase 7.12, T7): manual items
 
 GUARDS_0028 = ("amaze_guard_proposal_edit", "amaze_edit_proposal", "amaze_require_mapping_matches_proposal",
                "amaze_delete_feed")
