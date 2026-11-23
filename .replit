@@ -1,0 +1,5 @@
+[userenv]
+
+[userenv.development]
+LLM_PROVIDER = "mock"
+PYTHONPATH = "/home/runner/workspace/.runtime/baseline-packages:/home/runner/workspace"
