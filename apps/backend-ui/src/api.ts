@@ -109,6 +109,20 @@ export const getCodePreview = (feedId: string, devUser: string) => apiGet<CodePr
 export const getCodeDiff = (feedId: string, from: number, to: number | null, devUser: string) =>
   apiGet<CodeDiff>(`${FEEDS_API}/${feedId}/code/diff?from=${from}${to ? `&to=${to}` : ""}`, devUser);
 
+// ---- phase 7.12, T4: drift on a new delivery
+export type DriftAction = {
+  proposal_id: string; action: string; columns: string[]; params: Record<string, string>; applied_by: "agent" | "manual";
+  reason: string; origin: "rule" | "manual"; status: "pending" | "approved" | "rejected" | "superseded";
+};
+export type DriftReport = {
+  new_columns: string[]; missing_columns: string[]; order_changed: boolean; order_before: string[]; order_after: string[];
+  type_changes: { column: string; was: string; now: string }[]; rule_rises: { rule_key: string; was: number; now: number }[];
+};
+export type DriftView = { load_id: string | null; report: DriftReport; actions: DriftAction[] };
+export const getDrift = (feedId: string, devUser: string) => apiGet<DriftView>(`/api/amaze/feeds/${feedId}/drift`, devUser);
+export const addDriftAction = (feedId: string, body: { action: string; columns: string[]; reason: string }, devUser: string) =>
+  apiPost<DriftView>(`/api/amaze/feeds/${feedId}/drift/actions`, body, devUser);
+
 // ---- phase 4: one feed's page and the steps 02 to 04
 
 export type FileColumn = { name: string; type: string; null_count: number; null_rate: number | null; distinct_count: number };

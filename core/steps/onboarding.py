@@ -1149,9 +1149,9 @@ def timeline(session: Session, *, session_id: UUID) -> list[TimelineEntry]:
     for kinds in STEP_KINDS.values():
         for kind in kinds:
             for p in proposals.list_for_feed(sess.feed_id, kind):
-                if p.origin == "manual":  # no model call, so no logged call to show (migration 0028)
-                    who = names.get(p.id) or p.author
-                    facts = {"kind": p.kind, "status": p.status, "origin": "manual", "author": p.author,
+                if p.origin in ("manual", "rule"):  # no model call, so no logged call to show (0028; 0031: made by code)
+                    who = "rules" if p.origin == "rule" else (names.get(p.id) or p.author)
+                    facts = {"kind": p.kind, "status": p.status, "origin": p.origin, "author": p.author,
                              "author_name": who}
                     if p.edited_from is not None:
                         entries.append(TimelineEntry(
@@ -1159,8 +1159,10 @@ def timeline(session: Session, *, session_id: UUID) -> list[TimelineEntry]:
                             title=f"{kind} edited", proposal_id=p.id,
                             detail={**facts, "edited_from": str(p.edited_from), "edited_by": p.edited_by}))
                     else:
-                        entries.append(TimelineEntry(at=p.created_at, kind="proposal", actor=p.author or "unknown",
-                                                     step=STEP_OF_KIND[kind], title=f"{kind} added by {who}",
+                        entries.append(TimelineEntry(at=p.created_at, kind="proposal", actor=p.author or "rules",
+                                                     step=STEP_OF_KIND[kind],
+                                                     title=f"{kind} proposed by rules" if p.origin == "rule"
+                                                     else f"{kind} added by {who}",
                                                      proposal_id=p.id, detail=facts))
                     for a in proposals.approvals(p.id):
                         entries.append(TimelineEntry(
@@ -1350,8 +1352,8 @@ def workspace(session: Session, *, session_id: UUID, settings: Settings | None =
 
     notes = []
     for item in items:
-        if item.origin == "manual":
-            continue  # no model was called: there is no agent's note (migration 0028)
+        if item.origin != "agent":
+            continue  # no model was called: there is no agent's note (migration 0028; 0031)
         call = session.get(ProposalLogEntry, ProposalRepository(session).get(item.proposal_id).proposal_log_id)
         notes.append(AgentNote(proposal_id=item.proposal_id, agent=call.agent_name, provider=call.provider,
                                model=call.model, model_version=call.model_version, prompt_id=call.prompt_id,

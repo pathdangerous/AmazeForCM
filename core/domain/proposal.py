@@ -63,7 +63,7 @@ class Proposal(BaseModel):
     id: UUID
     created_at: datetime
     proposal_log_id: UUID | None  # None for a manual item (0028): no model was called
-    origin: Literal["agent", "manual"] = "agent"
+    origin: Literal["agent", "manual", "rule"] = "agent"  # rule (0031): made by code, no model and no person
     author: str | None = None  # who made a manual item
     kind: ProposalKind
     payload: dict[str, Any]

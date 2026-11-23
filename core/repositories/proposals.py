@@ -67,6 +67,17 @@ class ProposalRepository:
         self._session.flush()
         return Proposal.model_validate(row)
 
+    def create_by_rule(self, *, kind: ProposalKind, payload: dict[str, Any], required_approver_roles: list[str],
+                       feed_id: UUID) -> Proposal:
+        """A proposal made by code (migration 0031): origin `rule`, no logged call (no model was called) and no author.
+        Only a profile_action; a person still decides it (rule 1)."""
+        draft = ProposalDraft(kind=kind, payload=payload, autonomy="A1", required_approver_roles=required_approver_roles,
+                              feed_id=feed_id)
+        row = ProposalRow(proposal_log_id=None, origin="rule", author=None, status="pending", **draft.model_dump())
+        self._session.add(row)
+        self._session.flush()
+        return Proposal.model_validate(row)
+
     def get(self, proposal_id: UUID) -> Proposal:
         return Proposal.model_validate(self._row(proposal_id))
 

@@ -75,6 +75,7 @@ class ActionFigures(_Model):
 class ItemFigures(_Model):
     agent: int
     manual: int
+    by_code: int = 0  # made by rules (drift actions, 0031): no model, no person
     manual_by_kind: dict[str, int]
     agent_by_kind: dict[str, int]
 
@@ -130,12 +131,13 @@ def completion_report(session: Session, feed_id: UUID) -> CompletionReport:
         rejected=len(proposals.list_for_feed(feed_id, "profile_action", "rejected")),
         pending=len(proposals.list_for_feed(feed_id, "profile_action", "pending")))
 
-    by_origin: dict[str, Counter] = {"agent": Counter(), "manual": Counter()}
+    by_origin: dict[str, Counter] = {"agent": Counter(), "manual": Counter(), "rule": Counter()}
     for kind in ITEM_KINDS:
         for p in proposals.list_for_feed(feed_id, kind):
             if p.status != "superseded":  # an edit replaces its original: one item
                 by_origin[p.origin][kind] += 1
     items = ItemFigures(agent=sum(by_origin["agent"].values()), manual=sum(by_origin["manual"].values()),
+                        by_code=sum(by_origin["rule"].values()),
                         manual_by_kind=dict(by_origin["manual"]), agent_by_kind=dict(by_origin["agent"]))
 
     waiting = mappings.pending + transformations.pending + rules.pending + actions.pending

@@ -105,7 +105,10 @@ from core.steps.s11_go_live import (
     go_live_plan,
 )
 from core.steps.s11_go_live import record_summary as record_go_live_summary  # s02 has a record_summary too
+from core.domain.manual import ManualProfileAction
+from core.domain.profiling import ActionKind
 from core.engine.codegen import FileDiff, diff_versions
+from core.steps.drift import DriftView, add_drift_action, drift_of_feed
 from core.repositories.code_versions import CodeVersionNotFound, CodeVersionRepository
 from core.steps.codegen import code_for_feed
 from core.steps.completion import CompletionReport, completion_report
@@ -307,6 +310,33 @@ class CodeDiff(BaseModel):
 def _summary(v) -> dict[str, Any]:
     return {"version": v.version, "sha256": v.sha256, "approved_by": v.approved_by, "created_at": v.created_at,
             "paths": sorted(v.files), "test_load_result": v.test_load_result}
+
+
+class DriftActionBody(BaseModel):
+    """A person adds an action to the latest drift (phase 7.12, T7): no model call, a manual proposal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: ActionKind
+    columns: list[Annotated[str, StringConstraints(min_length=1)]] = []
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+@router.get("/feeds/{feed_id}/drift", response_model=DriftView)
+def feed_drift(feed_id: UUID, session: DbSession) -> DriftView:
+    """Phase 7.12, T4: the latest delivery that drifted (step 12's report) and the actions it came with. Read only."""
+    def work():
+        FeedRepository(session).get(feed_id)
+        return drift_of_feed(session, feed_id)
+
+    return read(session, work)
+
+
+@router.post("/feeds/{feed_id}/drift/actions", response_model=DriftView)
+def add_feed_drift_action(feed_id: UUID, body: DriftActionBody, session: DbSession, user: BackendTeam) -> DriftView:
+    in_transaction(session, lambda: add_drift_action(session, feed_id=feed_id, user=user, item=ManualProfileAction(
+        kind="profile_action", action=body.action, columns=body.columns, reason=body.reason)))
+    return read(session, lambda: drift_of_feed(session, feed_id))
 
 
 @router.get("/feeds/{feed_id}/code", response_model=list[CodeVersionSummary])

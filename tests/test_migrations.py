@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0030"  # old: "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0031"  # old: "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -229,6 +229,8 @@ REVIEWED_NULLABLE_CHECKS = {
         "when author IS NOT NULL; origin is NOT NULL: never NULL",
     "proposals.ck_proposals_manual_kinds":
         "origin = 'agent' first (NOT NULL); a manual row needs feed_id IS NOT NULL spelt out; kind is NOT NULL",
+    # 0031 (phase 7.12, T4)
+    "proposals.ck_proposals_rule_made_kinds": "origin is NOT NULL; feed_id IS NOT NULL spelt out on the rule branch",
     # 0029 (phase 7.12, T1)
     "proposals.ck_proposals_names_a_feed_for_actions": "kind is NOT NULL; feed_id IS NOT NULL spelt out on the branch",
     # 0018 (phase 6 plan, section 6). Their NULL cases are in test_db_rule_guards.py and test_db_load_guards.py.

@@ -47,6 +47,7 @@ from core.repositories.products import ProductRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
+from core.steps.drift import DriftReport, record_drift_actions, structure_drift
 from core.steps.profiling import NotATable, profile_csv
 from core.steps.result import StepResult
 from core.steps.s05_glossary import queue_run
@@ -115,6 +116,7 @@ class ArrivalPlan(BaseModel):
     file_ref: str
     fetch_id: UUID  # the file's fetch: the load's own, else the feed's latest (a profile names one)
     template: list[str]  # the column names of the feed's latest profile
+    template_types: dict[str, str] = {}  # T4: their DuckDB types, for the drift report
     template_spec: SourceSpec
     earlier: dict[str, UUID]  # SHA-256 -> the oldest scheduled load that had it
 
@@ -133,6 +135,7 @@ class ArrivalCheck(BaseModel):
     added: list[str] = []
     reason: str | None = None
     file: FileProfile | None = None  # additive_parked: the load's own profile
+    drift: DriftReport | None = None  # T4: what changed against the latest profile; None when nothing did
 
 
 # ---------------------------------------------------------------- late_alert (the daily job's)
@@ -197,7 +200,8 @@ def arrival_plan(session: Session, *, load_id: UUID) -> ArrivalPlan:
             raise FeedHasNoFile(f"Feed {feed.code!r} has no fetched file")
         fetch_id = fetch.id
     return ArrivalPlan(load_id=load.id, feed_id=feed.id, feed_code=feed.code, file_ref=load.file_ref,
-                       fetch_id=fetch_id, template=[c.name for c in template.columns], template_spec=template.spec,
+                       fetch_id=fetch_id, template=[c.name for c in template.columns],
+                       template_types={c.name: c.type for c in template.columns}, template_spec=template.spec,
                        earlier=loads.scheduled_hashes(feed.id))
 
 
@@ -228,15 +232,18 @@ def check_arrival(plan: ArrivalPlan, *, blob_store: BlobStore) -> ArrivalCheck:
     known = {name.lower() for name in plan.template}
     missing = [name for name in plan.template if name.lower() not in have]
     added = [name for name in header if name.lower() not in known] if plan.template else []
+    found = structure_drift([(n, plan.template_types.get(n, "")) for n in plan.template],
+                            [(c.name, c.type) for c in file.columns]) if plan.template else DriftReport()
+    drift = found if found.has_drift else None
     if missing:
-        return ArrivalCheck(plan=plan, kind="breaking_held", sha256=sha, columns=header, missing=missing,
+        return ArrivalCheck(plan=plan, kind="breaking_held", sha256=sha, columns=header, missing=missing, drift=drift,
                             reason=("1 column of the last accepted structure is not" if len(missing) == 1 else
                                     f"{len(missing)} columns of the last accepted structure are not")
                                    + f" in the file: {', '.join(missing)}")
     if added and file.row_count > 0:
         return ArrivalCheck(plan=plan, kind="additive_parked", sha256=sha, columns=header, added=added, file=file,
-                            reason=f"{len(added)} new column(s): {', '.join(added)}")
-    return ArrivalCheck(plan=plan, kind="on_time_complete", sha256=sha, columns=header, added=added)
+                            drift=drift, reason=f"{len(added)} new column(s): {', '.join(added)}")
+    return ArrivalCheck(plan=plan, kind="on_time_complete", sha256=sha, columns=header, added=added, drift=drift)
 
 
 # ---------------------------------------------------------------- record
@@ -277,11 +284,15 @@ def record_arrival(session: Session, check: ArrivalCheck, *, notifier: Notifier,
         detail = _detail(check, run_id=run.id if run else None, run_reused=not created)
         loads.record_arrival(plan.load_id, outcome=check.kind, content_sha256=check.sha256, detail=detail,
                              profile_id=profile_id)  # no SHA-256 for a file missing from the store
+        if check.drift is not None:  # T4: the actions each finding comes with, by code, for a person to select
+            record_drift_actions(session, feed_id=feed.id, load_id=plan.load_id, report=check.drift)
     return _result(session, check, feed.code, profile_id, run, notifier, recipients)
 
 
 def _detail(check: ArrivalCheck, *, run_id: UUID | None, run_reused: bool) -> dict:
     detail: dict = {"columns": check.columns, "reason": check.reason}
+    if check.drift is not None:
+        detail["drift"] = check.drift.model_dump(mode="json")
     if check.kind == "resent_quarantined":
         detail["same_as"] = str(check.same_as)
     if check.kind == "breaking_held":

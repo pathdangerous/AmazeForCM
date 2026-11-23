@@ -46,6 +46,7 @@ from core.repositories.products import ProductRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_choices import SourceChoiceRepository
 from core.steps.candidates import phrases
+from core.steps.drift import record_rule_rate_drift
 from core.steps.matching import words
 from core.steps.result import StepResult
 from core.steps.s15_certify import HeldConsumersWarned, Released, certify
@@ -114,6 +115,8 @@ def finish_scheduled_load(session: Session, plan: LoadPlan, outcome: LoadOutcome
     run = record_load(session, plan, outcome, then=then)
     if run.load.status not in ("released", "held"):  # failed: the savepoint was rolled back with its writes
         done.clear()
+    else:  # T4: rules whose flagged rate rose against the last released load: actions for a person to select
+        record_rule_rate_drift(session, feed_id=feed_id, load_id=run.load.id)
     return FinishedLoad(run=run, certification=done.get("certification"), product_code=done.get("product_code"),
                         requirements=done.get("requirements", []))
 

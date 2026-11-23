@@ -140,7 +140,7 @@ class OnboardingItem(BaseModel):
     edited_from: UUID | None
     reason: str | None
     payload: dict[str, Any]
-    origin: Literal["agent", "manual"] = "agent"  # 0028: a manual item has an author and no model call
+    origin: Literal["agent", "manual", "rule"] = "agent"  # 0028: a manual item has an author and no model call (rule: 0031)
     author: str | None = None
     decided_by: str | None = None  # the user id of the latest approval decision on this proposal; None while pending
     decided_at: datetime | None = None

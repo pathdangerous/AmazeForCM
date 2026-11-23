@@ -138,7 +138,9 @@ SIGNOFF_OUTCOMES: tuple[str, ...] = get_args(SignoffOutcome)
 
 # ---------------------------------------------------------------- T1 (phase 7.12): facts in plain words, and actions
 
-ActionKind = Literal["parse_date", "placeholder_to_null", "key_policy", "exclude_column", "add_rule"]
+ActionKind = Literal["parse_date", "placeholder_to_null", "key_policy", "exclude_column", "add_rule",
+                     # T4 (drift on a new delivery), proposed by code at step 12 or by a person
+                     "map_new_column", "review_missing_column", "accept_type_change", "review_rule"]
 ACTION_KINDS: tuple[str, ...] = get_args(ActionKind)
 AppliedBy = Literal["agent", "manual"]  # "agent applies" (a later agent does it from the approved action) or "I'll do it"
 
