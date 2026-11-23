@@ -1,7 +1,7 @@
 import { Button, Group, Table, Text, Title } from "@mantine/core";
 import { useState, type ReactNode } from "react";
 import { StatusChip } from "../../../ui-shared/phase711";
-import { apiPost, describeError, words, type FeedPage, type LoadOnPage } from "../api";
+import { apiPost, describeError, uploadFeedFile, words, type FeedPage, type LoadOnPage } from "../api";
 import { formatWhen } from "../theme";
 
 // Step 13 on a registered feed (phase 6 plan, section 10): the latest loads with their four stages and counts, and
@@ -109,6 +109,23 @@ export default function LoadsSection({ page, devUser, roles, onChange, onMessage
         <Group gap="sm" mt="sm">
           <Button disabled={busy} data-testid="load-now" onClick={loadNow}>Load now</Button>
           <span className="muted">fetch the source and load it, as the daily job does</span>
+          <label className="muted">A new file for this feed (an uploaded feed): {" "}
+            <input type="file" data-testid="reupload-file" aria-label="New file for this feed" disabled={busy}
+                   onChange={async (e) => {
+                     const file = e.currentTarget.files?.[0];
+                     if (!file) return;
+                     setBusy(true);
+                     try {
+                       await uploadFeedFile(page.feed.id, file, devUser);
+                       onError(null);
+                       onMessage(`Stored ${file.name}. Press Load now to load it.`);
+                     } catch (err: unknown) {
+                       onError(describeError(err));
+                     } finally {
+                       setBusy(false);
+                     }
+                   }} />
+          </label>
         </Group>
       ) : roles.includes("operations") ? <Text className="muted" mt="sm">Load now needs a go-live first.</Text>
         : <Text className="muted" mt="sm">Only operations loads a feed by hand.</Text>}

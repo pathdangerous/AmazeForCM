@@ -581,9 +581,9 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("rules")} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []} people={people}
                          onChange={onChange} {...reporter("go-live")} />
-          <DriftSection feedId={feedId} devUser={devUser} canAct={canMap} />
+          <DriftSection key={`drift-${page.loads.length}`} feedId={feedId} devUser={devUser} canAct={canMap} />
           <Section name="code" title="Generated code" result={result}>
-            <CodeView feedId={feed.id} devUser={devUser} />
+            <CodeView key={`code-${page.loads.length}`} feedId={feed.id} devUser={devUser} />
           </Section>
           <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("loads")} />
         </>

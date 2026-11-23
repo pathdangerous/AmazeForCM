@@ -48,8 +48,13 @@ export async function upload(page: Page, shot: Shot = none) {
 }
 
 // Walk the workspace to "The product is ready for consumers." Returns how many steps had pending items decided.
-export async function walk(page: Page, shot: Shot = none) {
+// hooks: something to do once on the first sight of a step, keyed by its test id ("step-profile", "step-rules"); the
+// operator story passes none, the demo story (7.12) passes the profile and rules extras.
+export type StepHooks = Record<string, (page: Page) => Promise<void>>;
+
+export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {}) {
   let edited = false;
+  const hooked = new Set<string>();
   for (let turn = 0; turn < 40; turn++) {
     await settle(page);
     if (await page.getByText("The product is ready for consumers.").isVisible()) break;
@@ -62,6 +67,11 @@ export async function walk(page: Page, shot: Shot = none) {
     const stepChanged = async () => (await current.count()) > 0
       && (await current.first().getAttribute("data-testid")) !== step;
     if (await stepChanged()) continue;
+    if (hooks[step] && !hooked.has(step)) {
+      hooked.add(step);
+      await hooks[step](page);
+      await settle(page);
+    }
 
     if (await page.getByTestId("summary-page").isVisible()) {
       await page.getByLabel("Open to every user").check(); // the owner chooses visibility at go-live
