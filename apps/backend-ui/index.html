@@ -23,10 +23,13 @@
       /* checkpoint 2, item 2: one line at 1280 px; "Signed in as" is the part that gives way (ellipsis, full text
          in its title); below 1100 px the header may wrap */
       @media (min-width: 1100px) {
-        .app-header-inner { flex-wrap: nowrap; }
+        .app-header-inner { flex-wrap: nowrap; column-gap: 8px; }
+        .app-header h1 { font-size: 22px; }
+        .app-nav { gap: 0; }
+        .app-nav a { padding-inline: 6px; }
         .app-header-inner > h1, .app-nav { flex: none; }
         .who { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; }
-        .who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .who-name { min-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .who label { flex: none; white-space: nowrap; }
       }
       .who label { color: var(--amz-on-fill); }

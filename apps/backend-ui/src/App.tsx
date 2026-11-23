@@ -12,7 +12,7 @@ import StatusView from "./views/StatusView";
 import UploadView from "./views/UploadView";
 
 const TITLE = "Amaze Backend Workbench";
-import { choosePersona, initialUser, personaUsers, remember } from "../../ui-shared/devPersona";
+import { choosePersona, initialUser, personaUsers, remember, personaLabel } from "../../ui-shared/devPersona";
 
 // Views, chosen by the URL hash (#/status). No router library (plan, assumption 17).
 const VIEWS = {
@@ -52,6 +52,7 @@ export default function App() {
   const [feedId, setFeedId] = useState<string | null>(feedFromHash);
   const [onboardingId, setOnboardingId] = useState<string | null>(onboardingFromHash);
   const [users, setUsers] = useState<User[]>([]);
+  const [fourEyes, setFourEyes] = useState(true);
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export default function App() {
     Promise.all([apiGet<User[]>("/api/dev/users"), apiGet<{ four_eyes: boolean }>("/api/health")])
       .then(([all, health]) => {
         const list = personaUsers(all, health.four_eyes);
+        setFourEyes(health.four_eyes);
         setUsers(list);
         setSelected(initialUser(list, "backend"));
       })
@@ -121,7 +123,7 @@ export default function App() {
                             const user = users.find(u => u.id === e.currentTarget.value);
                             if (user && choosePersona(user, "backend")) setSelected(user.id);
                           }}
-                          data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
+                          data={users.map((u) => ({ value: u.id, label: personaLabel(u, fourEyes) }))} />
             <span data-testid="signed-in-as" className="who-name" aria-label="Signed in user">
               {me ? me.display_name : meError ? <span className="who-error">{meError}</span> : ""}
             </span>

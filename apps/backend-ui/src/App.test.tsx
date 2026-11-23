@@ -32,7 +32,7 @@ test("four-eyes off exposes exactly operator and requester", async () => {
   stubFetch({ ...shellRoutes(), "GET /api/dev/users": users, "GET /api/health": { four_eyes: false } });
   renderWithTheme(<App />);
   const select = await screen.findByTestId("dev-user");
-  await within(select).findByText("Operator (backend_team)");
+  await within(select).findByText("Operator");
   expect(within(select).getAllByRole("option").map(o => (o as HTMLOptionElement).value))
     .toEqual(["dev-operator", "dev-requester"]);
   const assign = vi.spyOn(navigation, "assign").mockImplementation(() => {});

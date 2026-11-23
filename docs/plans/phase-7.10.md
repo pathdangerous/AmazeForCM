@@ -32,6 +32,26 @@ No fixture user removal, dependency upgrades, or changes to business workflows.
 
 ## Results and deviations
 
+### Owner-approved header follow-up
+
+Use name-only picker labels with four-eyes off, name plus first role with it on;
+keep ids and the shared choice unchanged. Both pickers are fixed at 240px, and
+headers stay one row at widths >=1280px with the prior height. Files: shared
+persona helper, both App components/tests, both index styles, UI polish log.
+Add failing label checks first; then run both UI suites, both B10 stories and the
+screens harness. Store new screenshots outside tracked reference images. Push
+phase-7.10 without merging. Leave the existing unrelated .replit change untouched.
+Screens output goes to ignored `.runtime/screens/`; `.replitignore` excludes that
+generated output from publishing as well.
+
+Header follow-up results: RED 2 failed / 6 passed; GREEN backend 198 passed,
+consumer 28 passed; PoC 1 passed (51.7s); operator 2 passed (54.1s); final
+screens run 1 passed (54.0s), 25 images. Both headers measured 55.296875px high
+with 240px pickers at 1280, 1440 and 1920px. Backend spacing/title size tightened
+to prevent the signed-in name collapsing when a notification count is present.
+One notification-polling test failed in the first full backend run, passed on
+focused reproduction and then in the full rerun without test changes.
+
 - The build index lacked a 7.9 heading; added a pointer to its existing plan before 7.10.
 - Baseline main was fast-forwarded and pushed to `30a2929` as authorized.
 - Verification deviation: `tests/test_settings.py` must clear both model variables it

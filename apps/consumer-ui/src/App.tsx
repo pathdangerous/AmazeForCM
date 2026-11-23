@@ -10,7 +10,7 @@ import SearchView from "./views/SearchView";
 import StatusLine from "./views/StatusLine";
 
 const TITLE = "Amaze Marketplace";
-import { choosePersona, initialUser, personaUsers, remember } from "../../ui-shared/devPersona";
+import { choosePersona, initialUser, personaUsers, remember, personaLabel } from "../../ui-shared/devPersona";
 
 // Views, chosen by the URL hash (#/search). No router library (phase 2 plan, decision 16).
 // Phase 3 adds #/requirement/<id>, reached from My requests and after a raise; it is not in the nav.
@@ -31,6 +31,7 @@ function routeFromHash(): Route {
 export default function App() {
   const [route, setRoute] = useState<Route>(routeFromHash);
   const [users, setUsers] = useState<User[]>([]);
+  const [fourEyes, setFourEyes] = useState(true);
   const [selected, setSelected] = useState<string>("");
   const [me, setMe] = useState<User | null>(null);
   const [meError, setMeError] = useState<string | null>(null);
@@ -45,6 +46,7 @@ export default function App() {
     Promise.all([apiGet<User[]>("/api/dev/users"), apiGet<{ four_eyes: boolean }>("/api/health")])
       .then(([all, health]) => {
         const list = personaUsers(all, health.four_eyes);
+        setFourEyes(health.four_eyes);
         setUsers(list);
         setSelected(initialUser(list, "consumer"));
       })
@@ -85,13 +87,13 @@ export default function App() {
           </nav>
           <div className="who">
             <label htmlFor="dev-user">Dev user</label>
-            <NativeSelect id="dev-user" data-testid="dev-user" value={selected}
+            <NativeSelect id="dev-user" data-testid="dev-user" value={selected} w={240} style={{ flex: "none" }}
                           onChange={(e) => {
                             const user = users.find(u => u.id === e.currentTarget.value);
                             if (user && choosePersona(user, "consumer")) setSelected(user.id);
                           }}
-                          data={users.map((u) => ({ value: u.id, label: `${u.display_name} (${u.roles.join(", ")})` }))} />
-            <span data-testid="signed-in-as">
+                          data={users.map((u) => ({ value: u.id, label: personaLabel(u, fourEyes) }))} />
+            <span data-testid="signed-in-as" className="who-name">
               {me ? `Signed in as ${me.display_name}` : meError ? <span className="who-error">{meError}</span> : ""}
             </span>
           </div>

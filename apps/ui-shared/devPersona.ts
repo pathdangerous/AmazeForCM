@@ -2,6 +2,9 @@
 type App = "backend" | "consumer";
 type Persona = { id: string; app: App };
 const STORAGE_KEY = "amaze.devUser";
+export function personaLabel(user: { display_name: string; roles: string[] }, fourEyes: boolean): string {
+  return fourEyes && user.roles.length ? `${user.display_name} (${user.roles[0]})` : user.display_name;
+}
 
 export function personaUsers<T extends Persona>(users: T[], fourEyes: boolean): T[] {
   return fourEyes ? users : users.filter(u => ["dev-operator", "dev-requester"].includes(u.id));

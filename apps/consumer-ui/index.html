@@ -21,6 +21,13 @@
       .app-nav a:hover { text-decoration: underline; }
       .app-nav a[aria-current="page"] { font-weight: 600; border-bottom-color: var(--amz-marker); }
       .who { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      @media (min-width: 1100px) {
+        .app-header-inner { flex-wrap: nowrap; }
+        .app-header-inner > h1, .app-nav { flex: none; }
+        .who { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; justify-content: flex-end; }
+        .who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .who label { flex: none; white-space: nowrap; }
+      }
       .who label { color: var(--amz-on-fill); }
       .who-error { background: var(--amz-danger); color: var(--amz-on-fill); border-radius: 4px; padding: 2px 8px; }
       .app-status { background: var(--amz-panel); border-bottom: 1px solid var(--amz-line); }

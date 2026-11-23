@@ -1,10 +1,16 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { choosePersona, initialUser, navigation, personaUrl, personaUsers, remember } from "../../ui-shared/devPersona";
+import { choosePersona, initialUser, navigation, personaUrl, personaUsers, remember, personaLabel } from "../../ui-shared/devPersona";
 
 const operator = { id: "dev-operator", app: "backend" as const };
 const requester = { id: "dev-requester", app: "consumer" as const };
 const steward = { id: "dev-data-steward", app: "backend" as const };
 const users = [steward, requester, operator];
+test("picker labels use only the name when off and only the first role when on", () => {
+  const user = { display_name: "Olive Operator", roles: ["backend_team", "data_owner"] };
+  expect(personaLabel(user, false)).toBe("Olive Operator");
+  expect(personaLabel(user, true)).toBe("Olive Operator (backend_team)");
+  expect(personaLabel({ display_name: "Riley Requester", roles: ["requester"] }, false)).toBe("Riley Requester");
+});
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
 test("four-eyes off shows exactly the two personas; on retains all users", () => {
