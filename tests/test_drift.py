@@ -102,9 +102,18 @@ def test_the_second_delivery_reports_its_drift_proposes_actions_and_leads_to_cod
     drift = latest.arrival_detail["drift"]
     assert drift["new_columns"] == ["BEST_FCF"] and drift["missing_columns"] == []
     assert drift["order_changed"] is True  # BEST_BPS and BEST_CAPEX swapped: information only
+    assert [(t["column"], t["was"], t["now"]) for t in drift["type_changes"]] == [("BEST_DPS", "DOUBLE", "VARCHAR")]
 
     view = drift_of_feed(db_session, w.feed_id)
     assert view.load_id == latest.id and view.report.new_columns == ["BEST_FCF"]
+    # the file was still loaded (the text is castable), so the rule-rate check ran: eight negative BEST_SALES rows make
+    # "best sales is not negative" flag more rows than in the first delivery
+    assert LoadRepository(db_session).list_for_feed(w.feed_id)[0].status in ("released", "held")
+    [rise] = [r for r in view.report.rule_rises if r.rule_key == "best_sales_not_negative"]
+    assert rise.was == 0 and 0.10 < rise.now < 0.12  # 8 of 70 rows
+    review = [a for a in view.actions if a.action == "review_rule"]
+    assert [(a.params["rule_key"], a.applied_by, a.origin) for a in review] == [("best_sales_not_negative", "manual", "rule")]
+    assert {a.action for a in view.actions} >= {"map_new_column", "accept_type_change", "review_rule"}
     [action] = [a for a in view.actions if a.action == "map_new_column"]
     assert (action.origin, action.applied_by, action.columns, action.status) == ("rule", "agent", ["BEST_FCF"], "pending")
     stored = ProposalRepository(db_session).get(action.proposal_id)

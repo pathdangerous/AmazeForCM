@@ -8,5 +8,6 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   resolve: { dedupe: ["react", "react-dom", "@mantine/core", "@mantine/hooks"] },
-  test: { environment: "jsdom", include: ["src/**/*.test.tsx"] },
+  // testTimeout and src/test/setup.ts: the waits were sized for an idle machine (see setup.ts); a stuck test still fails.
+  test: { environment: "jsdom", include: ["src/**/*.test.tsx"], setupFiles: ["src/test/setup.ts"], testTimeout: 20_000 },
 });

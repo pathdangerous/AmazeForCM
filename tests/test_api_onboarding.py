@@ -795,3 +795,56 @@ async def test_no_connection_is_held_during_an_onboarding_jobs_model_call(own_sc
         await r.call("POST", f"/{oid}/approve", json={})
         r.worker.drain()  # the glossary job's call
     assert seen and set(seen) == {0}, seen
+
+
+V2_FILE = Path(__file__).resolve().parent.parent / "fixtures" / "sources" / "Synthetic_Security_Master_v2.xlsx"
+
+
+async def test_the_drift_and_code_endpoints_commit_and_serve_committed_rows(real):
+    """Phase 7.12 (T3, T4): POST drift/actions is the one committing endpoint here (read back on a connection of its own);
+    GET drift, GET code, GET code/diff and the rows step 12 wrote are read by the real app from committed state, after a real
+    onboarding, a go-live that stored code version 1, and a second delivery that drifts. One walk, one schema."""
+    async with real.app() as r:
+        from apps.api.deps import get_daily_fetch
+        from apps.api.main import app
+
+        app.dependency_overrides[get_daily_fetch] = lambda: r.ctx.load_now.__self__  # the job on this schema, not the default
+        oid = (await upload_and_confirm(r.client))["onboarding_id"]
+        feed = committed(r.engine, "SELECT id::text FROM feeds")[0][0]
+        r.worker.drain()
+        await advance_to(r, oid, "go_live")
+        await r.call("POST", f"/{oid}/approve", json={"visibility": "open"})  # the go-live: code version 1 is stored
+        r.worker.drain()  # the first load
+        base = f"/api/amaze/feeds/{feed}"
+
+        listed = (await r.client.get(f"{base}/code", headers=OP)).json()
+        assert [(v["version"], v["approved_by"]) for v in listed] == [(1, "dev-operator")]
+        assert committed(r.engine, "SELECT version, approved_by FROM code_versions") == [(1, "dev-operator")]
+        diff = (await r.client.get(f"{base}/code/diff", params={"from": 1}, headers=OP)).json()
+        assert (diff["from_version"], diff["to_version"], diff["files"]) == (1, None, [])  # nothing changed since
+
+        stored = await r.client.post(f"{base}/files", params={"filename": V2_FILE.name}, content=V2_FILE.read_bytes(),
+                                     headers={**OP, **OCTET})
+        assert stored.status_code == 200, stored.text
+        loaded = await r.client.post(f"{base}/loads", json={}, headers=OP)
+        assert loaded.status_code == 200, loaded.text
+
+        drift = (await r.client.get(f"{base}/drift", headers=OP)).json()
+        assert drift["report"]["new_columns"] == ["BEST_FCF"] and drift["report"]["order_changed"] is True
+        written = {x[0] for x in committed(
+            r.engine, "SELECT id::text FROM proposals WHERE kind = 'profile_action' AND origin = 'rule'")}
+        assert {a["proposal_id"] for a in drift["actions"]} == written  # what the endpoint shows is what step 12 committed
+        assert committed(r.engine, "SELECT count(*) FROM loads WHERE arrival_detail ? 'drift'") == [(1,)]
+
+        added = await r.client.post(f"{base}/drift/actions", headers=OP, json={
+            "action": "add_rule", "columns": ["BEST_FCF"], "reason": "A free cash flow estimate has a sign."})
+        assert added.status_code == 200, added.text
+        assert committed(r.engine, "SELECT origin, author, proposal_log_id IS NULL, status FROM proposals "
+                                   "WHERE kind = 'profile_action' AND origin = 'manual'") == [
+            ("manual", "dev-operator", True, "pending")]
+        again = (await r.client.get(f"{base}/drift", headers=OP)).json()
+        assert [a["origin"] for a in again["actions"]].count("manual") == 1
+        refused = await r.client.post(f"{base}/drift/actions", headers=OP, json={
+            "action": "add_rule", "columns": ["not_a_column"], "reason": "x"})
+        assert refused.status_code == 422
+        assert committed(r.engine, "SELECT count(*) FROM proposals WHERE origin = 'manual' AND kind = 'profile_action'") == [(1,)]
