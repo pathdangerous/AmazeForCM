@@ -19,6 +19,30 @@ export type User = {
 
 export type DomainCount = { domain: string; label: string; count: number };
 
+// Read-only operational facts. Missing certification is null, never a fabricated zero.
+export type OperationsOverview = {
+  days: number;
+  feeds_live: number;
+  feeds_paused: number;
+  onboardings_active: number;
+  loads_count: number;
+  average_trust_score: number | null;
+  release_threshold: number;
+  quality: null | {
+    rows: number; flagged_rows: number; passing_rows: number; pass_percent: number;
+    by_feed: { feed_id: string; feed_code: string; flagged_rows: number }[];
+  };
+  pending_decisions: {
+    proposal_id: string; feed_id: string; feed_code: string; feed_name: string; session_id: string | null;
+    kind: string; summary: string; agent: string; confidence: number | null;
+  }[];
+  recent_loads: {
+    id: string; feed_id: string; feed_code: string; feed_name: string; source_code: string | null;
+    received_at: string; status: string; purpose: string; rows: number | null;
+    flagged_rows: number | null; trust_score: number | null;
+  }[];
+};
+
 export type GlossaryElement = {
   id: string;
   created_at: string;
