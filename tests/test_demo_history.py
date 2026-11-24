@@ -1,0 +1,159 @@
+"""Phase 7.16 T0b: `python -m core.seed --demo-history` (plan docs/plans/phase-7.16.md, 2.2).
+
+21 past days of a feed's deliveries through the real daily pipeline (DailyFetch: fetch, step 12, the engine, steps 15 and
+20) with an injected clock and an injected connector. The same rule fails on every Monday, so one weekday pattern and
+non-zero reports appear. Nothing is inserted into a guarded table by the seed itself.
+"""
+
+from __future__ import annotations
+
+from contextlib import nullcontext
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+import pytest
+from sqlalchemy import text
+
+from apps.api import demo_history
+from apps.api.demo_history import HistoryRefused, HistorySeeded, HistorySpec, seed_demo_history
+from apps.api.jobs import DailyFetch
+from core.domain.report import Period
+from core.repositories.loads import LoadRepository
+from core.steps.patterns import find_patterns
+from core.steps.reports import build_numbers
+from ports.config import Settings
+from ports.connectors.local_file import LocalFileConnector
+from ports.storage.local import LocalBlobStore
+from tests.configured import VOLUME_RULE, loadable_feed, volume_csv
+
+SPEC = HistorySpec(feed_code="syn_history", column="traded_qty", rule_key=VOLUME_RULE, bad_value="200000", bad_rows=4,
+                   date_column="trade_date")
+TODAY = date.today()
+DAYS = [TODAY - timedelta(days=n) for n in range(21, 0, -1)]
+
+
+@pytest.fixture
+def world(db_session, glossary, tmp_path):
+    """A registered feed with a go-live, and a file fetched once (no load of today), as after the demo's first load."""
+    from core.domain.profiling import FileColumn
+    from core.repositories.feeds import FeedRepository
+    from tests.configured import approved_mapping, approved_rule, go_live
+    from tests.onboarded import registered_feed
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_history", name="History", source_code="syn_history",
+                                                       connector="local_file", source_ref="files/syn_history.csv")
+    registered_feed(db_session, feed.id, columns=[  # the template step 12 compares each delivery with
+        FileColumn(name=n, type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=1)
+        for n in ("instr_id", "trade_date", "traded_qty")])
+    for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"), ("traded_qty", "volume")):
+        approved_mapping(db_session, feed.id, field, key)
+    approved_rule(db_session, feed.id, VOLUME_RULE, sql="SELECT _row FROM curated WHERE volume > 100000",
+                  description="Volume is at most 100000.")
+    go_live(db_session, feed.id)
+    feed_id = feed.id
+    files = tmp_path / "sources" / "files"
+    files.mkdir(parents=True)
+    (files / "syn_history.csv").write_text(volume_csv(rows=10), encoding="utf-8")
+    db_session.commit()
+    daily = DailyFetch(session_factory=lambda: nullcontext(db_session), blob_store=LocalBlobStore(tmp_path / "blob"),
+                       connector_factory=lambda name: LocalFileConnector(tmp_path / "sources"),
+                       backend_team=lambda: ["dev-backend-team"])
+    assert daily._fetch_one(feed_id, today=None, catalogue=None) == "fetched"
+    return feed_id, daily
+
+
+def scheduled(db_session, feed_id):
+    return [load for load in LoadRepository(db_session).list_for_feed(feed_id) if load.purpose == "scheduled"]
+
+
+def test_the_history_is_21_days_through_the_real_pipeline_with_mondays_held(db_session, world):
+    feed_id, daily = world
+    result = seed_demo_history(daily, today=TODAY, spec=SPEC)
+    assert isinstance(result, HistorySeeded) and (result.loaded, result.skipped, result.held) == (21, 0, 3)
+    loads = sorted(scheduled(db_session, feed_id), key=lambda load: load.received_at)
+    assert [load.received_at.astimezone(UTC).date() for load in loads] == DAYS  # the injected clock
+    assert {load.arrival_outcome for load in loads} == {"on_time_complete"}  # step 12 ran on every one
+    assert [load.status for load in loads] == ["held" if day.weekday() == 0 else "released" for day in DAYS]
+    assert all([s.outcome for s in LoadRepository(db_session).stages(load.id)] == ["stage_completed"] * 4 for load in loads)
+
+
+def test_the_same_rule_failing_on_every_monday_makes_one_weekday_pattern(db_session, world):
+    feed_id, daily = world
+    seed_demo_history(daily, today=TODAY, spec=SPEC)
+    patterns = find_patterns(db_session, feed_ids=[feed_id], as_of=datetime.combine(TODAY + timedelta(days=1), datetime.min.time(),
+                                                                                   tzinfo=UTC), window_days=90, min_loads=3)
+    assert [(p.rule_key, p.dimension, p.value, p.failing_loads, p.loads_in_window) for p in patterns] == [
+        (VOLUME_RULE, "weekday", "Monday", 3, 3)]
+
+
+def test_the_reports_of_those_days_are_not_empty(db_session, world):
+    feed_id, daily = world
+    seed_demo_history(daily, today=TODAY, spec=SPEC)
+    yesterday = build_numbers(db_session, subject_id="dev-data-owner", role="data_owner", period=Period.daily(TODAY - timedelta(days=1)),
+                              settings=Settings(_env_file=None))
+    assert yesterday.totals.loads == 1 and yesterday.totals.rows == 10
+    mondays = [day for day in DAYS if day.weekday() == 0]
+    first, last = (build_numbers(db_session, subject_id="dev-data-owner", role="data_owner", period=Period.daily(day),
+                                 settings=Settings(_env_file=None)) for day in (mondays[0], mondays[-1]))
+    assert (first.totals.held, first.totals.flagged_rows, first.feeds[0].patterns) == (1, 4, 0)  # one failure is no pattern yet
+    assert (last.totals.held, last.totals.flagged_rows, last.feeds[0].patterns) == (1, 4, 1)  # the third Monday is
+
+
+def test_running_it_again_changes_nothing(db_session, world):
+    feed_id, daily = world
+    seed_demo_history(daily, today=TODAY, spec=SPEC)
+    again = seed_demo_history(daily, today=TODAY, spec=SPEC)
+    assert isinstance(again, HistorySeeded) and (again.loaded, again.skipped) == (0, 21)
+    assert len(scheduled(db_session, feed_id)) == 21
+
+
+@pytest.mark.parametrize("spec, reason", [
+    (SPEC.model_copy(update={"feed_code": "syn_no_such_feed"}), "feed_missing"),
+    (SPEC.model_copy(update={"column": "no_such_column"}), "column_missing"),
+    (SPEC.model_copy(update={"bad_rows": 10}), "too_few_rows"),
+])
+def test_it_refuses_in_words_and_loads_nothing(db_session, world, spec, reason):
+    feed_id, daily = world
+    result = seed_demo_history(daily, today=TODAY, spec=spec)
+    assert isinstance(result, HistoryRefused) and result.reason == reason and result.detail
+    assert scheduled(db_session, feed_id) == []
+
+
+def test_a_feed_without_a_go_live_or_a_file_is_refused(db_session, glossary, tmp_path):
+    from core.repositories.feeds import FeedRepository
+    from tests.onboarded import registered_feed
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_history", name="History", source_code="syn_history",
+                                                       connector="local_file", source_ref="files/syn_history.csv")
+    registered_feed(db_session, feed.id)
+    db_session.commit()
+    daily = DailyFetch(session_factory=lambda: nullcontext(db_session), blob_store=LocalBlobStore(tmp_path / "blob"),
+                       connector_factory=lambda name: LocalFileConnector(tmp_path), backend_team=lambda: [])
+    assert seed_demo_history(daily, today=TODAY, spec=SPEC).reason == "not_live"
+
+
+def test_the_seed_inserts_nothing_into_a_table_itself():
+    source = Path(demo_history.__file__).read_text(encoding="utf-8")
+    assert not any(word in source for word in ("INSERT", "insert(", "session.add", "execute(text", "UPDATE ", "DELETE "))
+    assert "tables" not in source.replace("guarded tables", "")  # it imports no table class
+
+
+def test_the_command_prints_the_outcome_and_stops_with_1_when_refused(monkeypatch, capsys):
+    from core import seed
+
+    monkeypatch.setattr(demo_history, "run", lambda: HistorySeeded(loaded=21, skipped=0, held=3, rule_found=True, problems=[]))
+    seed.main(["--demo-history"])
+    assert "demo history: 21 days loaded, 0 already there, 3 held" in capsys.readouterr().out
+    monkeypatch.setattr(demo_history, "run", lambda: HistoryRefused(reason="feed_missing", detail="There is no feed."))
+    with pytest.raises(SystemExit) as stopped:
+        seed.main(["--demo-history"])
+    assert stopped.value.code == 1 and "There is no feed." in capsys.readouterr().err
+
+
+def test_the_clock_gives_only_the_loads_received_at(db_session, world):
+    """The injected clock is the load's received_at; every other timestamp is the database's own."""
+    feed_id, daily = world
+    seed_demo_history(daily, today=TODAY, spec=SPEC)
+    now = datetime.now(UTC)
+    created = db_session.scalars(text("SELECT created_at FROM loads WHERE feed_id = :f AND purpose = 'scheduled'"), {"f": feed_id}).all()
+    assert all(c > now - timedelta(minutes=30) for c in created)

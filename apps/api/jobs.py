@@ -102,6 +102,9 @@ class DailyFetch:
     display_name: Callable[[str], str] = lambda user_id: user_id
     trust_release_threshold: Decimal = Decimal("90")
     kick_glossary: Callable[[], None] | None = None
+    # Phase 7.16: the moment a scheduled load is received. None (the job, always) is the moment of insert; the demo history
+    # (apps/api/demo_history.py) injects a past day, so the real pipeline can run for days that are gone.
+    clock: Callable[[], datetime] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings, identity: Identity) -> DailyFetch:
@@ -220,8 +223,9 @@ class DailyFetch:
                 notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
                 clear_stale_load(session, feed_id=feed_id, stale_minutes=self.load_stale_minutes, notifier=notifier,
                                  operations=self.operations())
+                received = {"received_at": self.clock()} if self.clock is not None else {}
                 load = LoadRepository(session).create(feed_id=feed_id, file_ref=fetch.blob_ref, purpose="scheduled",
-                                                      go_live_id=live.id, fetch_id=fetch.id)
+                                                      go_live_id=live.id, fetch_id=fetch.id, **received)
             except LoadInProgress:
                 session.rollback()
                 log.info("feed %s already has a load in progress; this one is not started", feed_id)

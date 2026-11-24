@@ -3,6 +3,7 @@
 Run:
     .venv\\Scripts\\python -m core.seed           the enterprise glossary (fixtures/glossary/)
     .venv\\Scripts\\python -m core.seed --demo    the demo products (fixtures/demo/); needs the glossary
+    .venv\\Scripts\\python -m core.seed --demo-history   21 past days of the onboarded security master (docs/demo.md)
 
 Glossary: inserts version 1 (created_by "seed") of every element whose key is not in the glossary yet.
 Demo: inserts every demo product whose code does not exist yet. Demo codes start with demo_.
@@ -77,7 +78,22 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(prog="python -m core.seed", description="Load synthetic seed data.")
     parser.add_argument("--demo", action="store_true", help="load the demo products instead of the glossary")
+    parser.add_argument("--demo-history", action="store_true",
+                        help="21 past days of the onboarded security master through the real daily pipeline")
     args = parser.parse_args(argv)
+    if args.demo_history:
+        from apps.api import demo_history  # the real pipeline lives with the jobs; core/ never imports it at load time
+
+        done = demo_history.run()
+        if done.outcome == "history_refused":
+            print(done.detail, file=sys.stderr)
+            raise SystemExit(1)
+        print(f"demo history: {done.loaded} days loaded, {done.skipped} already there, {done.held} held")
+        if not done.rule_found:
+            print("The feed has no rule best_sales_not_negative: nothing is flagged, so there is no pattern.", file=sys.stderr)
+        for problem in done.problems:
+            print(f"not loaded: {problem}", file=sys.stderr)
+        return
     with db.get_sessionmaker()() as session:
         if args.demo:
             try:
