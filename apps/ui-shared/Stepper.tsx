@@ -15,7 +15,9 @@ export function StateBadge({ state, testId }: { state: StepState; testId?: strin
     : state === "needs_decision" || state === "stale" || state === "failed" ? "attention" : "neutral"}>{STATE_LABELS[state]}</StatusChip></span>;
 }
 export function canOpen(step: StepView, current: StepName) {
-  return step.name === current || step.state === "done" || step.state === "stale";
+  // phase 7.13: a step drafted ahead of the cursor (chain mode) opens too; in step mode only the current one has these
+  return step.name === current || step.state === "done" || step.state === "stale" || step.state === "ready"
+    || step.state === "needs_decision";
 }
 export default function Stepper({ steps, current, viewed, onOpen }: {
   steps: StepView[]; current: StepName; viewed: StepName; onOpen: (step: StepName) => void;

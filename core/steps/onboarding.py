@@ -58,6 +58,11 @@ from core.domain.onboarding import (
     ONBOARDING_STEPS,
     AgentNote,
     ApproveOptions,
+    ChainBase,
+    ChainItem,
+    ChainReview,
+    ChainStep,
+    ConfidentApproved,
     InputFact,
     JobRun,
     OnboardingItem,
@@ -538,6 +543,56 @@ def run_all(session: Session, *, session_id: UUID, user: User) -> OnboardingSess
     sessions.add_event(session_id, step=sess.current_step, event="chain_started", actor=user.id)
     _go_on_with_the_chain(session, session_id, actor=user.id)
     return sessions.get(session_id)
+
+
+def chain_review(session: Session, *, session_id: UUID, settings: Settings | None = None) -> ChainReview:
+    """Read only (phase 7.13, T2): every draft of the four chain steps, with what it was built on. In each step the
+    blocked items come first (no single recommended value), then the low-confidence ones (review answer Q3)."""
+    settings = settings or Settings(_env_file=None)
+    threshold = settings.auto_accept_confidence
+    sessions, proposals = OnboardingRepository(session), ProposalRepository(session)
+    sess = sessions.get(session_id)
+    done = [e for e in sessions.events(session_id) if e.event == "chain_done"]
+    steps = []
+    for step in CHAIN_STEPS:
+        found = []
+        for item in _step_items(session, sess, step):
+            bases = [proposals.get(b) for b in proposals.bases(item.proposal_id)]
+            blocked = (item.kind in ("glossary_element", "mapping") and item.payload.get("recommended") is None
+                       and not item.payload.get("excluded"))
+            sure = item.confidence is not None and item.confidence >= threshold
+            found.append(ChainItem(
+                item=item, blocked=blocked, low_confidence=not blocked and item.confidence is not None and not sure,
+                confident=(item.status == "pending" and sure and not blocked and item.waiting_for is None
+                           and all(b.status == "approved" for b in bases)),
+                based_on=[ChainBase(proposal_id=b.id, step=STEP_OF_KIND[b.kind], column=_describe(b)[0],
+                                    status=b.status) for b in bases]))
+        found.sort(key=lambda i: 0 if i.blocked else 1 if i.low_confidence else 2)  # stable: the agent's order within
+        steps.append(ChainStep(step=step, state=sess.step_states[step], items=found))
+    return ChainReview(run_mode=sess.run_mode, current_step=sess.current_step, steps=steps,
+                       blocked=done[-1].detail.get("blocked", {}) if done else {}, auto_accept_confidence=threshold)
+
+
+def approve_confident(session: Session, *, session_id: UUID, step: str, user: User,
+                      ctx: OnboardingContext) -> ConfidentApproved:
+    """"Approve all confident" of one chain step (phase 7.13, T2): the person's own decision on each confident item,
+    through the step's own decision function, one approval row per item (rule 1). Items built on a draft not approved
+    yet are left (they are not confident). StepNotEnterable: not a chain step; StepNotReady: no answer yet."""
+    sess = _locked(session, session_id)
+    if step not in CHAIN_STEPS or sess.status == "done":
+        raise StepNotEnterable(f"Approve all confident is for the chain steps ({', '.join(CHAIN_STEPS)}), not {step}")
+    if sess.step_states[step] not in ("ready", "needs_decision"):
+        raise StepNotReady(f"{step} has no answer to approve ({sess.step_states[step]})")
+    chosen = [i.item for s in chain_review(session, session_id=session_id, settings=ctx.settings).steps
+              if s.step == step for i in s.items if i.confident]
+    approved, _ = _approve(session, sess, step, chosen, user=user, ctx=ctx, options=ApproveOptions())
+    sessions = OnboardingRepository(session)
+    for proposal_id in approved:
+        sessions.add_event(session_id, step=step, event="approved", actor=user.id, proposal_id=proposal_id,
+                           detail={"by": "approve_all_confident"})
+    sessions.set_step_state(session_id, step, _settled_state(_step_items(session, sessions.get(session_id), step)))
+    return ConfidentApproved(step=step, approved=approved,
+                             chain=chain_review(session, session_id=session_id, settings=ctx.settings))
 
 
 def _locked(session: Session, session_id: UUID) -> OnboardingSession:

@@ -152,6 +152,57 @@ class OnboardingItem(BaseModel):
     decided_at: datetime | None = None
 
 
+class ChainBase(BaseModel):
+    """One draft an item was built on (phase 7.13): the "based on" link of the chain review."""
+
+    model_config = ConfigDict(frozen=True)
+
+    proposal_id: UUID
+    step: StepName
+    column: str | None
+    status: str
+
+
+class ChainItem(BaseModel):
+    """One draft of the chain review: the workspace item, what it was built on, and why it sorts where it does."""
+
+    model_config = ConfigDict(frozen=True)
+
+    item: OnboardingItem
+    based_on: list[ChainBase]
+    blocked: bool  # no single recommended value: later agents skipped its column (plan, decision 3)
+    low_confidence: bool  # a value, below AUTO_ACCEPT_CONFIDENCE: drafted past, flagged
+    confident: bool  # pending, at or above the threshold, its bases approved: "Approve all confident" takes it
+
+
+class ChainStep(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    step: StepName
+    state: StepState
+    items: list[ChainItem]  # blocked first, then low confidence, then the rest
+
+
+class ChainReview(BaseModel):
+    """Every draft of the chain, by step (phase 7.13, T2)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_mode: RunMode
+    current_step: StepName
+    steps: list[ChainStep]
+    blocked: dict[str, str]  # column -> why the chain could not draft past it (the latest chain_done)
+    auto_accept_confidence: float
+
+
+class ConfidentApproved(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    step: StepName
+    approved: list[UUID]  # one approval each, by the person who clicked (rule 1)
+    chain: ChainReview
+
+
 class AgentNote(BaseModel):
     """"What the agent did and why", for the right-hand panel: the logged call behind a proposal."""
 

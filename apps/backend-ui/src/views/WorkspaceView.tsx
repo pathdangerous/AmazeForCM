@@ -2,11 +2,12 @@ import { Alert, Button, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingSkeleton, StickyFooter } from "../../../ui-shared/phase711";
 import {
-  addItem, apiGet, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline, getWorkspace,
-  goBack, ONBOARDING_STEPS, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
+  addItem, apiGet, approveStep, CHAIN_STEPS, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline,
+  getWorkspace, goBack, ONBOARDING_STEPS, runAllAgents, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
   type TimelineEntry, type Visibility, type Workspace,
 } from "../api";
 import AgentPanel from "./AgentPanel";
+import ChainReview from "./ChainReview";
 import AddItem from "./steps/AddItem";
 import Stepper, { StateBadge, STEP_LABELS } from "./Stepper";
 import FirstLoadPanel from "./steps/FirstLoadPanel";
@@ -94,6 +95,11 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const current = ws.current_step;
   const shown = viewed ?? current;
   const atCurrent = shown === current;
+  // phase 7.13: in chain mode a chain step drafted ahead of the cursor takes decisions, edits and rejections too
+  const chain = ws.session.run_mode === "chain";
+  const shownStepState = ws.steps.find((s) => s.name === shown)?.state;
+  const draftedAhead = chain && !atCurrent && (CHAIN_STEPS as readonly string[]).includes(shown)
+    && (shownStepState === "ready" || shownStepState === "needs_decision");
   const view = atCurrent ? ws : viewedWs?.viewed_step === shown ? viewedWs : null;
   const items: OnboardingItem[] = view?.items ?? [];
   const stepView = ws.steps.find((s) => s.name === current);
@@ -107,7 +113,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
     setNote(null);
     try {
       const next = await work();
-      if (next) { setWs(next); setViewed(null); setViewedWs(null); }
+      if (next) { setWs(next); if (!draftedAhead) { setViewed(null); setViewedWs(null); } } // ahead: stay on that step
       setMarked([]);
       setEditing(null);
     } catch (err: unknown) {
@@ -128,7 +134,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const rerun = () => act(() => enterStep(id, current, devUser));
 
   const actions: ItemActions = {
-    readOnly: !atCurrent, busy, marked, editing, editError, people, addError,
+    readOnly: !atCurrent && !draftedAhead, busy, marked, editing, editError, people, addError,
     add: async (body) => {
       setBusy(true);
       setAddError(null);
@@ -254,7 +260,14 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
             {ws.inputs.column_count !== null && `${ws.inputs.column_count} columns`}
           </Text>}
         </div>
-        <a href="#/onboardings" className="amz-button">Save and exit</a>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!chain && ws.session.status === "active" && (
+            <Button data-testid="workspace-run-all" disabled={busy}
+                    title="After the profile is approved, every agent ahead drafts on the drafts before it; you review once"
+                    onClick={() => void act(() => runAllAgents(id, devUser))}>Run all agents</Button>
+          )}
+          <a href="#/onboardings" className="amz-button">Save and exit</a>
+        </div>
       </div>
       {fourEyes && (
         <div role="note" style={{ background: "var(--amz-info)", color: "var(--amz-on-bright)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
@@ -263,6 +276,11 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
         </div>
       )}
       <Stepper steps={ws.steps} current={current} viewed={shown} onOpen={(s) => { setViewed(s === current ? null : s); setViewedWs(null); }} />
+      {chain && ws.session.status === "active" && (
+        <ChainReview id={id} devUser={devUser} stamp={ws.session.updated_at}
+                     onOpenStep={(s) => { setViewed(s === current ? null : s); setViewedWs(null); }}
+                     onChanged={() => void load()} />
+      )}
       <div className="workspace-body">
         <div className="workspace-step-content">
           <div className="workspace-step-heading">

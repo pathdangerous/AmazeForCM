@@ -7,6 +7,8 @@ GET  /api/amaze/onboardings/{id}[?step=<step>]    the workspace view (steps, the
 POST /api/amaze/onboardings/{id}/steps/{step}/enter    run the step's agent in the background (queues its job)
 POST /api/amaze/onboardings/{id}/approve          Approve & next; 409 decision_needed lists the items to decide first
 POST /api/amaze/onboardings/{id}/run-all          Run all agents (7.13): run_mode chain; agents ahead draft on drafts
+GET  /api/amaze/onboardings/{id}/chain            the chain review: every draft by step, with what it was built on
+POST /api/amaze/onboardings/{id}/chain/approve-confident   {step}: one approval per confident item, by the caller
 POST /api/amaze/onboardings/{id}/back             {to_step}: later steps become stale and the step reruns
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/decision   one item, by the decision code of
                                                   POST /api/amaze/proposals/{id}/decision (decide_proposal)
@@ -42,7 +44,15 @@ from apps.api.routers.amaze import DecisionBody, decide_proposal
 from apps.api.transactions import in_transaction, read
 from core.domain.common import NonBlank
 from core.domain.manual import ManualItem, ManualRule
-from core.domain.onboarding import ApproveOptions, StepAdvance, StepName, TimelineEntry, Workspace
+from core.domain.onboarding import (
+    ApproveOptions,
+    ChainReview,
+    ConfidentApproved,
+    StepAdvance,
+    StepName,
+    TimelineEntry,
+    Workspace,
+)
 from core.domain.proposal import Proposal
 from core.domain.transformation import KeyColumns, KeyPolicy, KeyPolicyName
 from core.repositories.errors import DecisionNeeded, ManualRuleRefused, ProposalNotFound
@@ -58,6 +68,8 @@ from core.steps.onboarding import (
     edit_item,
     enter_step,
     STEP_OF_KIND,
+    approve_confident,
+    chain_review,
     manual_rule_input,
     refresh_chain,
     run_all,
@@ -199,6 +211,27 @@ def run_all_agents(session_id: UUID, session: DbSession, user: Operator, setting
     in_transaction(session, lambda: run_all(session, session_id=session_id, user=user))
     kick()  # after the commit: a draft job may be queued
     return _view(session, session_id, settings)
+
+
+class ChainStepBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step: StepName
+
+
+@router.get("/{session_id}/chain", response_model=ChainReview)
+def get_chain(session_id: UUID, session: DbSession, settings: AppSettings) -> ChainReview:
+    """The chain review (phase 7.13): every draft by step, blocked and low-confidence first, with its bases."""
+    return read(session, lambda: chain_review(session, session_id=session_id, settings=settings))
+
+
+@router.post("/{session_id}/chain/approve-confident", response_model=ConfidentApproved,
+             responses={409: {"description": "not a chain step, or its agent has not answered"}})
+def approve_all_confident(session_id: UUID, body: ChainStepBody, session: DbSession, user: Operator,
+                          ctx: Context) -> ConfidentApproved:
+    """Approve all confident of one step: the person's own decision on each item, one approval row each."""
+    return in_transaction(session, lambda: approve_confident(session, session_id=session_id, step=body.step,
+                                                             user=user, ctx=ctx))
 
 
 @router.post("/{session_id}/back", response_model=Workspace)

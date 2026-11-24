@@ -487,7 +487,8 @@ export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: st
 export type Visibility = "open" | "restricted";
 export type Workspace = {
   session: { id: string; feed_id: string; current_step: StepName; step_states: Record<string, StepState>;
-             status: "active" | "done"; updated_at: string; model_calls: number };
+             status: "active" | "done"; updated_at: string; model_calls: number;
+             run_mode?: "step" | "chain" }; // phase 7.13: chain = every agent ahead drafts on the drafts before it
   feed_code: string; steps: StepView[]; current_step: StepName; viewed_step: StepName; visibility: Visibility | null;
   inputs: StepInputs | null; items: OnboardingItem[]; job: OnboardingJob | null;
   progress: string | null; agent_notes: AgentNote[]; key_policy: KeyPolicy | null;
@@ -528,6 +529,20 @@ export const addItem = (id: string, body: ManualItemBody, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items`, body, devUser);
 export const editItem = (id: string, proposalId: string, payload: Record<string, unknown>, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/edit`, { payload }, devUser);
+
+// ---- phase 7.13: run all agents ahead, review the chain once
+export const CHAIN_STEPS = ["glossary", "mapping", "transformations", "rules"] as const;
+export type ChainBase = { proposal_id: string; step: StepName; column: string | null; status: string };
+export type ChainItem = { item: OnboardingItem; based_on: ChainBase[]; blocked: boolean; low_confidence: boolean;
+                          confident: boolean };
+export type ChainStep = { step: StepName; state: StepState; items: ChainItem[] };
+export type ChainReview = { run_mode: "step" | "chain"; current_step: StepName; steps: ChainStep[];
+                            blocked: Record<string, string>; auto_accept_confidence: number };
+export const runAllAgents = (id: string, devUser: string) => apiPost<Workspace>(`${ONBOARDINGS}/${id}/run-all`, {}, devUser);
+export const getChain = (id: string, devUser: string) => apiGet<ChainReview>(`${ONBOARDINGS}/${id}/chain`, devUser);
+export const approveConfident = (id: string, step: StepName, devUser: string) =>
+  apiPost<{ step: StepName; approved: string[]; chain: ChainReview }>(`${ONBOARDINGS}/${id}/chain/approve-confident`,
+                                                                     { step }, devUser);
 
 export async function setKeyPolicy(id: string, body: KeyPolicy, devUser: string): Promise<{ workspace: Workspace }> {
   const path = `${ONBOARDINGS}/${id}/key-policy`;

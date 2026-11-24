@@ -782,6 +782,17 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
             ("glossary", "dev-operator")]
         await r.call("POST", f"/{oid}/run-all", expect=409)  # one click, once
 
+        # approve all confident (phase 7.13, T2): one approval row per item, by the person who clicked
+        r.worker.drain()  # the glossary run, then the chain on its drafts
+        chain = await r.call("GET", f"/{oid}/chain")
+        assert [s["step"] for s in chain["steps"]] == ["glossary", "mapping", "transformations", "rules"]
+        step = next(s["step"] for s in chain["steps"] if any(i["confident"] for i in s["items"]))
+        done = await r.call("POST", f"/{oid}/chain/approve-confident", json={"step": step})
+        assert done["approved"]
+        assert committed(engine, "SELECT count(*) FROM approvals WHERE decided_by = 'dev-operator' AND proposal_id IN "
+                                 "(SELECT CAST(x AS uuid) FROM unnest(CAST(:ids AS text[])) AS x)",
+                         ids=done["approved"]) == [(len(done["approved"]),)]
+
 
 # ---------------------------------------------------------------- resume after a restart
 
