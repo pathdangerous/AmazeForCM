@@ -27,7 +27,7 @@ from tests.test_onboarding import approve, current, make_world, run_to, work
 DIRECT = ("code_versions", "feed_go_lives", "feed_key_policies", "feed_profiles", "feed_registrations", "feed_signoffs", "glossary_runs",
           "load_certifications", "loads", "mappings", "onboarding_sessions", "products", "proposals", "rules",
           "source_choices", "source_fetches", "standard_records", "transformations", "upload_sources",
-          "feed_status_events")
+          "feed_status_events", "proposal_bases")
 CHILDREN = {
     "load_stages": "load_id IN (SELECT id FROM loads WHERE feed_id = :f)",
     "product_elements": "product_id IN (SELECT id FROM products WHERE feed_id = :f)",

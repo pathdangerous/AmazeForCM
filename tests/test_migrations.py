@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0031"  # old: "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0032"  # old: "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -1228,3 +1228,63 @@ def test_0030_adds_code_versions_and_downgrade_restores_0029(scratch_schema):
     assert _0030_state(engine) == before
     command.upgrade(config, "0030")
     assert _0030_state(engine) == up
+
+
+def _0032_state(engine):
+    with engine.connect() as connection:
+        def function(name: str) -> str | None:
+            return connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :n "
+                "AND p.pronamespace = current_schema()::regnamespace"), {"n": name}).scalar_one_or_none()
+
+        return {
+            "tables": set(inspect(connection).get_table_names()),
+            "session_columns": sorted(c["name"] for c in inspect(connection).get_columns("onboarding_sessions")),
+            "delete_function": function("amaze_delete_feed"),
+            "session_guard": function("amaze_guard_onboarding_session"),
+            "events": _check_definition(connection, "onboarding_events", "ck_onboarding_events_event"),
+            "functions": {n for n in ("amaze_guard_proposal_base", "amaze_require_bases_approved") if function(n)},
+        }
+
+
+def _check_definition(connection, table: str, name: str) -> str:
+    return connection.execute(text(
+        "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conname = :n AND c.conrelid = CAST(:t AS regclass)"),
+        {"n": name, "t": table}).scalar_one()
+
+
+def test_0032_adds_the_chain_of_drafts_and_downgrade_restores_0031(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0031")
+    before = _0032_state(engine)
+    command.upgrade(config, "0032")
+    up = _0032_state(engine)
+    assert "proposal_bases" in up["tables"] and "proposal_bases" not in before["tables"]
+    assert "run_mode" in up["session_columns"] and "run_mode" not in before["session_columns"]
+    assert "DELETE FROM proposal_bases" in up["delete_function"] and "proposal_bases" not in before["delete_function"]
+    assert "run_mode" in up["session_guard"] and "run_mode" not in before["session_guard"]
+    assert "chain_started" in up["events"] and "chain_started" not in before["events"]
+    assert up["functions"] == {"amaze_guard_proposal_base", "amaze_require_bases_approved"} and not before["functions"]
+    command.downgrade(config, "0031")
+    assert _0032_state(engine) == before
+    command.upgrade(config, "0032")
+    assert _0032_state(engine) == up
+
+
+def test_0032_downgrade_refuses_while_a_chain_session_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0032")
+    with engine.begin() as connection:
+        feed = connection.execute(text(
+            "INSERT INTO feeds (code, name, source_code, connector, source_ref) "
+            "VALUES ('syn_chain_mig', 'Chain', 'syn_chain_mig', 'local_file', 'files/x.csv') RETURNING id")).scalar_one()
+        connection.execute(text(
+            "INSERT INTO onboarding_sessions (feed_id, current_step, step_states, created_by, run_mode) VALUES "
+            "(:f, 'profile', CAST(:s AS jsonb), 'dev-operator', 'chain')"),
+            {"f": feed, "s": '{"upload": "done", "profile": "waiting", "glossary": "waiting", "mapping": "waiting", '
+                             '"transformations": "waiting", "rules": "waiting", "go_live": "waiting", '
+                             '"first_load": "waiting", "product_ready": "waiting"}'})
+    with pytest.raises(DBAPIError, match="migration 0032"):
+        command.downgrade(config, "0031")

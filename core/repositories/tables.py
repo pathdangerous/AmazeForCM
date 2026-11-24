@@ -37,7 +37,7 @@ from core.domain.feed import CONNECTORS, FEED_STAGES
 from core.domain.glossary import DATA_TYPES
 from core.domain.load import ARRIVAL_OUTCOMES, CERTIFICATION_OUTCOMES, LOAD_STATUSES
 from core.domain.mapping import GLOSSARY_RUN_REASONS, GLOSSARY_RUN_STATUSES
-from core.domain.onboarding import EVENT_NAMES, JOB_STATUSES, ONBOARDING_STEPS, SESSION_STATUSES
+from core.domain.onboarding import EVENT_NAMES, JOB_STATUSES, ONBOARDING_STEPS, RUN_MODES, SESSION_STATUSES
 from core.domain.product import VISIBILITIES
 from core.domain.proposal import PROPOSAL_KINDS
 from core.domain.requirement import REQUIREMENT_STATUSES
@@ -986,6 +986,7 @@ class OnboardingSessionRow(Base):
         CheckConstraint(_in("status", SESSION_STATUSES), name="status"),
         CheckConstraint("length(btrim(created_by)) > 0", name="created_by"),
         CheckConstraint("model_calls >= 0", name="model_calls"),
+        CheckConstraint(_in("run_mode", RUN_MODES), name="run_mode"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -997,6 +998,22 @@ class OnboardingSessionRow(Base):
     created_at: Mapped[datetime] = _created_at(clock=True)  # the moment of the insert: the list is oldest first
     updated_at: Mapped[datetime] = _created_at(clock=True)
     model_calls: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # 0032: step (Approve & next runs the next agent) or chain (every agent ahead runs on drafts); only step -> chain
+    run_mode: Mapped[str] = mapped_column(Text, default="step", server_default="step")
+
+
+class ProposalBaseRow(Base):
+    """A draft and one upstream draft it was built on (migration 0032, phase 7.13). Append-only. Same feed, an earlier
+    kind (glossary_element < mapping < transformation < rule), an agent's draft (trg_proposal_bases_a_guard); an
+    approval of the draft is refused while a base is not approved (trg_approvals_c_bases_approved)."""
+
+    __tablename__ = "proposal_bases"
+    __table_args__ = (CheckConstraint("proposal_id <> base_id", name="not_itself"),)
+
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"), primary_key=True)
+    base_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"), primary_key=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(Uuid)  # amaze_may_delete() reads it (0027): no FK, as proposals.feed_id
+    created_at: Mapped[datetime] = _created_at()
 
 
 class OnboardingEventRow(Base):

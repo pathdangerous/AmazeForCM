@@ -27,8 +27,13 @@ SESSION_STATUSES: tuple[str, ...] = get_args(SessionStatus)
 
 EventName = Literal["entered", "agent_queued", "agent_started", "agent_done", "agent_failed", "pre_accepted",
                     "edited", "approved", "rejected", "back", "stale", "done", "call_cap_reached",
-                    "item_added"]  # item_added: a person added an item (0028)
+                    "item_added",  # item_added: a person added an item (0028)
+                    # 0032 (phase 7.13): the chain of drafts
+                    "chain_started", "chain_done", "chain_stopped", "draft_stale"]
 EVENT_NAMES: tuple[str, ...] = get_args(EventName)
+
+RunMode = Literal["step", "chain"]  # chain (0032): every agent ahead runs on the drafts before it; never back to step
+RUN_MODES: tuple[str, ...] = get_args(RunMode)
 
 JobStatus = Literal["queued", "running", "done", "failed", "discarded"]
 JOB_STATUSES: tuple[str, ...] = get_args(JobStatus)
@@ -54,6 +59,7 @@ class OnboardingSession(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_calls: int
+    run_mode: RunMode = "step"
 
 
 class OnboardingEvent(BaseModel):

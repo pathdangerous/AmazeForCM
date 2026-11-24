@@ -23,6 +23,7 @@ from core.domain.onboarding import (
     EVENT_NAMES,
     MAX_JOB_ATTEMPTS,
     ONBOARDING_STEPS,
+    RUN_MODES,
     STEP_STATES,
     OnboardingEvent,
     OnboardingJob,
@@ -82,6 +83,14 @@ class OnboardingRepository:
     def move_to(self, session_id: UUID, step: str) -> OnboardingSession:
         row = self._row(session_id)
         row.current_step = _step(step)
+        return self._touched(row)
+
+    def set_run_mode(self, session_id: UUID, run_mode: str) -> OnboardingSession:
+        """step -> chain only (0032 refuses the way back)."""
+        if run_mode not in RUN_MODES:
+            raise ValueError(f"{run_mode!r} is not a run mode")
+        row = self._row(session_id)
+        row.run_mode = run_mode
         return self._touched(row)
 
     def finish(self, session_id: UUID) -> OnboardingSession:

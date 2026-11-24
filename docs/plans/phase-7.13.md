@@ -128,7 +128,7 @@ each logged as `approved` with the person as actor, not a bulk row. With four-ey
 | # | Object | Why | Change |
 |---|---|---|---|
 | 1 | new table `proposal_bases` | decision 2 | append-only (`amaze_refuse_update_delete`), no truncate (`amaze_refuse_truncate`), FK to `proposals`, `proposal_id <> base_id`, same feed, base kind earlier than proposal kind (glossary_element < mapping < transformation < rule), proposal `origin = 'agent'` |
-| 2 | `amaze_may_delete()` (0027) and `amaze_delete_feed()` | rule 1/7 exception: a hard-deleted feed must take its `proposal_bases` rows | new version that knows the new table (children first, as it does for the others) |
+| 2 | `amaze_delete_feed()` (0027, patched by 0028 and 0030) | rule 1/7 exception: a hard-deleted feed must take its `proposal_bases` rows | new version that deletes them before the approvals. (Built in T1a: `proposal_bases` has its own `feed_id`, so 0027's `amaze_may_delete()` already lets the delete through and needs no new version.) |
 | 3 | new trigger on `approvals` INSERT (`amaze_require_bases_approved`) | decision 7 | an `approved` decision is refused unless every base of the proposal has status `approved`. A new trigger beside `trg_approvals_not_superseded` (0024), not an edit of it |
 | 4 | `onboarding_sessions.run_mode` (new column, `step` or `chain`) and `amaze_guard_onboarding_session()` (0024) | decision 4 | new version: `run_mode` may move `step -> chain`, never back; the feed, creator and creation time stay fixed |
 | 5 | `ck_onboarding_events_event` (0024, extended in 0028/0029) | new events | add `chain_started`, `chain_done`, `chain_stopped`, `draft_stale` |

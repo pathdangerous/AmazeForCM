@@ -38,7 +38,7 @@ from core.repositories.errors import (
     WrongProposalKind,
 )
 from core.repositories.settings import FourEyesRepository
-from core.repositories.tables import ApprovalRow, ProposalLogEntry, ProposalRow
+from core.repositories.tables import ApprovalRow, ProposalBaseRow, ProposalLogEntry, ProposalRow
 from ports.identity.base import User
 
 
@@ -54,6 +54,17 @@ class ProposalRepository:
         self._session.add(row)
         self._session.flush()
         return Proposal.model_validate(row)
+
+    def add_bases(self, proposal_id: UUID, base_ids: list[UUID], *, feed_id: UUID) -> None:
+        """The upstream drafts a draft was built on (0032, phase 7.13); written with the draft, in its transaction."""
+        for base_id in dict.fromkeys(base_ids):
+            self._session.add(ProposalBaseRow(proposal_id=proposal_id, base_id=base_id, feed_id=feed_id))
+        self._session.flush()
+
+    def bases(self, proposal_id: UUID) -> list[UUID]:
+        """The drafts this one was built on, in the order they were written."""
+        return list(self._session.scalars(select(ProposalBaseRow.base_id).where(ProposalBaseRow.proposal_id == proposal_id)
+                                          .order_by(ProposalBaseRow.created_at, ProposalBaseRow.base_id)))
 
     def create_manual(self, *, kind: ProposalKind, payload: dict[str, Any], required_approver_roles: list[str],
                       feed_id: UUID, author: str) -> Proposal:
