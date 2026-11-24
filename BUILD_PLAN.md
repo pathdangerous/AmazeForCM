@@ -151,6 +151,21 @@ Decisions (T0, approved 2026-11-24):
   are unchanged.
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass. Push `phase-7.13`; do not merge.
 
+## Phase 7.14 — Exceptions, agent-proposed fixes, bulk approval, rerun
+
+Plan: `docs/plans/phase-7.14.md`. Tasks: T0 design (stop for answers), T1 exceptions view per load and feed, T2
+ExceptionFixAgent and resolutions (migration 0033), T3 bulk approve and rerun of a held load, T4 owner notifications and
+Overview counts (by agent / by hand).
+
+- Exception = one flagged row and rule; group = rule + value pattern. An agent proposes one fix per group (transformation,
+  waive with reason, refer to provider); a person approves in bulk; an agent never changes data (rule 1); records stay
+  append-only (a waiver is read by the engine at the rerun, never written into an old record).
+- A rerun is a new, recorded scheduled load of the held load's file (`rerun_of_load_id`, reason); step 12 skips the
+  resend check against that one load only.
+- Out of scope: owner reports and recurring-failure patterns (7.15).
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.14.
+  Push `phase-7.14`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
