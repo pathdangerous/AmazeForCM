@@ -133,6 +133,23 @@ Decisions (T0):
 - The demo covers T1-T4 and T7; whatever is not built goes on the roadmap (T6).
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass. Push `phase-7.12`; do not merge.
 
+## Phase 7.13 — Run all agents ahead, review the chain once
+
+Plan: `docs/plans/phase-7.13.md`. One click on the onboarding ("Run all agents", session `run_mode = chain`) makes the
+worker run glossary, mapping, transformations and rules in turn on **draft** upstream proposals; a person reviews the
+whole chain once and approves top to bottom. Tasks: T0 design (stop for review), T1 chain worker and drafts
+(migration 0032), T2 chain review screen, T3 approval order and stale reruns, T4 demo and finish.
+
+Decisions (T0, pending review):
+- Rule 1 unchanged: every item is approved by a person, one approval row per item; "Approve all confident" loops the
+  existing per-item decisions. Nothing is written to `mappings`, `rules` or `transformations` before its approval.
+- A draft records the drafts it used (`proposal_bases`); "stale" is derived (an upstream draft was edited, rejected or
+  is itself stale), never stored. An edit or rejection re-runs only the agents of the stale drafts.
+- The database refuses the approval of a draft whose upstream drafts are not approved.
+- The profile approval stays the one click that registers the feed; the chain runs after it. Go-live and steps 12-15
+  are unchanged.
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass. Push `phase-7.13`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
