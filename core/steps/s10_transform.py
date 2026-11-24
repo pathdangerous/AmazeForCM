@@ -45,6 +45,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.transformations import KeyPolicyRepository, TransformationRepository
+from core.steps.drafts import DraftConfig, check_unchanged
 from core.steps.errors import StepInputError, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s02_profile import actions_were_proposed, selected_actions
@@ -115,23 +116,27 @@ class KeyPolicySet(BaseModel):
 # ---------------------------------------------------------------- the agent's input
 
 
-def _mapped_columns(session: Session, feed_id: UUID, columns: list[FileColumn]) -> list[tuple[Mapping, FileColumn]]:
-    """The feed's current mappings whose column is in the profile (matched in any case, as the engine does)."""
+def _mapped_columns(session: Session, feed_id: UUID, columns: list[FileColumn],
+                    draft: DraftConfig | None = None) -> list[tuple[Mapping, FileColumn]]:
+    """The feed's current mappings (with a draft: and its draft mappings) whose column is in the profile (matched in
+    any case, as the engine does)."""
     by_lower = {c.name.lower(): c for c in columns}
-    return [(m, by_lower[m.source_field.lower()]) for m in MappingRepository(session).current_for_feed(feed_id)
-            if m.source_field.lower() in by_lower]
+    mappings = draft.mappings if draft is not None else MappingRepository(session).current_for_feed(feed_id)
+    return [(m, by_lower[m.source_field.lower()]) for m in mappings if m.source_field.lower() in by_lower]
 
 
-def transform_input(session: Session, *, feed_id: UUID, settings: Settings | None = None) -> TransformationInput:
+def transform_input(session: Session, *, feed_id: UUID, settings: Settings | None = None,
+                    draft: DraftConfig | None = None) -> TransformationInput:
     """Read only. FeedNotRegistered, FeedNotProfiled, NothingToTransform (no mapped column in the latest profile, or
-    each has a transformation or a pending proposal). Samples only if SEND_SAMPLE_VALUES, and only of these columns."""
+    each has a transformation or a pending proposal). Samples only if SEND_SAMPLE_VALUES, and only of these columns.
+    With a draft (phase 7.13), draft-mapped columns count as mapped, with their draft element's type."""
     feed = FeedRepository(session).get(feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}; only a registered feed is transformed")
     profile = FeedProfileRepository(session).latest(feed_id)
     if profile is None:
         raise FeedNotProfiled(f"Feed {feed.code!r} has no profile")
-    mapped = _mapped_columns(session, feed_id, profile.columns)
+    mapped = _mapped_columns(session, feed_id, profile.columns, draft)
     if not mapped:
         raise NothingToTransform(f"Feed {feed.code!r} has no mapped column to clean")
     done = {t.source_field for t in TransformationRepository(session).current_for_feed(feed_id)}
@@ -142,12 +147,13 @@ def transform_input(session: Session, *, feed_id: UUID, settings: Settings | Non
         raise NothingToTransform(f"Every mapped column of feed {feed.code!r} already has transformations or one "
                                  "waiting for the data steward")
     glossary = GlossaryRepository(session)
+    type_of = (lambda key: draft.types[key]) if draft is not None else (lambda key: glossary.get_current(key).data_type)
     samples = samples_for_model(profile.columns, settings or Settings(_env_file=None, send_sample_values=False))
     return TransformationInput(
         feed_id=feed.id, feed_code=feed.code,
         columns=[ColumnToTransform(
             source_field=m.source_field, element_key=m.element_key,
-            element_type=glossary.get_current(m.element_key).data_type, duckdb_type=c.type, null_count=c.null_count,
+            element_type=type_of(m.element_key), duckdb_type=c.type, null_count=c.null_count,
             row_count=profile.row_count or 0, placeholder_values=list(c.placeholder_values),
             placeholder_count=c.placeholder_count, text_date_format=c.text_date_format,
             date_format_ambiguous=c.date_format_ambiguous, all_empty=c.all_empty, constant=c.constant)
@@ -160,12 +166,16 @@ def transform_input(session: Session, *, feed_id: UUID, settings: Settings | Non
 # ---------------------------------------------------------------- propose
 
 
-def _still_as_input(session: Session, agent_input: TransformationInput) -> None:
-    """before_write: the feed row locked, then each input column checked against what the input held."""
+def _still_as_input(session: Session, agent_input: TransformationInput, draft: DraftConfig | None = None) -> None:
+    """before_write: the feed row locked, then each input column checked against what the input held (with a draft:
+    against the draft mappings, which check_unchanged() holds still)."""
     feed = FeedRepository(session).lock(agent_input.feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} became {feed.stage} while the agent answered")
     current = {m.source_field: m.element_key for m in MappingRepository(session).current_for_feed(feed.id)}
+    if draft is not None:
+        check_unchanged(session, draft)
+        current |= {m.source_field: m.element_key for m in draft.mappings if m.source_field in draft.mapping_bases}
     done = {t.source_field for t in TransformationRepository(session).current_for_feed(feed.id)}
     proposals = ProposalRepository(session)
     for column in agent_input.columns:
@@ -180,9 +190,14 @@ def _still_as_input(session: Session, agent_input: TransformationInput) -> None:
                                                 "transformation while the agent answered")
 
 
-def propose_transformations(session: Session, *, agent: RunsAgent, agent_input: TransformationInput) -> TransformResult:
-    run = agent.run(session, agent_input, before_write=lambda s: _still_as_input(s, agent_input))
+def propose_transformations(session: Session, *, agent: RunsAgent, agent_input: TransformationInput,
+                            draft: DraftConfig | None = None) -> TransformResult:
+    run = agent.run(session, agent_input, before_write=lambda s: _still_as_input(s, agent_input, draft))
     ids = [p.id for p in run.proposals]
+    if draft is not None:  # phase 7.13: each names the draft mapping of its column
+        for p in run.proposals:
+            base = draft.mapping_bases.get(p.payload["source_field"])
+            ProposalRepository(session).add_bases(p.id, [base] if base else [], feed_id=agent_input.feed_id)
     if not ids:
         return NoTransformNeeded(log_id=run.log_id)
     return TransformsProposed(log_id=run.log_id, proposal_ids=ids)
