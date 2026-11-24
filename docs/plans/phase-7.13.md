@@ -159,18 +159,19 @@ state). Never worked around: if a draft is refused by any of these, the code is 
     at its call row (existing `ck_proposals_origin_matches_source`).
 15. The next migration is 0032. Tell the user to run `alembic upgrade head` on dev and on Replit after T1a.
 
-## Open questions for review (answer before T1)
+## Review answers (2026-11-24, T0 approved)
 
-- **Q1 profile gate.** Recommended: keep it (assumption 1). The alternative is to draft on an unregistered feed, so even
-  the profile approval comes after all drafts. It costs a `draft` reason on `glossary_runs` and a new version of the 0017
-  guard, `FeedNotRegistered` guards in four steps relaxed for draft mode, handling of a rejected sign-off with four
-  agents' drafts already written, and the registered-feed checks moved from "proposal exists" to "approval". Roughly double
-  T1. I recommend a later phase if the one click on the profile hurts.
-- **Q2 blocked item.** Recommended: block the column, continue the rest, list blocked items first on the review screen
-  (assumption 7). Alternative: stop the whole chain at the first blocked item, as the request words it literally.
-- **Q3 "low-confidence".** Recommended: only "no single recommended value" blocks; low confidence is flagged (assumption 8).
-- **Q4 commits.** T1 is large (schema, draft inputs, worker). Recommended: T1a migration and guards, T1b draft inputs and
-  bases, T1c chain worker and "Run all agents", each its own commit and report line. Say if you want one T1 commit.
+- **Q1 profile gate: kept.** The profile approval is the one click: it registers the feed, and everything after it runs
+  with no click until the chain review. The test "chain from upload to go-live review" therefore has exactly one person
+  action before the review: approving the profile. `docs/demo.md` says so.
+- **Q2: block only the column.** The chain continues for every other column (assumption 7).
+- **Q3: yes.** Only "no single recommended value" blocks. Low-confidence drafts (below `auto_accept_confidence`, with a
+  value) are flagged, and the review lists them first in each step, after the blocked ones.
+- **Q4: three T1 commits** (T1a, T1b, T1c).
+- **New T4 (the defect found in T0):** a rejection by `system` (Back's rerun, and a stale rerun) is not a person's
+  judgement, so `rejected_elements()` (and, for the same reason, `rejected_keys()` for rules) no longer counts it; a
+  person's rejection still counts. This replaces the `STALE_NOTE` filter of decision 3 and assumption 4: the filter is
+  on who decided (`system`), not on the note. Failing test first.
 
 ## Tasks (after the review)
 
@@ -184,7 +185,9 @@ state). Never worked around: if a draft is refused by any of these, the code is 
   view, vitest, commit-visibility test per committing endpoint (happy path only; state the added time).
 - **T3** `UpstreamNotApproved` (409), stale derivation, rerun on edit or reject, `_step_items` union, `approve_and_next`
   in chain mode. Tests: stale on upstream edit, no mapping or rule row before its approval.
-- **T4** finish: `pytest -q -n 6`, both UI suites, all Playwright stories; extend `demo_story.spec.ts`; rename
+- **T4** defect: after Back, the mapping agent does not re-propose an element (test first, RED); `rejected_elements()`
+  and `rejected_keys()` skip rejections decided by `system`; a person's rejection still counts.
+- **T5** finish: `pytest -q -n 6`, both UI suites, all Playwright stories; extend `demo_story.spec.ts`; rename
   `docs/demo-7.12.md` to `docs/demo.md` and add this phase; `graphify update .`; push `phase-7.13`; do not merge.
 
 ## Out of scope
