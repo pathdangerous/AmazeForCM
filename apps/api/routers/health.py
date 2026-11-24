@@ -14,6 +14,7 @@ from apps.api.deps import get_app_settings, get_db_engine
 from core.repositories.settings import FourEyesRepository
 from ports.config import Settings
 from ports.db import database_is_reachable
+from ports.external_agents import get_external_agent
 from ports.identity import get_identity
 from ports.llm import get_llm_provider
 from ports.notify import get_notifier
@@ -56,6 +57,9 @@ def unavailable_adapters(settings: Settings) -> list[str]:
         "notify": get_notifier(settings),
         "pipeline": get_pipeline(settings),
     }
+    external = get_external_agent(settings)  # phase 7.18: none is not an adapter; a selected stub is unavailable
+    if external is not None:
+        selected["external_agents"] = external
     return [name for name, adapter in selected.items()
             if getattr(adapter, "is_stub", False) or getattr(adapter, "available", True) is False]
 

@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # project's (git-ignored under data/).
     pipeline_provider: Literal["local", "azure_devops"] = "local"
     pipeline_repo_root: Path = REPO_ROOT / "data" / "pipeline-repo"
+    # Phase 7.18: an in-house data agent may answer ONE named agent (EXTERNAL_AGENT_FOR, an Agent.name; empty = none). "none"
+    # is never called.
+    external_agent_provider: Literal["none", "hexaware"] = "none"
+    external_agent_for: str = ""
     local_blob_root: Path = Path("./data/blob")
     # Custom data product (phase 3): the synthetic source catalogue, and the only hosts the HTTP
     # connector may reach (comma-separated). This machine only until the Azure move.
