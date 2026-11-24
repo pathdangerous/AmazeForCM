@@ -120,6 +120,9 @@ test("the PoC story: request, onboard, release, Ready, then a delivery that is h
   await openFeed(backend);
   await backend.getByTestId("prepare-go-live").click();
   await expect(backend.getByTestId("go-live-summary")).toBeVisible();
+  // 7.17: the backend team runs the code pipeline; the owner can approve only code with a passed run
+  await backend.getByTestId("go-live-summary").getByRole("button", { name: "Run pipeline" }).click();
+  await expect(backend.getByTestId("go-live-summary").getByTestId("pipeline-panel")).toContainText("Latest result: Passed", { timeout: 120_000 });
   await signIn(backend, DEVON);
   await openFeed(backend);
   await backend.getByTestId("approve-go-live").click();

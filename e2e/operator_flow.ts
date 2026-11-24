@@ -74,6 +74,12 @@ export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {})
     }
 
     if (await page.getByTestId("summary-page").isVisible()) {
+      // 7.17: the go-live needs a passed pipeline run of the code it pins
+      const pipeline = page.getByTestId("summary-page").getByTestId("pipeline-panel");
+      if (!((await pipeline.textContent()) ?? "").includes("Latest result: Passed")) {
+        await pipeline.getByRole("button", { name: "Run pipeline" }).click();
+        await expect(pipeline).toContainText("Latest result: Passed", { timeout: 120_000 });
+      }
       await page.getByLabel("Open to every user").check(); // the owner chooses visibility at go-live
     } else {
       // one proposal is edited on the first step that offers an Edit button

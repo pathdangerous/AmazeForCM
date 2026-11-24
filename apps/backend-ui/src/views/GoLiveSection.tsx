@@ -2,6 +2,7 @@ import { Button, Group, NativeSelect, Text, TextInput, Title } from "@mantine/co
 import { useState, type ReactNode } from "react";
 import { apiPost, describeError, type FeedPage } from "../api";
 import { formatWhen } from "../theme";
+import PipelinePanel from "./PipelinePanel";
 
 // Step 11 on a registered feed (phase 6 plan, section 10). Prepare (backend team): a test load of the latest file,
 // then the ReviewSummariserAgent's draft. The draft is the agent's: it decides nothing. The feed's named owner, and
@@ -97,6 +98,8 @@ export default function GoLiveSection({ page, devUser, userId, roles, people, on
               ? summary.payload.rejected_glossary.map((g) => <span key={g.source_field}><code>{g.source_field}</code>
                 {g.note ? ` (${g.note})` : ""} </span>) : "none"}
           </p>
+          <Text size="sm">The owner can approve only code that has a passed pipeline run; the backend team runs it.</Text>
+          <PipelinePanel feedId={feed.id} devUser={devUser} canRun={roles.includes("backend_team")} />
           {isOwner ? (
             <Group gap="xs">
               <Button size="xs" disabled={busy} data-testid="approve-go-live" onClick={approve}>Approve go-live</Button>

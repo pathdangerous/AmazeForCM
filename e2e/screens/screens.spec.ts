@@ -181,6 +181,9 @@ test("the phase 7.5 screens, S1 to S25", async ({ browser }) => {
   await openFeed(backend);
   await backend.getByTestId("prepare-go-live").click();
   await expect(backend.getByTestId("go-live-summary")).toBeVisible();
+  // 7.17: the backend team runs the code pipeline first
+  await backend.getByTestId("go-live-summary").getByRole("button", { name: "Run pipeline" }).click();
+  await expect(backend.getByTestId("go-live-summary").getByTestId("pipeline-panel")).toContainText("Latest result: Passed", { timeout: 120_000 });
   await shot(backend, "S16-feed-go-live", section("go-live"));
   await signIn(backend, DEVON);
   await openFeed(backend);

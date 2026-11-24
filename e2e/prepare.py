@@ -11,7 +11,9 @@ on a fresh story.
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -72,6 +74,10 @@ def rebuild(url: str) -> None:
     shutil.copytree(REPO_ROOT / "fixtures" / "sources", SOURCES)
     shutil.rmtree(BLOB, ignore_errors=True)
     BLOB.mkdir(parents=True)
+    # 7.17: the story's own pipeline repository starts empty (git's object files are read-only on Windows)
+    pipeline_repo = REPO_ROOT / "data" / "e2e" / "pipeline-repo"
+    if pipeline_repo.exists():
+        shutil.rmtree(pipeline_repo, onexc=lambda func, path, _: (os.chmod(path, stat.S_IWRITE), func(path)))
 
 
 def main() -> None:

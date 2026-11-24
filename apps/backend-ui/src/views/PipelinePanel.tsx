@@ -1,5 +1,6 @@
 import { Button, Text } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
+import { formatWhen } from "../theme";
 import { describeError, getCodePreview, getPipelineRuns, runPipeline, type PipelineOutcome, type PipelineRun } from "../api";
 
 const RESULT: Record<PipelineOutcome, string> = {
@@ -60,7 +61,7 @@ export default function PipelinePanel({ feedId, devUser, sha256, canRun }: { fee
         <div key={r.id} data-testid="pipeline-run" style={{ margin: "8px 0", padding: 8, border: "1px solid var(--amz-border)", borderRadius: 4 }}>
           <Text size="sm" fw={600}>
             {`${r.outcome === "passed" ? "✔" : "✖"} ${RESULT[r.outcome]}`}
-            <span className="muted" style={{ fontWeight: 400 }}>{` by ${r.run_by}, ${new Date(r.created_at).toLocaleString()}`}</span>
+            <span className="muted" style={{ fontWeight: 400 }}>{` by ${r.run_by}, ${formatWhen(r.created_at, { time: true })}`}</span>
           </Text>
           {r.commit_hash && (
             <Text size="sm">Commit <code title={r.commit_hash}>{r.commit_hash.slice(0, 10)}</code>{r.commit_created ? "" : " (already in the repository)"}</Text>

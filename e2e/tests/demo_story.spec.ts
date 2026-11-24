@@ -98,6 +98,12 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await page.getByTestId(`feed-link-${FEED_CODE}`).click();
   const code = page.getByTestId("section-code");
   await expect(code.getByTestId("code-meta")).toContainText("Version 1, approved by dev-operator", { timeout: 30_000 });
+  // 7.17: the run the owner needed before approving is listed under the version it became, with its stages and commit hash
+  const run1 = code.getByTestId("pipeline-run").first();
+  await expect(run1).toContainText("Passed", { timeout: 30_000 });
+  await expect(run1).toContainText("test load: passed");
+  const commit1 = await run1.locator("code").first().textContent();
+  expect(commit1).toMatch(/^[0-9a-f]{10}$/);
   await expect(code.getByRole("button", { name: "curated.sql" })).toBeVisible();
   const feedId = page.url().split("/feed/")[1];
 
@@ -164,6 +170,11 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   // ... and the owner prepares and approves the new go-live (feed page, Go live)
   await page.getByTestId("prepare-go-live").click();
   await expect(page.getByTestId("go-live-summary")).toBeVisible({ timeout: 120_000 });
+  // 7.17: the go-live of code with no passed pipeline run is refused, in words; then the pipeline is run and it goes through
+  await page.getByTestId("approve-go-live").click();
+  await expect(page.getByText(/Run the pipeline on the Code view first/)).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("go-live-summary").getByRole("button", { name: "Run pipeline" }).click();
+  await expect(page.getByTestId("go-live-summary").getByTestId("pipeline-panel")).toContainText("Latest result: Passed", { timeout: 120_000 });
   await page.getByTestId("approve-go-live").click();
   await expect(page.getByTestId("go-live-latest")).toContainText("2", { timeout: 60_000 });
 
@@ -171,6 +182,9 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await page.reload();
   const code2 = page.getByTestId("section-code");
   await expect(code2.getByTestId("code-meta")).toContainText("Version 2", { timeout: 30_000 });
+  const run2 = code2.getByTestId("pipeline-run").first(); // version 2 has its own run and its own commit
+  await expect(run2).toContainText("Passed");
+  expect(await run2.locator("code").first().textContent()).not.toBe(commit1);
   await code2.getByLabel("Compare with").selectOption("1");
   const diff = code2.getByTestId("code-diff");
   await expect(diff).toContainText("curated.sql");
