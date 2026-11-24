@@ -242,7 +242,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   } else if (shown === "rules") {
     main = <RulesPanel {...panel} />;
   } else if (shown === "go_live") {
-    main = <GoLiveSummary {...panel} visibility={visibility} onVisibility={setVisibilityChoice} />;
+    main = <GoLiveSummary {...panel} visibility={visibility} onVisibility={setVisibilityChoice} devUser={devUser} />;
   } else if (shown === "first_load") {
     main = <FirstLoadPanel ws={view} state={shownState} detail={shownView?.detail ?? null} />;
   } else {

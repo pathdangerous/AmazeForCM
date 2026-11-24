@@ -116,6 +116,18 @@ export const getCodePreview = (feedId: string, devUser: string) => apiGet<CodePr
 export const getCodeDiff = (feedId: string, from: number, to: number | null, devUser: string) =>
   apiGet<CodeDiff>(`${FEEDS_API}/${feedId}/code/diff?from=${from}${to ? `&to=${to}` : ""}`, devUser);
 
+// ---- phase 7.17: the code pipeline (commit, SQL parse, sandbox rule check, test load, result)
+export type PipelineStage = { stage: "commit" | "sql_parse" | "rule_check" | "test_load"; status: "passed" | "failed" | "skipped"; log: string[] };
+export type PipelineOutcome = "passed" | "failed_at_commit" | "failed_at_sql_parse" | "failed_at_rule_check" | "failed_at_test_load";
+export type PipelineRun = {
+  id: string; created_at: string; feed_id: string; code_sha256: string; commit_hash: string | null; commit_created: boolean;
+  stages: PipelineStage[]; outcome: PipelineOutcome; run_by: string; code_version: number | null;
+};
+export const getPipelineRuns = (feedId: string, devUser: string) =>
+  apiGet<PipelineRun[]>(`/api/amaze/feeds/${feedId}/pipeline-runs`, devUser);
+export const runPipeline = (feedId: string, devUser: string) =>
+  apiPost<PipelineRun>(`/api/amaze/feeds/${feedId}/pipeline-runs`, {}, devUser);
+
 // ---- phase 7.12, T4: drift on a new delivery
 export type DriftAction = {
   proposal_id: string; action: string; columns: string[]; params: Record<string, string>; applied_by: "agent" | "manual";

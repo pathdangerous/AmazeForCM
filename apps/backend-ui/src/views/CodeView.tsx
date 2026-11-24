@@ -4,6 +4,7 @@ import {
   describeError, getCodeDiff, getCodePreview, getCodeVersion, getCodeVersions,
   type CodeDiff, type CodePreview, type CodeVersionDetail, type CodeVersionSummary,
 } from "../api";
+import PipelinePanel from "./PipelinePanel";
 
 const NOW = "now"; // the configuration as it stands: what would be approved next, never stored by this view
 
@@ -89,6 +90,8 @@ export default function CodeView({ feedId, devUser }: { feedId: string; devUser:
           {preview.differs_from_latest ? "This differs from the latest approved version." : "This is the same as the latest approved version."}
         </Text>
       )}
+      <PipelinePanel key={selected} feedId={feedId} devUser={devUser} sha256={selected === NOW ? preview.sha256 : meta?.sha256}
+                     canRun={selected === NOW} />
       {diff ? (
         <div data-testid="code-diff" style={{ marginTop: 8 }}>
           {diff.files.length === 0 && <Text>The two versions are the same.</Text>}

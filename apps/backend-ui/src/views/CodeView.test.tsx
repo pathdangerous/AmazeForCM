@@ -19,6 +19,7 @@ function routes(extra: Record<string, unknown> = {}) {
   return {
     [`GET ${BASE}`]: [v(1), v(2)],
     [`GET ${BASE}/preview`]: { sha256: "b".repeat(64), files: files2, differs_from_latest: false },
+    [`GET /api/amaze/feeds/${FEED_ID}/pipeline-runs`]: [],
     [`GET ${BASE}/1`]: { ...v(1), files: files1 },
     [`GET ${BASE}/2`]: { ...v(2), files: files2 },
     [`GET ${BASE}/diff?from=1&to=2`]: { from_version: 1, to_version: 2, files: [
@@ -53,8 +54,17 @@ test("version 1 can be picked, and compared with version 2: each changed file wi
   expect(diff.textContent).toContain("rules/new.sql");
 });
 
+test("Run pipeline is offered for the configuration now, not for an approved version", async () => {
+  stubFetch(routes());
+  renderWithTheme(<CodeView feedId={FEED_ID} devUser="dev-operator" />);
+  await waitFor(() => screen.getByTestId("code-meta"));
+  expect(screen.queryByRole("button", { name: "Run pipeline" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Code version"), { target: { value: "now" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Run pipeline" })).toBeTruthy());
+});
+
 test("with no version yet the configuration now is shown and says the first is stored at approval", async () => {
-  stubFetch({ [`GET ${BASE}`]: [], [`GET ${BASE}/preview`]: { sha256: "c".repeat(64), files: files1, differs_from_latest: true } });
+  stubFetch({ [`GET /api/amaze/feeds/${FEED_ID}/pipeline-runs`]: [], [`GET ${BASE}`]: [], [`GET ${BASE}/preview`]: { sha256: "c".repeat(64), files: files1, differs_from_latest: true } });
   renderWithTheme(<CodeView feedId={FEED_ID} devUser="dev-operator" />);
   await waitFor(() => expect(screen.getByText(/No code version yet/)).toBeTruthy());
   expect((screen.getByLabelText("Code version") as HTMLSelectElement).value).toBe("now");

@@ -1,13 +1,14 @@
 import { Text, Title } from "@mantine/core";
 import { ONBOARDING_STEPS, type Visibility } from "../../api";
 import { STATE_LABELS, STEP_LABELS } from "../Stepper";
+import PipelinePanel from "../PipelinePanel";
 import ItemCard from "./ItemCard";
 import { asList, asRecord, asText, type PanelProps } from "./shared";
 
 // The summary page before go-live (task 7.3b): what was approved per step, the review summary, the test load, and the
 // visibility chosen here (sent with Approve go-live only).
-export default function GoLiveSummary({ ws, items, actions, visibility, onVisibility }: PanelProps & {
-  visibility: Visibility; onVisibility: (v: Visibility) => void;
+export default function GoLiveSummary({ ws, items, actions, visibility, onVisibility, devUser }: PanelProps & {
+  visibility: Visibility; onVisibility: (v: Visibility) => void; devUser?: string;
 }) {
   const review = items.find((i) => i.kind === "review_summary");
   const p = asRecord(review?.payload);
@@ -46,6 +47,12 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
             ))}
           </ul>
         </div>
+      )}
+      {devUser && !actions.readOnly && (
+        <>
+          <Text size="sm">The go-live needs a passed pipeline run of this code.</Text>
+          <PipelinePanel feedId={ws.session.feed_id} devUser={devUser} canRun />
+        </>
       )}
       {review && <Text mb="xs">{asText(p.summary) || review.summary}</Text>}
       {notes.length > 0 && (
