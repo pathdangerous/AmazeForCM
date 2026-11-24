@@ -764,7 +764,8 @@ async def test_the_worker_is_kicked_at_every_start_up():
 # keyword removed), computed by notify_calls() on main at a9abed5 (phase 7 merged), before phase 7.5.
 NOTIFY_CALLS_AT_MAIN = {
     "core/steps/s12_arrival.py": (6, "92e4edd3134eb3da617bb5faed034f087473051d95ae1f0adf594618cda2fed7"),
-    "core/steps/s15_certify.py": (1, "0640a8dd9b4a873c48d1e73ec597729a434a852b56550764955fb1e6134220fe"),
+    # 7.14 T4 (on purpose): the held notice also says how many exception groups the load has (was 0640a8dd...20fe)
+    "core/steps/s15_certify.py": (1, "06fe901c4efddb5d4174691cc956f8a2b5320455555754e25da34287a2e30ea3"),
     "core/steps/s20_create_product.py": (3, "7b3b530e61a52f41ed6980190e1bd7adab8d3f7d648b9e96c459c27ccf4e3696"),
     "apps/api/jobs.py": (2, "384ee2bb51501862651136b7567819a3d9b588bbace4836cf8c7eaef6a6af16b"),
 }
