@@ -216,6 +216,18 @@ commit hash, "Run pipeline") and the endpoints.
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.17.
   Push `phase-7.17`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0037).
 
+## Phase 7.18 — A seam for in-house data agents
+
+Plan: `docs/plans/phase-7.18.md`. Tasks: plan, T1 port `ExternalAgent` (`ports/external_agents`,
+`EXTERNAL_AGENT_PROVIDER=none|hexaware`; `hexaware` is a stub that raises `NotImplementedError`, `none` is never called),
+T2 `Agent.run()` may route one named agent through it (`EXTERNAL_AGENT_FOR=<agent name>`, empty by default), logged by
+`ProposalLog` with provider `hexaware`, a failure is the typed outcome `external_agent_unavailable` and writes nothing, T3 a
+read-only Settings page in backend-ui (each agent, its provider, whether `EXTERNAL_AGENT_FOR` is set; no secret value).
+
+- Out of scope: any network call, any real Hexaware client, changes to which agents exist. Tests use a fake adapter only.
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.18.
+  Push `phase-7.18`; do not merge. No migration expected (plan, assumption 9).
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
