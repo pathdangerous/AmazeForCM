@@ -198,13 +198,17 @@ Implement these as typed results in `core/steps/`. Names in `snake_case`.
 
 Installed in Claude Code: Superpowers, Karpathy guidelines, Claude Octopus, i-have-adhd. **In this setup the plugins do not load.** The Superpowers and Karpathy method below is followed by hand, task by task: before code, list any assumption the plan does not state and stop if it changes scope; touch only the files the plan names (any other is a recorded deviation); tests first, the failing summary line pasted (RED), then the least code that passes and its summary line (GREEN); an unexpected failure is reproduced and its root cause written down before it is fixed; every claim in a report is backed by pasted output. Octopus reviews are done by hand too.
 
+Installed as skills (files under `%USERPROFILE%\.agents\skills\`, not plugins): addyosmani/agent-skills and Ponytail. Graphify is a local tool (in `.venv`; `graphify-out/` and `.claude/` are not committed, and Replit has no graphify). OmniRoute is not used: other providers need sponsor approval.
+
 Order of precedence when they disagree:
 
 1. **This file's non-negotiable rules** override every plugin.
 2. **Superpowers** is the working method: brainstorm, write the plan, test first, execute, review. Use it instead of ad-hoc planning. Plans go in `docs/plans/`, one per phase of `BUILD_PLAN.md`.
 3. **Karpathy guidelines** apply to every change: surface assumptions first, keep it simple, change only what the task needs, and define how the result will be checked.
-4. **i-have-adhd** shapes replies to the developer: answer first, numbered steps, no filler. It changes how replies read, never what gets checked or reported. Problems, risks and failed tests are always stated.
-5. **Claude Octopus** is off by default. Turn it on for a review at the end of each phase, then off again. Use the Claude provider only. Do not configure other AI providers (Codex, Gemini or others) in this repository unless the project sponsor has approved sending code to them.
+4. **agent-skills** (addyosmani) apply where Superpowers is silent.
+5. **Ponytail** (level full): the least code that solves the task, never at the cost of a typed negative outcome, a test or a guard.
+6. **i-have-adhd** shapes replies to the developer: answer first, numbered steps, no filler. It changes how replies read, never what gets checked or reported. Problems, risks and failed tests are always stated.
+7. **Claude Octopus** is off by default. Turn it on for a review at the end of each phase, then off again. Use the Claude provider only. Do not configure other AI providers (Codex, Gemini or others) in this repository unless the project sponsor has approved sending code to them.
 
 ## How to work in this repo
 
@@ -225,3 +229,7 @@ Order of precedence when they disagree:
 - Edit files only with the file tools (Read, Edit, Write). Never rewrite or patch files through PowerShell, sed or other shell commands.
 - When an Azure detail is needed, add it to the stub and to `.env.example`, never to business logic.
 - Do not add features beyond the current phase in `BUILD_PLAN.md`.
+
+## graphify
+
+If graphify-out/ exists, query it (`graphify query "<question>"`) before broad searches.
