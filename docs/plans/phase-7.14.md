@@ -1,236 +1,255 @@
-# Phase 7.14: exceptions, agent-proposed fixes, bulk approval, rerun
+# Phase 7.14: exceptions, agent-proposed fixes, bulk approval, load rerun
 
-Goal: flagged rows become **exceptions**; an agent proposes a fix per **group** of exceptions; a person approves in bulk;
+Goal: flagged rows become **exceptions**; an agent proposes a fix per **group** of exceptions; people approve in bulk;
 the held load's file is **rerun** under the new configuration; owners are told; the Overview counts fixes made by agents
 and by hand. An agent never changes data (rule 1); no record is ever updated (the tables stay append-only).
 
-Branch `phase-7.14` from `main`. Out of scope: owner reports and recurring-failure patterns (7.15). T0 is design only:
-**stop after T0** for the sponsor's answers to section 7.
+Branch `phase-7.14`, rebased onto `main` after 7.13 merged. Migrations: **0033** and **0034** (7.13 used 0032; Q7). Out of scope: owner
+reports and recurring-failure patterns (7.15). Words: "load rerun" in this plan is a new load of a held file; 7.13's
+"stale rerun" (an agent asked again for stale drafts) is a different thing and keeps its name.
 
-## 1. What exists today (read before designing)
+**T0 revised (2026-11-24) after the sponsor's answers; STOP for review. No code yet.**
 
-- `standard_records` (migration 0018): one row per file row of a loaded file: `values` (element key to value), `flags`
-  (rule keys, plus `duplicate_key`), append-only; written only while the load is `received`.
-- Step 15 (`s15_certify.py`): trust score = 100 x unflagged rows / rows. At or above `TRUST_RELEASE_THRESHOLD` the load is
-  `released`; below it `held`, and `consumers_of()` + operations + backend team are told. The feed's registered owner is
-  **not** told today (T4 adds it). The database recounts rows and flagged rows when it writes a certification (0019, G14).
-- Step 12 (`s12_arrival.py`): `check_arrival()` returns `resent_quarantined` when the file's SHA-256 equals that of an
-  earlier scheduled load of the feed that is `loaded`, `released` or `held` (`LoadRepository.scheduled_hashes()`).
-  So today the same file can never be loaded again while its first load is `held`.
+## 1. What exists today
+
+- `standard_records` (0018): one row per file row of a loaded file: `values` (element key to value), `flags` (rule keys,
+  plus `duplicate_key`); append-only; written only while the load is `received`.
+- Step 15 (`s15_certify.py`): trust score = 100 x unflagged / rows; `released` at or above `TRUST_RELEASE_THRESHOLD`,
+  else `held`, and consumers + operations + backend team are told. The feed's registered owner is **not** told today.
+  `amaze_guard_load_certification()` (0019, G14) recounts rows and `cardinality(flags) > 0` rows and checks score and outcome.
+- Step 12: `resent_quarantined` when the SHA-256 equals that of an earlier scheduled `loaded`/`released`/`held` load of
+  the feed (`LoadRepository.scheduled_hashes()`). So today a held load blocks its own file for ever.
 - `plan_load()` runs a scheduled load only under the configuration the latest go-live approved (mapping, rule and
-  transformation ids; a code version is generated from them, 0030). A configuration that changed gives
-  `configuration_changed` and the load is not run as approved.
-- Transformations: `transformation` proposal (agent: `TransformationAgent`, or manual) approved by the data steward
-  becomes a `transformations` row (version n+1); the engine applies approved transformations (no model).
-- Notifier port (`ports/notify`), `consumers_of()`, the Overview (`apps/api/routers/overview.py`, `ActionCounts` from 7.12 T4
-  counts profile/drift actions by agent and by hand).
+  transformation ids; code version, 0030).
+- Transformations: a `transformation` proposal (agent or manual), approved by the data steward through
+  `decide_transformation()` (`approve_my_steps`), becomes a `transformations` row version n+1.
+- 7.13 (merged): `draft_config()` (`core/steps/drafts.py`) takes **every pending** `transformation` proposal of the feed
+  as if approved; `proposal_bases` (0032) records the drafts a draft was built on (agent origin only); `stale_drafts()`
+  scans every pending proposal of the chain kinds of the feed; `refresh_chain()` runs only for a session in
+  `run_mode = 'chain'`; `amaze_require_bases_approved` refuses the approval of a draft whose bases are not approved;
+  `amaze_delete_feed()` has a 0032 version that deletes `proposal_bases`. The transformation agent has no
+  "not proposed again" memory (only `rejected_elements()` / `rejected_keys()` do, and they skip `system` rejections).
+- `Agent.run()` gives every proposal of a call the agent's `approver_roles` (`agents/base.py`, line 174).
 
-## 2. T0 design
+## 2. Design
 
-### 2.1 Exception and exception group (assumptions 1 to 5)
+### 2.1 Exception and exception group (T1)
 
-- **Exception** = one flagged row of one load and one rule that flagged it: the pair (`standard_records.id`, rule key in
-  its `flags`). A row flagged by two rules is two exceptions. It is a *view* over `standard_records`; nothing is stored.
-  Not an exception: a row that did not reach the standard model (a failed load has no records; it is `failed_rolled_back`).
-- **Exception group** = one rule key plus one **value pattern**, within one load. The pattern is the *shape* of the
-  values the rule looks at: for each element key the rule's SQL names (a mapped element key found as a whole word in
-  the rule SQL; for `duplicate_key`, the feed's key columns' elements), the value text with digit runs replaced by `9`,
-  upper-case letter runs by `A`, lower-case runs by `a`, other characters kept; a missing value is `<empty>`; several
-  elements are joined with ` | ` in element key order. A rule that names no element has the single pattern `(row)`.
-  Example: `best_sales_is_not_negative` on `-12.50` and `-3.1` both give `-9.9`, one group; `ABC-123` gives `A-9`.
-  The pattern is computed in SQL (regexp_replace; PostgreSQL 14 features only), not in Python, so counting a 100 000 row
-  load does not load its rows.
-- A group has: load, rule key, pattern, count of exceptions, count of distinct rows, up to 5 sample rows (row number and
-  the values), a stable `group_key` (SHA-256 of `rule_key` + `\x1f` + pattern, hex, first 16).
-- The view is read only (T1): `GET /api/amaze/feeds/{id}/exceptions` (per feed: its loads with a flagged count) and
-  `GET /api/amaze/loads/{id}/exceptions?rule=&limit=&offset=` (the groups, largest first, 50 per page, samples included).
+- **Exception** = one flagged row of one load and one rule key in its `flags`. A row flagged by two rules is two
+  exceptions. A view over `standard_records`; nothing is stored. A failed load has no records, so no exceptions.
+- **Group** = one rule key + one **value pattern**, within one load. Elements of a rule: the mapped element keys found
+  as whole words in its SQL; for `duplicate_key`, the elements of the key columns. Pattern of a row: for each of those
+  elements in key order, the value text with digit runs as `9`, upper-case runs as `A`, lower-case runs as `a`, other
+  characters kept; a missing or blank value `<empty>`; joined with ` | `. No element found: `(row)`.
+  Example: `-12.50` and `-3.1` both `-9.9`; `ABC-123` is `A-9`.
+- **One definition**: an immutable SQL function `amaze_value_pattern(values jsonb, element_keys text[]) RETURNS text`
+  (migration 0033, `regexp_replace`, PostgreSQL 14 features only). The view's SQL and a database guard (2.4) call it; the
+  engine's Python twin `core/engine/pattern.py` is checked against it by a parity test on the same inputs.
+- A group shows: load, rule key, its description, elements, pattern, exceptions, distinct rows, up to 5 sample rows,
+  `group_key` (first 16 hex of SHA-256 of `rule_key` + `\x1f` + pattern), and its state (`open`, `fix_pending`,
+  `waiting_for_owner`, `resolved`, `referred`).
+- `GET /api/amaze/feeds/{id}/exceptions` (the feed's loads with flagged, waived and open-group counts) and
+  `GET /api/amaze/loads/{id}/exceptions?rule=&limit=&offset=` (groups largest first, 50 a page). Read only.
 
-### 2.2 Fixes (T2): what the agent may propose per group
+### 2.2 Fixes (T2)
 
-`ExceptionFixAgent` (new, autonomy A2, approver `data_steward`, one prompt file `exception_fix.1.yaml`). Input per call:
-one load's groups, at most 20 (the 20 largest), each with rule key, the rule's description and SQL, pattern, count, the
-5 samples, and the feed's current transformations. No whole glossary and no more rows (a test enforces the cap, as for
-candidates). It answers for each group exactly one of:
+`ExceptionFixAgent` (new, A2, prompt `exception_fix.1.yaml`). Input: one held load's groups, at most the 20 largest,
+each with rule key, description and SQL, pattern, counts, 5 samples, the column's current transformation, and the fixes a
+**person** rejected before for that group (a `system` rejection is no judgement, as in 7.13 T4). A test caps the input.
+One answer per group:
 
-| Fix | What an approval does | Goes through |
+| Fix | Proposal | Approvers (in order) | An approval writes |
+|---|---|---|---|
+| `transformation` | existing kind `transformation`, payload as today plus `exception_group: {load_id, group_key}` | data steward | `transformations` row version n+1 (`decide_transformation()`); the load rerun then needs a go-live (Q1) |
+| `waive` | new kind `exception_fix`, `action: waive`, reason | data steward, then the **data owner named at registration** (Q2) | after the owner step: an `exception_resolutions` row `waived` |
+| `refer_to_provider` | `exception_fix`, `action: refer`, note | data steward | an `exception_resolutions` row `referred` (7.15 reads them) |
+
+- `no_fix_proposed` (typed, per group, with the reason: the agent found none, `transformation_pending` when the column
+  already has a pending transformation proposal (one per column, as today), or `rejected_before`).
+- **Approvers per proposal.** `Agent.run()` gives every proposal the agent's roles. Change in `agents/base.py`: an agent
+  may define `roles_for(draft) -> tuple[Role, ...]`, which must return a non-empty **prefix** of its declared
+  `approver_roles` (checked when the proposals are made, refused otherwise). Default: all of them, so every existing
+  agent is unchanged. `ExceptionFixAgent.approver_roles = ("data_steward", "data_owner")`; `roles_for` gives
+  `("data_steward",)` for transformation and refer, the full tuple for waive.
+- **Manual fixes.** A transformation by hand: the existing `add_item()`, with `exception_group` in the payload. A waive or
+  refer by hand: an `exception_fix` proposal with `origin = 'manual'`, an author, no log row, the same approvers (rule 4
+  logs model calls only; 7.12 T7).
+- The model-call pattern of CLAUDE.md: read-only `exception_fix_input()`, end the transaction, `Agent.run(...,
+  before_write=...)` re-counts the groups under the feed lock; a change is `ExceptionGroupChangedMeanwhile` (409, a
+  discard row, nothing written).
+
+### 2.3 Where 7.13 touches transformation proposals (decided here)
+
+1. **`draft_config()` must not build on an exception fix.** Today it takes every pending transformation of the feed. A
+   fix is against the live configuration and is decided on the exceptions view, not in a chain review. If a chain is
+   running on the same feed (a `structure_change` onboarding), a rules draft would otherwise record the fix as a base,
+   invisible in that review, and the steward's rejection of the fix would make the rule draft stale. Change: `draft_config()`
+   skips pending transformations whose payload has `exception_group`. Test: a chain rules draft on a feed with a
+   pending fix has no base on it.
+2. **`proposal_bases`**: an exception fix is built on approved configuration only, so it has no bases (7.13 assumption 10
+   for manual items; the same for this agent). `amaze_require_bases_approved` therefore always passes it. No change.
+3. **`stale_drafts()` / `refresh_chain()`**: a fix has no bases, so it is never stale. Deciding a fix happens outside any
+   onboarding session, so `refresh_chain()` is not called. No other pending draft can have a fix as a base (point 1).
+   No change. Test: rejecting a fix rejects nothing by `system`.
+4. **`run_mode`**: not touched. A fix belongs to no session.
+5. **One pending transformation per column**: an onboarding draft and a fix cannot be pending on the same column at once
+   (TransformationAlreadyProposed, unchanged). The fix agent skips such a group (`transformation_pending`); the onboarding
+   agent skips a column with a pending fix (today's `transform_input` already does).
+6. **Edit of a fix** (`edit_item()`, transformation is editable): the edit copies `exception_group` to the new version, as
+   7.13 copies bases. Test.
+7. **Known limit, not fixed:** a pending chain rule draft back-tested on transformation v1 is not stale when a fix approves
+   v2 (stale follows drafts, not approved versions). The go-live test load runs the real v2 before anything is live.
+
+### 2.4 Waivers, append-only records, certification (Q2)
+
+- A waiver never edits a record. At the load rerun the engine (step 13, no model) reads the feed's current `waived`
+  resolutions (`plan_load()` puts them in `LoadPlan.waivers`); for a row whose flagged rule and pattern match, the rule
+  key goes into a new `standard_records.waived text[]` (default `{}`, set at insert only) **instead of** `flags`.
+- Waivers are **not** pinned by the go-live (Q2): they change no value, rule or mapping; a load rerun after waivers only
+  needs no go-live. Each waiver needs both approvals (steward, then the named owner) before its resolution exists.
+- Trust score: waived rows count as unflagged. Since `flags` no longer holds a waived key, the score formula is unchanged.
+- The certification shows waived rows separately: `load_certifications.waived_rows` (rows with no flag and at least one
+  waived key) and `waived_counts` (per rule, from the validated stage). The UI shows "x flagged, y waived, z rows".
+
+**Database changes this needs (0033, new versions, none worked around):**
+
+| # | Object | Change |
 |---|---|---|
-| `transformation` | stores a new `transformations` row (version n+1) for the source field | the **existing** `transformation` proposal and `decide_transformation()`; a new code version follows at the next go-live (0030) |
-| `waive` | writes an `exception_resolutions` row `waived` with the steward's reason | new; the engine then records the rule key in `waived` instead of `flags` for rows matching the group (2.4) |
-| `refer_to_provider` | writes an `exception_resolutions` row `referred` with a note | new; nothing is changed; 7.15's owner report will read these rows |
+| D1 | `amaze_guard_load_certification()` (0019, G14) | new version: also recounts `count(*) FILTER (WHERE cardinality(flags) = 0 AND cardinality(waived) > 0)` and refuses a certification whose `waived_rows` differs; refuses `flagged_rows + waived_rows > rows`. Score and outcome checks unchanged (score = 100 x (rows - flagged) / rows). |
+| D2 | `load_certifications` | new columns `waived_rows integer not null default 0 check >= 0`, `waived_counts jsonb not null default '{}'`. Earlier rows have 0 and `{}` (they had no waivers: true). |
+| D3 | `standard_records` | new column `waived text[] not null default '{}'`; check `NOT (flags && waived)` (a key is flagged or waived, never both). |
+| D4 | new trigger `trg_standard_records_b_waived` (BEFORE INSERT, `WHEN cardinality(NEW.waived) > 0`) | each waived key has a current `waived` resolution of the feed for that rule whose pattern equals `amaze_value_pattern(NEW.values, resolution.element_keys)`. The append-only guard (0018) is untouched. |
+| D5 | new trigger on `approvals` INSERT, `trg_approvals_b_waiver_owner` | the `data_owner` step of an `exception_fix` `waive` proposal is decided only by the feed's current registration owner. Beside 0024's and 0032's triggers, not an edit of them. |
 
-A group the agent cannot fix gets the negative outcome `no_fix_proposed` (typed, with the agent's reason; the group stays
-open). An agent proposal is two things in one logged call (rule 4): a `transformation` proposal (existing kind, agent
-origin, same log row) for a `transformation` fix, or an `exception_fix` proposal (new kind) for `waive` and
-`refer_to_provider`. The `exception_fix` payload: `{load_id, rule_key, pattern, group_key, action, reason, note}`.
-**Manual fixes** (a person adds one for a group): a transformation by hand uses the existing `add_item()`; a waive or a
-refer by hand writes an `exception_fix` proposal with `origin = 'manual'` and an author, no log row (rule 4 logs model
-calls; 7.12 T7 pattern). No made-up `proposal_log` row.
-Agent flow follows CLAUDE.md's model-call pattern (read-only input, end the read transaction, `Agent.run(...,
-before_write=...)`, lock and check again, write): the groups are re-counted in `before_write`; a changed group is
-`ExceptionGroupChangedMeanwhile` (409 and a discard row).
+### 2.5 Bulk approve (T3)
 
-### 2.3 Bulk approve (T3)
+`POST /api/amaze/loads/{id}/exceptions/decision` with `{group_keys, decision, note}`. One transaction; lock order of
+CLAUDE.md (source lock, feed row, then the proposal rows in id order). For each selected group: its pending
+`transformation` fix through `decide_transformation()`, its `exception_fix` through a new `decide_exception_fix()`.
+Each is the existing per-item decision (one approvals row per step per proposal, as 7.13's "Approve all confident"): the
+steward's approval moves a waiver to `waiting_for_owner` and the owner is told; the owner selects waiver groups and
+approves the same way. All or nothing: a refused group (already decided, wrong role, not the named owner, group gone)
+refuses the batch naming the group. A rejection needs a note. Four-eyes follows `REQUIRE_FOUR_EYES`.
 
-`POST /api/amaze/loads/{id}/exceptions/decision` with `{group_keys: [...], decision: approved|rejected, note}`: one
-transaction, lock order of CLAUDE.md (source lock, feed row, then the proposal rows in id order). For each selected group
-it decides that group's pending proposal: a `transformation` proposal through `decide_transformation()`, an `exception_fix`
-proposal through a new `decide_exception_fix()`. All or nothing: one refused group (already decided, not a steward,
-group gone) refuses the batch with the group named; **four-eyes** applies as in `REQUIRE_FOUR_EYES` (a second approver
-step is needed where it is on). Rejection needs a note.
+### 2.6 The load rerun and step 12's `resent_quarantined` (Q3)
 
-**Rerun** (`POST /api/amaze/loads/{id}/rerun`, a separate explicit action, never a side effect of approving):
-creates a new load of the same file under the current configuration, as in 2.5. Typed results:
+`POST /api/amaze/loads/{id}/rerun` with `{reason}`: an explicit action, never a side effect of an approval.
 
-- `rerun_started` (a new load, `received`) then step 12, step 13, step 15 and step 20 run as for any scheduled load, giving
-  the existing `released` or `held_consumers_warned`; if the rerun is held again the result is `rerun_still_held` (with the
-  new score, the groups still open, and the previous score) so the UI can say the fix was not enough;
-- `rerun_needs_go_live`: the approved configuration is not the one the latest go-live approved (a transformation was
-  approved). The owner must approve a new go-live first (existing step 11: prepare with a test load, owner decides);
-  nothing is run. The page links to it. See question Q1;
-- `nothing_to_rerun`: the load is not `held`; or the file is gone from the store; or no group of it was resolved since;
-- `rerun_in_progress`: a `received` load of the feed exists (one received load per feed is a database rule).
+1. A load rerun is a **new `loads` row** with `purpose = 'scheduled'` (every trigger and steps 12, 13, 15 and 20 apply
+   unchanged), the held load's `file_ref` and `fetch_id`, the latest go-live, and two new columns: `rerun_of_load_id`
+   (FK to `loads`) and `rerun_reason` (non-blank when set).
+2. Trigger `trg_loads_b_rerun` (0033, new; 0019's load guards untouched): at insert, `rerun_of_load_id` must be a `held`
+   load of the same feed whose certification outcome is `held_consumers_warned`, and the new load must be scheduled
+   with a reason; on update, both columns are unchanged. A rerun of a released, quarantined, failed or abandoned load is
+   refused by the database.
+3. `ArrivalPlan.rerun_of`: `earlier` leaves out **only that load's** hash. A rerun whose bytes equal another
+   loaded/released/held load is still `resent_quarantined`. Structure checks run as usual.
+4. Recorded, never silent: arrival detail `{"rerun_of", "reason", "sha256_matches_rerun_of"}`; the notification names it;
+   the Loads list shows "Rerun of load X: reason". The only path past the hash is a `rerun_of` the database checked.
+5. Results (typed): `rerun_started`, then `rerun_released` or `rerun_still_held` (new score, previous score, groups still
+   open); `rerun_needs_go_live` (configuration changed by a transformation fix and not yet approved by a go-live: nothing
+   runs; the page links to the go-live, Q1); `nothing_to_rerun` (not `held`, file gone, or nothing resolved since the
+   last rerun of this file); `rerun_in_progress` (a `received` load of the feed exists).
+6. The held load stays `held` for ever; the product serves the latest released load.
 
-Trust score is recomputed by the **existing** certification of the new load (100 x unflagged / rows; waived rows count as
-unflagged, 2.4). Release or hold is today's decision. The old load stays `held` for ever (history); the product shows the
-latest released load.
+### 2.7 Other tables and migration 0033 (PostgreSQL 14 features only)
 
-### 2.4 Waivers and the append-only records
+- `exception_resolutions`: `id`, `created_at`, `feed_id`, `load_id`, `rule_key`, `element_keys text[]`, `pattern`,
+  `group_key`, `action` (`waived` | `referred`), `reason` (non-blank), `proposal_id` (an approved `exception_fix` of the
+  same feed, same action, every approver step done), `applied_by` (`agent` | `manual`, the database copies it from the
+  proposal's origin). Append-only (`amaze_refuse_update_delete`, `amaze_refuse_truncate`). The latest row per feed, rule
+  and pattern wins (a `referred` after a `waived` ends the waiver); never edited.
+- `proposals.kind` gains `exception_fix` (`ck_proposals_kind` new version); `MANUAL_KINDS` gains it; a check: an
+  `exception_fix` has a feed and `load_id`, `rule_key`, `pattern`, `group_key`, `action` in its payload.
+- `amaze_delete_feed()`: new version (after 0032's) deleting `exception_resolutions` before the proposals. Loads that
+  rerun one another go in the same DELETE (a NO ACTION foreign key is checked at statement end).
+- Downgrade stops, naming 0033, while an `exception_resolutions` row, an `exception_fix` proposal, a rerun load, a
+  waived record or a certification with `waived_rows > 0` exists (the 0031 pattern).
+- I will tell you to run `alembic upgrade head` on dev and on Replit when T2 lands.
 
-A waiver never edits a record. At the rerun the engine (step 13, deterministic, no model) reads the feed's current
-`waived` resolutions, and for a row whose flagged rule and pattern match it writes the rule key into a new
-`standard_records.waived text[]` column **instead of** `flags` (default empty; set only at insert, like every column). So
-the row still shows the exception it had, marked waived, and the unchanged recount (`cardinality(flags) > 0`) gives the
-score. The pattern is computed by the same function as the view (one definition, in `core/engine`, used by the SQL of the
-view and by the engine). Waivers read by `plan_load()` are not part of the go-live's pinned ids (Q2): they reclassify a
-flag, they change no value, rule or mapping.
+### 2.8 Owner notified, Overview counts (T4)
 
-### 2.5 The rerun and step 12's `resent_quarantined` (the hard part)
-
-Today a held load blocks its own file for ever (`scheduled_hashes()` includes `held`). Approach (answer to "how does a
-rerun pass `resent_quarantined`, explicit, recorded, never silent"):
-
-1. A rerun is a **new `loads` row** with `purpose = 'scheduled'` (so every trigger, step 12, 13, 15 and 20 apply
-   unchanged), the same `file_ref` and `fetch_id` as the held load, its own go-live (the latest) and two new columns,
-   `rerun_of_load_id` (nullable FK to `loads`) and `rerun_reason` (non-blank when `rerun_of_load_id` is set).
-   A new purpose value `rerun` was considered and rejected: every 0019 trigger and `load_certifications` tests
-   `purpose = 'scheduled'`; a new value means rewriting four trigger functions for no gain, since `rerun_of_load_id` is
-   just as explicit and queryable. Q3 asks you to confirm.
-2. A trigger (migration 0032) allows `rerun_of_load_id` only at insert, only when the target is a `held` load of the
-   same feed with a certification outcome `held_consumers_warned`, the new load is scheduled, and the reason is
-   non-blank; it is never updated afterwards (the 0019 arrival fields are set once; these two columns are insert-only).
-   Rerunning a `released`, `quarantined`, `failed_rolled_back` or `abandoned` load is refused by the database.
-3. `ArrivalPlan` gets `rerun_of: UUID | None`. For a rerun `earlier` leaves out **only that one load's hash**; every other
-   earlier delivery still counts, so a rerun cannot hide a real resend of some other file, and a rerun of load A whose bytes
-   equal loaded load B's bytes is still `resent_quarantined`. The structure checks (missing, additive, drift) run as usual.
-4. The arrival detail on the new load records `{"rerun_of": "<id>", "reason": "<text>", "sha256_matches_rerun_of": true}`,
-   the notification names it, and the load's row shows "Rerun of load X: <reason>". Never silent: there is no code path
-   that skips the SHA check except through the `rerun_of` the database has validated.
-5. Reason text: the steward's note on the bulk decision (required), or "Exceptions resolved: n groups".
-
-### 2.6 New tables, migration `0032`, append-only (PostgreSQL 14 features only)
-
-- `exception_resolutions`: `id`, `created_at`, `feed_id`, `load_id` (the held load the group was seen in), `rule_key`,
-  `pattern`, `group_key`, `action` (`waived` | `referred`), `reason` (non-blank), `proposal_id` (must be an approved
-  `exception_fix` proposal of the same feed, action matching), `decided_by`, `applied_by` (`agent` | `manual`, copied
-  from the proposal's origin by the database, not trusted from the caller). Append-only (UPDATE, DELETE, TRUNCATE
-  refused; the 7.9 `amaze_delete_feed()` exception applies as for every feed table). A resolution is superseded by a
-  later row for the same feed, rule and pattern (the latest wins; `referred` after `waived` un-waives it): never edited.
-- `proposals.kind` gains `exception_fix`; `MANUAL_KINDS` gains it. A check: an `exception_fix` proposal has a feed and
-  the keys above in its payload; a rejected or pending one never makes a resolution row.
-- `loads`: `rerun_of_load_id`, `rerun_reason` (2.5). `standard_records`: `waived text[] not null default '{}'` (2.4).
-- `exception_runs` is **not** added: the agent's call is already in `proposal_log`, and the counts come from proposals.
-- Downgrade stops naming 0032 while any `exception_resolutions` row, an `exception_fix` proposal or a rerun load exists
-  (the 0031 pattern).
-- Run on dev and on Replit: `alembic upgrade head` (I tell you at T2, when 0032 first lands).
-
-### 2.7 Owner notified (T4)
-
-On hold (`_certify`), additionally tell the feed's registered owner (`FeedRegistrationRepository.current().owner_id`),
-the data steward(s) and operations, once, with the count of exception groups: "Load held: <feed>: 3 groups, 5 rules flagged
-..." and a link to the exceptions view. On resolution (a bulk approval) tell the owner: "<n> exception groups resolved by
-<steward>: <a> by agent proposal, <m> by hand; rerun pending/started". After a rerun, tell the owner and the consumers
-whether it was released or still held. All through `Notifier`; nothing new in the port.
-
-### 2.8 Counts on the Overview (T4)
-
-`ExceptionCounts` next to `ActionCounts`: groups resolved in the period `by_agent` (the approved proposal's origin is
-`agent`, including transformations an agent proposed for a group) and `by_hand` (`manual`), plus `open` (groups of
-currently held loads with no approved fix) and `reruns` (released / still held). Counted from `proposals` and
-`exception_resolutions`; nothing new is stored.
+- On hold (`_certify`): also the feed's registered owner and the data stewards, with the number of open groups and a link
+  to the exceptions view. On a steward's waiver approval: the owner ("n waivers wait for you"). On resolution: the owner
+  ("n groups resolved: a by agent proposal, m by hand"). After a load rerun: owner and consumers, released or still held.
+  All through `Notifier`; recipients read from the database.
+- Overview `ExceptionCounts`: groups resolved in the period `by_agent` / `by_hand` (the approved proposal's origin),
+  `open`, `waiting_for_owner`, and load reruns `released` / `still_held`. Counted from `proposals`,
+  `exception_resolutions` and `loads`; nothing new stored.
 
 ## 3. Typed results (rule 3)
 
-`core/steps/exceptions.py`: `fixes_proposed` | `no_fix_proposed` (per group, with reason); `fixes_applied` |
-`group_changed_meanwhile` | `nothing_selected`; `rerun_started` | `rerun_still_held` | `rerun_released` |
-`rerun_needs_go_live` | `nothing_to_rerun` | `rerun_in_progress`. Refused input (not a steward, an undecided note) are
-`StepInputError`s mapped to 4xx in `apps/api/transactions.py`; named conflicts 409, never 500.
+`core/steps/exceptions.py`: `fixes_proposed` | `no_fix_proposed`; `fixes_decided` | `group_changed_meanwhile` (409) |
+`nothing_selected`; `rerun_started` | `rerun_released` | `rerun_still_held` | `rerun_needs_go_live` | `nothing_to_rerun` |
+`rerun_in_progress`. Refused input is a `StepInputError` (4xx); named conflicts 409, never 500 (`apps/api/transactions.py`).
 
 ## 4. Assumptions (stop and ask if one is wrong)
 
-1. An exception is a (record, rule) pair; there is no table of exceptions (a view over `standard_records`).
-2. A group is rule key + value pattern within one load; the pattern is the digit/letter shape of the elements the rule's SQL
-   names (2.1), computed in SQL.
-3. Groups are shown largest first, 50 a page; samples are 5 rows; the agent sees at most the 20 largest groups of one load.
-4. A rule whose SQL names no mapped element uses the pattern `(row)`: one group per rule.
-5. `duplicate_key` is a rule key like any other; its elements are the feed's key columns' elements.
-6. Only a `held` load has exceptions to resolve. A released load's flagged rows are shown, read-only, with no actions.
-7. The agent's fix kinds are exactly `transformation`, `waive`, `refer_to_provider` (the requested three); no rule change
-   and no remap (listed under Deferred).
-8. The approver is `data_steward` for all three kinds; four-eyes follows `REQUIRE_FOUR_EYES`.
-9. A rerun is a new scheduled load of the same file with `rerun_of_load_id` and a reason (2.5), never a new purpose value.
-10. The rerun skips the SHA check against **only** its `rerun_of` load.
-11. The rerun runs under the *current* configuration; if that is not what the latest go-live approved, nothing runs and
-    the result is `rerun_needs_go_live` (the owner approves a go-live; the engine is not changed to bypass step 11).
-12. A waiver is applied by the engine as a deterministic read of `exception_resolutions`, not pinned by a go-live.
-13. A waived row keeps its exception visible (`waived` list on the record); the score treats it as unflagged.
-14. The old held load stays `held` for ever; a rerun never changes it. The product serves the latest released load.
-15. No model call in the rerun, the recompute or the release (rule 2).
-16. `refer_to_provider` only records; no report is made (7.15).
-17. Mock provider: `ExceptionFixAgent` answers by rule from the group: a pattern of negative numbers gets `waive` with the
-    reason "negative values are real for this feed" only if a fixture says so; digits-in-text gets a `transformation`
-    (the existing `trim`/`cast` step names); anything else `refer_to_provider`; an empty group gets `no_fix_proposed`.
-    Deterministic, so tests and the demo repeat.
-18. Notifications are in-app (`Notifier`); recipients are read from the database, not hard-coded.
-19. UI: backend-ui only: an Exceptions section on the load row of the feed page (group table, sample rows, select groups,
-    "Approve selected", "Propose fixes", "Rerun"), and counts on the Overview. No consumer-ui change.
-20. No change to the three synthetic-data tests; the demo file `Synthetic_Security_Master_v2.xlsx` (eight negative
-    `BEST_SALES` rows) is the held load of the demo.
+1. An exception is a (record, rule) pair; no table stores exceptions.
+2. A group is rule key + value pattern within one load; the pattern function lives in the database (2.1).
+3. Groups 50 a page, largest first; 5 samples; the agent sees at most the 20 largest groups of one load.
+4. A rule whose SQL names no mapped element has the one pattern `(row)`.
+5. `duplicate_key` is a rule key like any other; its elements are the key columns' elements.
+6. Only a `held` load's groups take fixes; a released load's flagged rows are shown read-only.
+7. Fix kinds: transformation, waive, refer to provider (Q4). Rule change and remap deferred.
+8. Transformation and refer: data steward. Waive: data steward, then the owner named at registration (Q2).
+9. `agents/base.py` gains `roles_for()` (a prefix of the declared roles; default all). No other agent changes.
+10. A load rerun is `purpose = 'scheduled'` + `rerun_of_load_id` + reason (Q3).
+11. A load rerun skips the hash check against only its `rerun_of` load.
+12. A load rerun after a transformation fix waits for a go-live by the owner (step 11, unchanged) (Q1).
+13. Waivers are read by the engine at the load rerun, not pinned by the go-live (Q2).
+14. A waived row keeps its exception visible (`waived`) and counts as unflagged; certification shows waived separately.
+15. The held load stays `held`; no record is updated (tests check row values and counts before and after).
+16. No model call in the load rerun, the recompute, the release or the pattern (rule 2).
+17. `refer_to_provider` only records (7.15 reports).
+18. Mock: a pattern of negative numbers gets `waive` ("negative values are valid for this field"); a value with spaces
+    or a thousands separator gets a `transformation` (existing `trim` / `remove_thousands_separator` steps if they
+    exist, else `refer`); anything else `refer_to_provider`; a group rejected before by a person, `no_fix_proposed`.
+19. Notifications in-app (`Notifier`); recipients from the database.
+20. UI: backend-ui only: Exceptions on the feed page's load row (groups, samples, select, "Propose fixes", "Approve
+    selected", "Rerun") and an owner's "Waivers to approve" list; Overview counts; certification shows waived rows.
+21. 7.13 interactions as in 2.3: fixes are excluded from `draft_config()`, have no bases, are never stale.
+22. Demo: `Synthetic_Security_Master_v2.xlsx` (eight negative `BEST_SALES` rows) is the held load if its score is below the
+    threshold; else the demo sets `TRUST_RELEASE_THRESHOLD` for that run (checked in T4, before the story is written).
 
 ## 5. Tasks (one commit each; tests first, RED then GREEN pasted)
 
-| Task | What | Tests (tests/test_exceptions_*.py) |
+| Task | What | Tests |
 |---|---|---|
-| T0 | this design; BUILD_PLAN entry. **STOP** | none |
-| T1 | `core/steps/exceptions.py` read side, the two GET endpoints, the Exceptions section (read-only) | groups and counts of a held load; a row with two rules is two exceptions; sample cap 5; paging; pattern examples of 2.1; a load with no flags has no groups; `duplicate_key`; no query loads all rows (row count 5 000, one SQL query) |
-| T2 | migration 0032, `ExceptionFixAgent` + prompt + mock, `exception_fix` kind, `decide_exception_fix()`, manual fix, resolutions | `fixes_proposed`, `no_fix_proposed`; agent input cap 20 groups and 5 samples; every call has exactly one log row; manual fix has no log row; `exception_resolutions` append-only (UPDATE/DELETE refused); resolution without approved proposal refused by the database; downgrade stops; no connection held during the call |
-| T3 | bulk decision, rerun, step 12's `rerun_of`, engine `waived`, release or hold | all-or-nothing batch; `rerun_started`, `rerun_released`, `rerun_still_held`, `rerun_needs_go_live`, `nothing_to_rerun`, `rerun_in_progress`; resend of another file still `resent_quarantined` during a rerun; rerun of a released load refused by the database; rerun recorded with its reason and `rerun_of`; **no `standard_records` row is updated** (row count and values of the held load unchanged, UPDATE refused); waived row counted unflagged and listed in `waived`; score recomputed; commit-visibility test for each committing endpoint (the saved rule) |
-| T4 | notifications, Overview counts, demo | owner told on hold and on resolution and after rerun; by-agent vs by-hand counts; Overview shows `open`, `reruns` |
-| Finish | `pytest -q -n 6`, both UI suites, all Playwright stories; `demo_story.spec.ts` extended; `docs/demo-7.12.md` renamed `docs/demo.md` with the 7.14 minutes added | |
+| T0 | this design, BUILD_PLAN entry. **STOP** | none |
+| T1 | migration 0033 (`amaze_value_pattern()` only), `core/steps/exceptions.py` read side, the two GETs, the read-only Exceptions section | groups and counts; two rules = two exceptions; sample cap; paging; pattern examples; `duplicate_key`; Python/SQL parity; one query regardless of rows (5 000 rows) |
+| T2 | migration 0034 (resolutions, `exception_fix` kind, D2-D5, rerun columns, delete-feed version), `roles_for()`, the agent, prompt, mock, `decide_exception_fix()`, manual fix, `draft_config()` exclusion | `fixes_proposed`, `no_fix_proposed` (each reason); input caps; one log row per call, none for manual; resolutions append-only; resolution without full approval refused; owner step by another person refused; `roles_for` must be a prefix; 2.3 points 1, 3, 6; downgrade stops; no connection during the call |
+| T3 | bulk decision, load rerun, `rerun_of` in step 12, engine `waived`, certification waived counts | all or nothing; each rerun result; another file's resend still quarantined; rerun of a released load refused by the database; rerun recorded with reason; **no `standard_records` row updated**; waived row unflagged and listed; D1 refuses a wrong `waived_rows`; commit-visibility test per committing endpoint (time stated) |
+| T4 | notifications, Overview counts, demo, `docs/demo.md`, `demo_story.spec.ts` | owner told on hold, waiting waivers, resolution, rerun; by-agent / by-hand counts |
+| Finish | `pytest -q -n 6`, both UI suites, all Playwright stories, `graphify update .`, push, no merge | |
 
-Commit-visibility tests (memory rule): one per committing endpoint or job, happy path only; the added test time is stated
-in each task's report.
+**Migration numbering, decided:** two migrations, so the read view can land first: **0033** (T1: `amaze_value_pattern()`)
+and **0034** (T2: everything else in 2.4 and 2.7). If you prefer one, T1 computes nothing in SQL until T2 and 0033 holds all.
 
 ## 6. Risks
 
-- A rerun that is held again (`rerun_still_held`) can loop; each rerun needs a resolved group since the last (`nothing_to_rerun`).
-- Pattern grouping by the rule's SQL text is a heuristic (a word match on element keys). Rules that use aliases or
-  expressions fall back to `(row)`; the view says so. Upgrade path: the rule's own declared elements (later).
-- Migration 0032 changes `loads`, `standard_records` and `proposals`; downgrade is blocked once used (as 0031).
-- `BUILD_PLAN.md` on `phase-7.13` also adds a section after 7.12; merging both branches needs a hand merge there.
+- Pattern elements come from a word match on the rule's SQL; aliases or expressions fall back to `(row)` (the view says so).
+- A load rerun held again can loop; each needs a resolution since the last (`nothing_to_rerun`).
+- `roles_for()` is a change to the agent base class every agent uses; its default keeps today's behavior and a test
+  checks every registered agent still gives its declared roles.
+- D4 runs a function per waived row at insert; only rows with a waiver pay it.
+- 2.3 point 7 (rule draft not stale after a fix approves a new transformation version) is left as is.
 
-## 7. Questions for you (the T0 stop)
+## 7. Questions answered (2026-11-24)
 
-- **Q1.** After a `transformation` fix is approved, the owner must approve a new go-live (step 11) before the rerun
-  (assumption 11). Alternative: the steward's approval also counts as the go-live for transformation-only changes. I
-  recommend keeping step 11 (the owner approves what runs). OK?
-- **Q2.** Waivers are applied by the engine without a new go-live (assumption 12). Alternative: pin them in the go-live too
-  (a migration to `feed_go_lives`). I recommend not pinning (they change no value). OK?
-- **Q3.** A rerun as `purpose = 'scheduled'` plus `rerun_of_load_id` and a reason (2.5), instead of a new `rerun` purpose
-  (which you wrote in the brief: "explicit rerun load purpose"). The first is explicit and recorded, and avoids rewriting four
-  triggers; a new purpose value is possible if you prefer it. Which?
-- **Q4.** Fix kinds limited to transformation, waive and refer (assumption 7). Deferred: a rule change and a remap. OK?
+- Q1 yes: a load rerun after a transformation fix waits for the owner's go-live (step 11).
+- Q2: waivers skip the go-live pin; approved by the steward and then the data owner named at registration; waived rows
+  count as unflagged and are shown separately in the certification (D1, D2).
+- Q3: `purpose = 'scheduled'` + `rerun_of_load_id` + reason.
+- Q4: transformation, waive, refer are enough for now.
 
-## 8. Deferred
+## 8. Open for this review
 
-Owner reports and recurring-failure patterns (7.15); a rule-change and a remap fix; exceptions on a `failed_rolled_back`
-load (no records exist); editing a waiver (a new resolution supersedes it instead).
+- **Q5.** The waiver's two steps are steward then owner (I read "not only the steward" as both). Or the owner alone?
+- **Q6.** `roles_for()` in `agents/base.py` (assumption 9) instead of a second agent for waivers. OK?
+- **Q7.** Two migrations (0033 function, 0034 the rest) or one?
+
+## 9. Deferred
+
+Owner reports and recurring-failure patterns (7.15); rule-change and remap fixes; exceptions of a failed load; editing a
+waiver (a later resolution supersedes it); making a rule draft stale when a fix approves a new transformation version.

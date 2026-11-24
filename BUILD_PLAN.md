@@ -153,9 +153,14 @@ Decisions (T0, approved 2026-11-24):
 
 ## Phase 7.14 — Exceptions, agent-proposed fixes, bulk approval, rerun
 
-Plan: `docs/plans/phase-7.14.md`. Tasks: T0 design (stop for answers), T1 exceptions view per load and feed, T2
-ExceptionFixAgent and resolutions (migration 0033), T3 bulk approve and rerun of a held load, T4 owner notifications and
-Overview counts (by agent / by hand).
+Plan: `docs/plans/phase-7.14.md`. Tasks: T0 design (stop for answers), T1 exceptions view per load and feed (migration
+0033: the value-pattern function), T2 ExceptionFixAgent and resolutions (migration 0034), T3 bulk approve and rerun of a
+held load, T4 owner notifications and Overview counts (by agent / by hand).
+
+Decisions (T0, answered 2026-11-24): a load rerun after a transformation fix waits for the owner's go-live; waivers are
+not pinned by the go-live, are approved by the steward and then the data owner named at registration, count as unflagged
+and are shown separately in the certification; a rerun is `purpose = 'scheduled'` + `rerun_of_load_id` + reason; fixes
+are transformation, waive and refer. Exception fixes are kept out of 7.13's `draft_config()` and have no bases.
 
 - Exception = one flagged row and rule; group = rule + value pattern. An agent proposes one fix per group (transformation,
   waive with reason, refer to provider); a person approves in bulk; an agent never changes data (rule 1); records stay
