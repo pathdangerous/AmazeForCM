@@ -633,6 +633,7 @@ async def go_live(p, *, approve=True):
     prepared = await call(p.client, f"feeds/{p.feed}/go-live/summary", {})
     proposal_id = prepared["result"]["proposal_id"]
     if approve:
+        await call(p.client, f"feeds/{p.feed}/pipeline-runs", {})  # 7.17: a passed run of the code is needed first
         await call(p.client, f"proposals/{proposal_id}/decision", {"decision": "approved"}, headers=DEVON)
     return proposal_id
 
@@ -745,6 +746,15 @@ async def test_the_owners_decision_commits_the_go_live(own_schema, p6):
     assert committed(own_schema, "SELECT role, decision FROM approvals WHERE proposal_id = :p", p=proposal_id) == [
         ("data_owner", "approved")]
     assert committed(own_schema, "SELECT count(*) FROM notifications WHERE subject LIKE 'Feed goes live%'") == [(4,)]  # 7.8: dev-operator joins both
+
+
+@pytest.mark.anyio
+async def test_the_pipeline_run_commits_its_row(own_schema, p6):
+    """Phase 7.17: POST .../pipeline-runs (to the temporary repository of tests/conftest.py)."""
+    async with p6() as p:
+        run = await call(p.client, f"feeds/{p.feed}/pipeline-runs", {})
+    assert committed(own_schema, "SELECT outcome, run_by, id = :id FROM pipeline_runs", id=run["id"]) == [
+        ("passed", "dev-backend-team", True)]
 
 
 @pytest.mark.anyio

@@ -122,6 +122,7 @@ async def test_done_when_an_approved_feed_loads_end_to_end_from_configuration_al
     prepared = await call(client, "POST", f"feeds/{exchange.id}/go-live/summary", {})
     summary = prepared["result"]
     assert summary["test_load"]["status"] == "loaded" and "note" in prepared["proposal"]["payload"]["summary"]
+    await call(client, "POST", f"feeds/{exchange.id}/pipeline-runs", {})  # 7.17: a passed run of the code first
     approved = await decide(client, summary["proposal_id"], DEVON)
     assert approved["result"]["outcome"] == "approved_scheduled" and approved["result"]["daily_run_utc"] == "06:00"
 
@@ -225,8 +226,9 @@ async def test_load_now_needs_a_go_live_then_fetches_and_loads(client, exchange)
     exchange.job.run()
     await map_the_columns(client, exchange.id)
     summary = (await call(client, "POST", f"feeds/{exchange.id}/go-live/summary", {}))["result"]["proposal_id"]
+    await call(client, "POST", f"feeds/{exchange.id}/pipeline-runs", {})  # 7.17: a passed run of the code first
     await decide(client, summary, DEVON)
-    loaded = await call(client, "POST", f"feeds/{exchange.id}/loads", {}, headers=OPAL)
+    loaded =await call(client, "POST", f"feeds/{exchange.id}/loads", {}, headers=OPAL)
     assert loaded["result"] == {"fetch": "fetched", "load": "released"}  # was "loaded" before phase 7
     assert loaded["feed"]["loads"][0]["purpose"] == "scheduled"
     # phase 7: the answer's feed page carries the arrival, the certification and the product

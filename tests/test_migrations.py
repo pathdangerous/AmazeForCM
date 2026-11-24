@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -12,7 +13,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0036"  # old: "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0037"  # old: "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -188,6 +189,8 @@ REVIEWED_NULLABLE_CHECKS = {
     "feeds.ck_feeds_source_and_connector_together": "IS NULL on both sides: never NULL",
     "glossary_elements.ck_glossary_elements_proposal_unless_seed":
         "IS NULL; created_by is NOT NULL: never NULL",
+    "pipeline_runs.ck_pipeline_runs_commit_hash":
+        "NULL passes on purpose (the commit stage failed); trg_pipeline_runs_guard needs a hash exactly when it passed",
     "proposals.ck_proposals_decided_at_matches_status": "IS NULL; status is NOT NULL: never NULL",
     "source_fetches.ck_source_fetches_down_has_a_reason":
         "detail IS NOT NULL spelt out before btrim (fixed before 0008 was applied)",
@@ -1460,3 +1463,47 @@ def test_0036_downgrade_refuses_while_an_erase_is_recorded(scratch_schema):
             "ARRAY[gen_random_uuid()], ARRAY[2], '[]', 0)"))
     with pytest.raises(DBAPIError, match="migration 0036"):
         command.downgrade(config, "0035")
+
+
+def _0037_state(engine):
+    with engine.connect() as connection:
+        def definition(name: str) -> str:
+            return connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :n "
+                "AND p.pronamespace = current_schema()::regnamespace"), {"n": name}).scalar_one()
+
+        triggers = set(connection.execute(text(
+            "SELECT tgname FROM pg_trigger WHERE tgrelid = 'feed_go_lives'::regclass AND NOT tgisinternal")).scalars())
+        return {"tables": set(inspect(connection).get_table_names()), "go_live_triggers": triggers,
+                "delete_function": definition("amaze_delete_feed")}
+
+
+def test_0037_adds_pipeline_runs_and_the_go_live_gate_and_downgrade_restores_0036(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0036")
+    before = _0037_state(engine)
+    command.upgrade(config, "0037")
+    up = _0037_state(engine)
+    assert "pipeline_runs" in up["tables"] and "pipeline_runs" not in before["tables"]
+    assert up["go_live_triggers"] - before["go_live_triggers"] == {"trg_feed_go_lives_d_pipeline"}
+    assert "pipeline_runs" in up["delete_function"] and "pipeline_runs" not in before["delete_function"]
+    command.downgrade(config, "0036")
+    assert _0037_state(engine) == before
+    command.upgrade(config, "0037")
+    assert _0037_state(engine) == up
+
+
+def test_0037_downgrade_refuses_while_a_run_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0037")
+    with engine.begin() as connection:
+        feed = connection.execute(text("INSERT INTO feeds (code, name) VALUES ('syn_a', 'A') RETURNING id")).scalar_one()
+        connection.execute(text(
+            "INSERT INTO pipeline_runs (feed_id, code_sha256, commit_hash, commit_created, stages, outcome, run_by) "
+            "VALUES (:f, :sha, :c, true, CAST(:stages AS jsonb), 'passed', 'dev-operator')"),
+            {"f": feed, "sha": "ab" * 32, "c": "cd" * 20, "stages": json.dumps(
+                [{"stage": s, "status": "passed", "log": []} for s in ("commit", "sql_parse", "rule_check", "test_load")])})
+    with pytest.raises(DBAPIError, match="migration 0037"):
+        command.downgrade(config, "0036")

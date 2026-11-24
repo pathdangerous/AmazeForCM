@@ -74,6 +74,10 @@ class FeedNotRegistered(RepositoryError):
     """Loads arrive only for registered feeds."""
 
 
+class PipelineNotPassed(RepositoryError):
+    """Step 11 (phase 7.17): the code of the configuration being approved has no passed pipeline run. The API answers 409."""
+
+
 class FeedNotLive(RepositoryError):
     """Only a live (registered) feed is paused (phase 7.9, migration 0027)."""
 

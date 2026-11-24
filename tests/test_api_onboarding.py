@@ -203,6 +203,13 @@ async def settle(w, oid) -> int:
     return decided
 
 
+async def run_the_pipeline(client, feed_id) -> dict:
+    """Phase 7.17: the go-live needs a passed pipeline run of the code it pins (to a temporary repository, see conftest)."""
+    response = await client.post(f"/api/amaze/feeds/{feed_id}/pipeline-runs", headers=OP)
+    assert response.status_code == 200 and response.json()["outcome"] == "passed", response.text
+    return response.json()
+
+
 async def advance_to(w, oid, step) -> None:
     """Approve & next, with the worker between, until `step` is current and its job has answered."""
     w.worker.drain()
@@ -419,6 +426,7 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
     w.session.rollback()
     assert all(f["value"] and "0 of 0" not in f["value"] for f in at_go_live["inputs"]["facts"])
     # the owner chooses the visibility here: a next registration version, then the go-live as before
+    await run_the_pipeline(w.client, confirmed["feed_id"])  # 7.17: the go-live needs a passed run of the code it pins
     await call(w, "POST", f"/{oid}/approve", json={"visibility": "restricted"})
     assert (await workspace_of(w, oid))["current_step"] == "first_load"
     assert (await workspace_of(w, oid))["visibility"] == "restricted"
@@ -859,6 +867,7 @@ async def test_the_drift_and_code_endpoints_commit_and_serve_committed_rows(real
         feed = committed(r.engine, "SELECT id::text FROM feeds")[0][0]
         r.worker.drain()
         await advance_to(r, oid, "go_live")
+        await run_the_pipeline(r.client, feed)
         await r.call("POST", f"/{oid}/approve", json={"visibility": "open"})  # the go-live: code version 1 is stored
         r.worker.drain()  # the first load
         base = f"/api/amaze/feeds/{feed}"

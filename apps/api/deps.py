@@ -28,6 +28,7 @@ from ports.connectors.catalogue import SourceCatalogue
 from ports.db import get_engine
 from ports.identity import Identity, User
 from ports.notify import Notifier, get_notifier
+from ports.pipeline import Pipeline, get_pipeline
 from ports.secrets import SecretNotFound
 from ports.storage import BlobStore, get_blob_store
 
@@ -106,6 +107,10 @@ def get_source_catalogue(settings: Annotated[Settings, Depends(get_app_settings)
 
 def get_blob_store_port(settings: Annotated[Settings, Depends(get_app_settings)]) -> BlobStore:
     return get_blob_store(settings)
+
+
+def get_pipeline_port(settings: Annotated[Settings, Depends(get_app_settings)]) -> Pipeline:
+    return get_pipeline(settings)
 
 
 def get_connector_factory(settings: Annotated[Settings, Depends(get_app_settings)]) -> Callable[[str], SourceConnector]:

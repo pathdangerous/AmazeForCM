@@ -56,6 +56,7 @@ from core.repositories.errors import (
     NotTheFeedsOwner,
     NothingToGoLive,
     OwnerNotADataOwner,
+    PipelineNotPassed,
     ProposalAlreadyDecided,
     WrongProposalKind,
 )
@@ -68,7 +69,8 @@ from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
-from core.steps.codegen import store_code_version
+from core.repositories.pipeline_runs import PipelineRunRepository
+from core.steps.codegen import code_for_feed, store_code_version
 from core.steps.errors import BackToStepNeeded, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
@@ -286,6 +288,9 @@ def decide_go_live(session: Session, *, proposal_id: UUID, user: User, decision:
             or current_transformations != pinned_transformations):
         raise ConfigurationChangedSinceSummary(f"The mappings, rules or transformations of feed {feed.code!r} "
                                                "changed after the summary was written: reject it instead")
+    if not PipelineRunRepository(session).has_passed(feed.id, code_for_feed(session, feed.id).sha256):
+        raise PipelineNotPassed(f"Run the pipeline on the Code view first: feed {feed.code!r} has no passed pipeline run "
+                                "for the code of this configuration")
     proposals.record_decision(proposal_id, user=user, decision="approved", note=note)
     until = today + timedelta(days=hypercare_days)
     # T3: the generated code of exactly this configuration is stored as the next code version, and the go-live pins it

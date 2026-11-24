@@ -31,6 +31,7 @@ from apps.api.deps import (
     data_steward_user,
     get_app_settings,
     get_blob_store_port,
+    get_pipeline_port,
     get_connector_factory,
     get_daily_fetch,
     get_db_session,
@@ -65,6 +66,7 @@ from core.repositories.standard_records import StandardRecordRepository
 from core.steps.errors import ChoiceNotOffered, CodeNotConfirmed
 from core.steps.exceptions import ExceptionFixDecided
 from core.steps.feed_lifecycle import FeedDeleted, FeedPaused, FeedResumed, delete_feed, pause_feed, resume_feed
+from core.steps.pipeline import pipeline_plan, record_pipeline_run, run_pipeline
 from core.steps.profile_again import ProfileAgainResult, again_plan, profile_again
 from core.steps.profile_erase import ProfileErasureResult, erase_profiles
 from core.steps.feed_page import (
@@ -112,7 +114,9 @@ from core.domain.manual import ManualProfileAction
 from core.domain.profiling import ActionKind
 from core.engine.codegen import FileDiff, diff_versions
 from core.steps.drift import DriftView, add_drift_action, drift_of_feed
+from core.domain.pipeline_run import PipelineRun
 from core.repositories.code_versions import CodeVersionNotFound, CodeVersionRepository
+from core.repositories.pipeline_runs import PipelineRunRepository
 from core.steps.codegen import code_for_feed
 from core.steps.completion import CompletionReport, completion_report
 from core.steps.s02_profile import ProfileActionDecided, decide_profile_action
@@ -129,6 +133,7 @@ from ports.connectors import SourceConnector
 from ports.connectors.catalogue import SourceCatalogue, UnknownSource
 from ports.identity import Identity, User
 from ports.notify import Notifier
+from ports.pipeline import Pipeline
 from ports.storage import BlobStore
 
 router = APIRouter(prefix="/api/amaze", tags=["amaze"], dependencies=[Depends(backend_user)])
@@ -139,6 +144,7 @@ Catalogue = Annotated[SourceCatalogue, Depends(get_source_catalogue)]
 IdentityPort = Annotated[Identity, Depends(get_identity_port)]
 RequestNotifier = Annotated[Notifier, Depends(get_request_notifier)]
 Blobs = Annotated[BlobStore, Depends(get_blob_store_port)]
+CodePipeline = Annotated[Pipeline, Depends(get_pipeline_port)]
 Profiler = Annotated[ProfilerAgent, Depends(get_profiler_agent)]
 Mapper = Annotated[MappingAgent, Depends(get_mapping_agent)]
 Kick = Annotated[Callable[[], None], Depends(get_glossary_kick)]
@@ -376,6 +382,38 @@ def code_diff(feed_id: UUID, session: DbSession, from_version: Annotated[int, Qu
         return CodeDiff(from_version=from_version, to_version=to_version, files=diff_versions(old, new))
 
     return read(session, work)
+
+
+class PipelineRunView(PipelineRun):
+    code_version: int | None  # the version whose hash this run is of; None: code that no go-live has approved yet
+
+
+def _run_views(session, feed_id: UUID) -> list[PipelineRunView]:
+    versions = {v.sha256: v.version for v in CodeVersionRepository(session).list_for_feed(feed_id)}
+    runs = PipelineRunRepository(session).list_for_feed(feed_id)
+    return [PipelineRunView(**r.model_dump(), code_version=versions.get(r.code_sha256)) for r in reversed(runs)]
+
+
+@router.get("/feeds/{feed_id}/pipeline-runs", response_model=list[PipelineRunView])
+def pipeline_runs(feed_id: UUID, session: DbSession) -> list[PipelineRunView]:
+    """Phase 7.17: every run of the code pipeline of the feed, newest first. Read only."""
+    def work():
+        FeedRepository(session).get(feed_id)
+        return _run_views(session, feed_id)
+
+    return read(session, work)
+
+
+@router.post("/feeds/{feed_id}/pipeline-runs", response_model=PipelineRunView)
+def run_the_pipeline(feed_id: UUID, session: DbSession, user: BackendTeam, pipeline: CodePipeline, blobs: Blobs,
+                     settings: AppSettings) -> PipelineRunView:
+    """Phase 7.17: run the pipeline over the code of the feed's configuration now: read the plan, end the transaction, commit,
+    parse, check, test-load with no connection held, then record the run. A failed run is a 200 with its typed outcome."""
+    plan = read(session, lambda: pipeline_plan(session, feed_id))
+    attempt = run_pipeline(plan, pipeline=pipeline, blobs=blobs, rule_timeout_seconds=settings.rule_timeout_seconds,
+                           by=user.id)
+    run = in_transaction(session, lambda: record_pipeline_run(session, attempt))
+    return next(v for v in read(session, lambda: _run_views(session, feed_id)) if v.id == run.id)
 
 
 @router.get("/feeds/{feed_id}/code/{version}", response_model=CodeVersionDetail)

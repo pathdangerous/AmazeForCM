@@ -110,7 +110,8 @@ def test_the_factory_names_the_adapter_from_the_settings(tmp_path):
     assert azure.name == "azure_devops" and azure.is_stub is True
 
 
-def test_the_default_root_is_under_the_git_ignored_data_folder():
+def test_the_default_root_is_under_the_git_ignored_data_folder(monkeypatch):
+    monkeypatch.delenv("PIPELINE_REPO_ROOT")  # conftest points every test run at a temporary repository
     root = Settings(_env_file=None).pipeline_repo_root
     assert root == (REPO_ROOT / "data" / "pipeline-repo").resolve()
     ignored = subprocess.run(["git", "-C", str(REPO_ROOT), "check-ignore", "-q", str(root / "feed_a" / "x.sql")])

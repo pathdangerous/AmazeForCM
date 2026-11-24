@@ -1609,6 +1609,34 @@ async def test_no_connection_is_held_during_a_load_run(own_schema, p6, monkeypat
     assert len(seen["profile_csv"]) == 1  # step 12 profiled the one scheduled delivery
 
 
+async def test_no_connection_is_held_during_a_pipeline_run(own_schema, p6, monkeypatch):
+    """Phase 7.17: POST .../pipeline-runs ends its read before git, DuckDB and the file work: pool.checkedout() == 0 in the
+    commit, in the sandbox's rule check and in the test load's file read."""
+    from core.engine.sandbox import Sandbox
+    from ports.pipeline.local import LocalGitPipeline
+    from ports.storage.local import LocalBlobStore as Blobs
+
+    seen = {"commit": [], "get": [], "load_csv": []}
+
+    def watch(cls, name, key):
+        original = getattr(cls, name)
+
+        def watched(self, *args, **kwargs):
+            seen[key].append(own_schema.pool.checkedout())
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(cls, name, watched)
+
+    watch(LocalGitPipeline, "commit", "commit")
+    watch(Blobs, "get", "get")
+    watch(Sandbox, "load_csv", "load_csv")
+    async with p6() as p:
+        run = await call(p.client, f"feeds/{p.feed}/pipeline-runs", {})
+    assert run["outcome"] == "passed"
+    for name, counts in seen.items():
+        assert counts and set(counts) == {0}, (name, counts)
+
+
 async def test_the_image_extraction_holds_no_connection_during_the_call_and_commits_its_rows(own_schema, tmp_path):
     """Phase 7.8, task 2.3: POST .../extract renders the pages and calls the TableExtractorAgent with
     pool.checkedout() == 0; the proposal and its call row are committed; confirm approves it and creates the feed

@@ -201,6 +201,12 @@ def view(w: World):
 
 
 def approve(w: World, user=OPERATOR, **kw):
+    if current(w).current_step == "go_live":  # 7.17: the go-live needs a passed pipeline run of the code it pins
+        from ports.pipeline.local import LocalGitPipeline
+        from tests.step_chains import run_the_pipeline
+
+        run_the_pipeline(w.session, w.feed_id, pipeline=LocalGitPipeline(w.ctx.blob_store.root.parent / "pipeline-repo"),
+                         blobs=w.ctx.blob_store)
     advance = approve_and_next(w.session, session_id=w.session_id, user=user, ctx=w.ctx, **kw)
     w.session.commit()
     return advance

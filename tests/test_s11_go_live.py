@@ -44,7 +44,15 @@ from ports.identity.base import User
 from ports.llm.mock import MockProvider
 from ports.notify.inapp import InAppNotifier, NotificationRow
 from ports.storage.local import LocalBlobStore
-from tests.configured import a_registered_feed, approved_mapping, approved_rule, glossary_proposal, new_element
+from core.steps.codegen import code_for_feed
+from tests.configured import (
+    a_registered_feed,
+    approved_mapping,
+    approved_rule,
+    glossary_proposal,
+    new_element,
+    passed_pipeline_run,
+)
 from tests.conftest import dev_user_for
 from tests.step_chains import prepare_go_live
 
@@ -79,6 +87,8 @@ def prepare(world, provider=None, **kw):
 
 
 def decide(world, summary, *, user=None, decision="approved", note=None, back_to_step=None, hypercare_days=10):
+    if decision == "approved":  # 7.17: a go-live needs a passed pipeline run of the code (see test_pipeline.py)
+        passed_pipeline_run(world.session, world.feed, code_for_feed(world.session, world.feed).sha256)
     return decide_go_live(world.session, proposal_id=summary.proposal_id, user=user or dev_user_for("data_owner"),
                           decision=decision, note=note, back_to_step=back_to_step, today=date(2026, 11, 17),
                           hypercare_days=hypercare_days, daily_run_utc="06:00", notifier=world.notifier,

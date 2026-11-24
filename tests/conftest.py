@@ -8,6 +8,7 @@ inside a transaction that is rolled back. If the database is unreachable, tests 
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -20,6 +21,11 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import Session
 
 from ports.secrets.base import SecretNotFound
+
+# Phase 7.17: no test writes the default pipeline repository (./data/pipeline-repo); each pytest process commits generated
+# code to a temporary one that is removed when it ends. A test that needs its own passes tmp_path.
+_PIPELINE_REPO = tempfile.TemporaryDirectory(prefix="amaze-pipeline-", ignore_cleanup_errors=True)
+os.environ["PIPELINE_REPO_ROOT"] = _PIPELINE_REPO.name
 
 
 @pytest.fixture(autouse=True)

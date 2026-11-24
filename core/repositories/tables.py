@@ -892,6 +892,31 @@ class CodeVersionRow(Base):
     approved_by: Mapped[str] = mapped_column(Text)
 
 
+class PipelineRunRow(Base):
+    """Phase 7.17: one run of the code pipeline (commit, SQL parse, sandbox rule check, test load) over a feed's generated
+    code, keyed by the code's SHA-256. Append-only (migration 0037); the trigger recomputes the outcome from the stages."""
+
+    __tablename__ = "pipeline_runs"
+    __table_args__ = (
+        Index("ix_pipeline_runs_feed_id_code_sha256", "feed_id", "code_sha256"),
+        CheckConstraint("code_sha256 ~ '^[0-9a-f]{64}$'", name="code_sha256"),
+        CheckConstraint("commit_hash IS NULL OR commit_hash ~ '^[0-9a-f]{40,64}$'", name="commit_hash"),
+        CheckConstraint("length(btrim(run_by)) > 0", name="run_by"),
+        CheckConstraint("outcome IN ('passed', 'failed_at_commit', 'failed_at_sql_parse', 'failed_at_rule_check', "
+                        "'failed_at_test_load')", name="outcome"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    code_sha256: Mapped[str] = mapped_column(Text)
+    commit_hash: Mapped[str | None] = mapped_column(Text)
+    commit_created: Mapped[bool] = mapped_column(Boolean)
+    stages: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    outcome: Mapped[str] = mapped_column(Text)
+    run_by: Mapped[str] = mapped_column(Text)
+
+
 class LoadStageRow(Base):
     """Step 13: one stage (raw, curated, validated, standard) of one load. Append-only (migration 0018;
     trigger: written in order, while the load is received)."""

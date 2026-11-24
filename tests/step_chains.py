@@ -32,6 +32,17 @@ def end_read(session: Session) -> None:
     session.commit()
 
 
+def run_the_pipeline(session: Session, feed_id: UUID, *, pipeline, blobs: BlobStore, by: str = "dev-operator",
+                     rule_timeout_seconds: int = 5):
+    """Phase 7.17: the pipeline as the API runs it: read the plan, end the read, run with no connection, record."""
+    from core.steps.pipeline import pipeline_plan, record_pipeline_run, run_pipeline
+
+    plan = pipeline_plan(session, feed_id)
+    end_read(session)
+    attempt = run_pipeline(plan, pipeline=pipeline, blobs=blobs, rule_timeout_seconds=rule_timeout_seconds, by=by)
+    return record_pipeline_run(session, attempt)
+
+
 def run_glossary(session: Session, *, agent, notifier: Notifier, owners: Sequence[str], lease_seconds: int = 300):
     """Step 05 as the worker runs it (apps/api/jobs.py): claim and commit, read and end the read, then the
     call and the locked write. None when no run waits."""

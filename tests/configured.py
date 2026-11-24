@@ -232,6 +232,18 @@ def live_feed(session, code: str | None = None) -> UUID:
     return feed_id
 
 
+def passed_pipeline_run(session, feed_id: UUID, sha256: str) -> None:
+    """A passed pipeline run of the code with this hash, as the repository stores it (no git: these tests are about
+    other rules; the pipeline itself is tested in test_pipeline.py)."""
+    from core.domain.pipeline_run import PIPELINE_STAGES, PipelineStage
+    from core.repositories.pipeline_runs import PipelineRunRepository
+
+    PipelineRunRepository(session).add(
+        feed_id=feed_id, code_sha256=sha256, commit_hash="ab" * 20, commit_created=True, outcome="passed",
+        stages=[PipelineStage(stage=s, status="passed", log=["Synthetic."]) for s in PIPELINE_STAGES],
+        run_by="dev-operator")
+
+
 def go_live(session, feed_id: UUID, *, owner: str = "dev-data-owner", hypercare_days: int = 10) -> GoLive:
     """The feed's next go-live as the steps write it: a loaded test load, a review_summary of the current
     mappings and rules decided by the owner, then the row. The feed's registered owner must be `owner`."""
@@ -253,6 +265,7 @@ def go_live(session, feed_id: UUID, *, owner: str = "dev-data-owner", hypercare_
     from core.steps.codegen import store_code_version  # T3: every go-live pins the code generated from its configuration
 
     code = store_code_version(session, feed_id=feed_id, approved_by=owner, test_load_id=test_load.id)
+    passed_pipeline_run(session, feed_id, code.sha256)  # 7.17: and a go-live needs a passed run of that code
     return GoLiveRepository(session).add_version(
         feed_id=feed_id, proposal_id=proposal.id, approved_by=owner, mapping_ids=mappings, rule_ids=rules,
         code_version_id=code.id,

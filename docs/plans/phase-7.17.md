@@ -72,7 +72,7 @@ version, so it is no exception to rules 1 and 7.
 `PipelineNotPassed` (a `RepositoryError`, 409, text: "Run the pipeline on the Code view first: it has no passed run for the
 code of this configuration"). The database trigger is the second line. No model call anywhere in `pipeline.py`.
 
-### 2.3 T3: endpoints and the Code view
+### 2.3 T3: the Code view (the endpoints below were built in T2: the gate made API-driven tests need them)
 
 `POST /api/amaze/feeds/{id}/pipeline-runs` (any backend role; runs and returns the run); `GET .../pipeline-runs` (read only:
 every run, newest first, with `code_version` = the version whose `sha256` it has, or null for code not yet approved).

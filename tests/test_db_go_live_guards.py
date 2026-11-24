@@ -19,7 +19,7 @@ from sqlalchemy import text
 
 from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
-from tests.configured import a_registered_feed, logged_call
+from tests.configured import a_registered_feed, logged_call, passed_pipeline_run
 from tests.conftest import dev_user_for
 from tests.onboarded import registered_feed
 from tests.test_db_load_guards import loaded_load, new_load
@@ -68,8 +68,11 @@ def summary_proposal(s, w, *, feed=None, decision="approved", kind="review_summa
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # the hash of no files
 
 
-def a_code_version(s, p) -> uuid.UUID:
-    """0030: every new go-live pins a code version of its feed with the same owner, load and ids (empty files)."""
+def a_code_version(s, p, *, with_run: bool = True) -> uuid.UUID:
+    """0030: every new go-live pins a code version of its feed with the same owner, load and ids (empty files). 0037: and
+    a passed pipeline run of that code, unless with_run is false."""
+    if with_run:
+        passed_pipeline_run(s, p["feed"], EMPTY_SHA256)
     version = s.scalar(text("SELECT COALESCE(max(version), 0) + 1 FROM code_versions WHERE feed_id = :f"), {"f": p["feed"]})
     return s.execute(text(
         "INSERT INTO code_versions (feed_id, version, sha256, files, mapping_ids, rule_ids, transformation_ids, "

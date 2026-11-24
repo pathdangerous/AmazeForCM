@@ -58,7 +58,7 @@ from core.repositories.errors import (
     RequirementNotInStatus,
     SourceAlreadyReleased,
 )
-from core.repositories.errors import NothingToTransform, SourceFieldNotMapped, TransformationAlreadyProposed
+from core.repositories.errors import NothingToTransform, PipelineNotPassed, SourceFieldNotMapped, TransformationAlreadyProposed
 from core.steps.errors import NotTheRequester, StepInputError
 from ports.connectors.catalogue import UnknownSource
 
@@ -83,7 +83,9 @@ CONFLICTS = (RequirementNotInStatus, ProposalAlreadyDecided, RequirementAlreadyH
              # phase 7.8, task 2.4: the feed code (or its source) an upload names is taken
              DuplicateFeedCode, DuplicateFeedSource,
              # phase 7.8, task 4.4: a re-upload for a feed that reads no drop folder
-             NotADropzoneFeed)
+             NotADropzoneFeed,
+             # phase 7.17: a go-live without a passed pipeline run
+             PipelineNotPassed)
 NOT_FOUND = (NotTheRequester, ProposalForAnotherRequirement, ProposalNotFound, FeedNotFound, GlossaryRunNotFound,
              LoadNotFound, UploadNotFound)
 FORBIDDEN = (NotAnApprover, NotTheFeedsOwner)  # the step checks who may decide (403)
