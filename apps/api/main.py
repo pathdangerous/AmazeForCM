@@ -23,7 +23,8 @@ from apps.api.jobs import (
     kick_onboarding_jobs,
     register_daily_fetch,
 )
-from apps.api.routers import amaze, consumer, dev_identity, health, notifications, onboarding, overview, uploads
+from apps.api.routers import (amaze, consumer, dev_identity, exceptions, health, notifications, onboarding, overview,
+                              uploads)
 from core.repositories.settings import FourEyesRepository
 from ports.config import get_settings
 from ports.identity import get_identity
@@ -122,6 +123,7 @@ app.include_router(health.router)
 app.include_router(dev_identity.router)
 app.include_router(amaze.router)
 app.include_router(overview.router)
+app.include_router(exceptions.router)
 app.include_router(uploads.router)
 app.include_router(uploads.feed_files_router)
 app.include_router(onboarding.router)

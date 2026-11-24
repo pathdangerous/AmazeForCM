@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0032"  # old: "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0033"  # old: "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -1288,3 +1288,24 @@ def test_0032_downgrade_refuses_while_a_chain_session_exists(scratch_schema):
                              '"first_load": "waiting", "product_ready": "waiting"}'})
     with pytest.raises(DBAPIError, match="migration 0032"):
         command.downgrade(config, "0031")
+
+
+def _pattern_function(engine) -> str | None:
+    with engine.connect() as connection:
+        return connection.execute(text(
+            "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_value_pattern' "
+            "AND p.pronamespace = current_schema()::regnamespace")).scalar_one_or_none()
+
+
+def test_0033_adds_the_value_pattern_and_downgrade_restores_0032(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0032")
+    assert _pattern_function(engine) is None
+    command.upgrade(config, "0033")
+    up = _pattern_function(engine)
+    assert up is not None and "IMMUTABLE" in up
+    command.downgrade(config, "0032")
+    assert _pattern_function(engine) is None
+    command.upgrade(config, "0033")
+    assert _pattern_function(engine) == up

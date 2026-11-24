@@ -8,6 +8,7 @@ import {
 import { formatWhen } from "../theme";
 import CodeView from "./CodeView";
 import DriftSection from "./DriftSection";
+import ExceptionsSection from "./ExceptionsSection";
 import FeedLifecycle from "./FeedLifecycle";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
@@ -586,6 +587,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
             <CodeView key={`code-${page.loads.length}`} feedId={feed.id} devUser={devUser} />
           </Section>
           <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("loads")} />
+          <ExceptionsSection key={`exceptions-${page.loads.length}`} feedId={feedId} devUser={devUser} />
         </>
       )}
 

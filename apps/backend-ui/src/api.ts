@@ -127,6 +127,24 @@ export const getDrift = (feedId: string, devUser: string) => apiGet<DriftView>(`
 export const addDriftAction = (feedId: string, body: { action: string; columns: string[]; reason: string }, devUser: string) =>
   apiPost<DriftView>(`/api/amaze/feeds/${feedId}/drift/actions`, body, devUser);
 
+// ---- phase 7.14: exceptions of a load (a flagged row and one rule), grouped by rule and value pattern
+export type ExceptionSample = { row_number: number; values: Record<string, unknown> };
+export type ExceptionGroup = {
+  group_key: string; rule_key: string; description: string | null; elements: string[]; pattern: string;
+  exceptions: number; samples: ExceptionSample[]; state: string;
+};
+export type LoadExceptions = {
+  load_id: string; feed_id: string; status: string; can_fix: boolean; rows: number; flagged_rows: number;
+  exceptions: number; total_groups: number; limit: number; offset: number; groups: ExceptionGroup[];
+};
+export type LoadExceptionCounts = {
+  load_id: string; received_at: string; status: string; purpose: string; rows: number; flagged_rows: number; exceptions: number;
+};
+export const getFeedExceptions = (feedId: string, devUser: string) =>
+  apiGet<LoadExceptionCounts[]>(`/api/amaze/feeds/${feedId}/exceptions`, devUser);
+export const getLoadExceptions = (loadId: string, devUser: string, offset = 0) =>
+  apiGet<LoadExceptions>(`/api/amaze/loads/${loadId}/exceptions?offset=${offset}`, devUser);
+
 // ---- phase 4: one feed's page and the steps 02 to 04
 
 export type FileColumn = { name: string; type: string; null_count: number; null_rate: number | null; distinct_count: number };
