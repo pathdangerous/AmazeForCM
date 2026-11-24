@@ -132,7 +132,8 @@ async def start_and_stop(daily_fetch):
 async def test_the_daily_job_is_registered_at_every_start(daily):
     for _ in range(2):
         jobs, _ = await start_and_stop(daily())
-        assert [(j.job_id, j.hour, j.minute) for j in jobs] == [(DAILY_FETCH_JOB_ID, DAILY_FETCH_HOUR, 0)]
+        assert sorted((j.job_id, j.hour, j.minute) for j in jobs) == [  # 7.15: and the report job, once a day too
+            (DAILY_FETCH_JOB_ID, DAILY_FETCH_HOUR, 0), ("reports", 6, 0)]
 
 
 async def test_after_a_restart_the_job_fetches_feeds_read_from_the_database(db_session, daily, selected):

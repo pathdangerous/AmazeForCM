@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -36,6 +36,8 @@ from core.repositories.loads import LoadRepository
 from core.repositories.requirements import RequirementRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.upload_sources import UploadSourceRepository
+from core.domain.report import Period
+from core.steps.reports import report_input, subjects, tell_subject, write_report
 from core.steps.s3_pick import close_if_nothing_to_pick
 from core.steps.s4_fetch import fetch_file, fetch_plan, record_fetch
 from core.steps.s12_arrival import (
@@ -53,6 +55,7 @@ from ports.connectors import SourceConnector, get_connector
 from ports.connectors.catalogue import SourceCatalogue
 from ports.identity import Identity
 from ports.identity.base import User
+from ports.llm.base import LLMRefused, LLMUnavailable
 from ports.notify import get_notifier
 from ports.notify.inapp import InAppNotifier
 from ports.scheduler import Scheduler
@@ -409,6 +412,83 @@ class DailyFetch:
 def register_daily_fetch(scheduler: Scheduler, daily: DailyFetch) -> None:
     """Called at every start-up. The same id replaces any job with that id."""
     scheduler.schedule_daily(DAILY_FETCH_JOB_ID, daily.run, hour=DAILY_FETCH_HOUR)
+
+
+# ---------------------------------------------------------------- phase 7.15: the daily and monthly reports
+
+REPORT_JOB_ID = "reports"
+
+
+@dataclass
+class ReportJob:
+    """Phase 7.15, T3 (plan, 2.3). Once a day (REPORT_HOUR, UTC): yesterday's daily report for every data owner and data
+    steward, and on the 1st last month's monthly report. A report that exists is skipped; each subject is told through the
+    Notifier (in-app; email stays a stub); one subject's failure is logged and the others go on. The numbers are code's; the
+    narrative (the agent, if any) is separate and never changes one."""
+
+    session_factory: Callable[[], AbstractContextManager[Session]]
+    blob_store: BlobStore
+    stewards: Callable[[], Sequence[str]]
+    agent_factory: Callable[[], object | None]  # a ReportSummariserAgent, or None: reports without a narrative
+    settings: Settings | None = None
+
+    @classmethod
+    def from_settings(cls, settings: Settings, identity: Identity) -> ReportJob:
+        def sessions() -> AbstractContextManager[Session]:
+            from ports.db import get_sessionmaker  # resolved when the job runs, not at start-up
+
+            return get_sessionmaker()()
+
+        def agent():
+            from agents.report_summariser import ReportSummariserAgent
+            from ports.llm import get_llm_provider
+
+            return ReportSummariserAgent(provider=get_llm_provider(settings), blob_store=get_blob_store(settings))
+
+        return cls(session_factory=sessions, blob_store=get_blob_store(settings), agent_factory=agent, settings=settings,
+                   stewards=lambda: [u.id for u in identity.list_users() if "data_steward" in u.roles])
+
+    def run(self, now: datetime | None = None) -> dict[str, str]:
+        """Key `kind:subject:role` -> the outcome, or `error: ...`."""
+        today = (now or datetime.now(UTC)).astimezone(UTC).date()
+        periods = [Period.daily(today - timedelta(days=1))]
+        if today.day == 1:
+            last = today - timedelta(days=1)
+            periods.append(Period.monthly(last.year, last.month))
+        with self.session_factory() as session:
+            people = subjects(session, stewards=self.stewards())
+            session.commit()
+        done: dict[str, str] = {}
+        for period in periods:
+            for subject, role in people:
+                key = f"{period.kind}:{subject}:{role}"
+                try:
+                    done[key] = self._one(subject, role, period)
+                except Exception as exc:  # one subject's failure never stops the others
+                    log.exception("the %s report of %s (%s) failed", period.kind, subject, role)
+                    done[key] = f"error: {exc}"
+        return done
+
+    def _one(self, subject: str, role: str, period: Period) -> str:
+        with self.session_factory() as session:
+            plan = report_input(session, subject_id=subject, role=role, period=period, settings=self.settings)
+            session.commit()  # the read ends before the model is called (Agent.run() refuses a session in a transaction)
+            try:
+                result = write_report(session, plan=plan, agent=self.agent_factory(), generated_by="job",
+                                      no_narrative_on=(LLMUnavailable, LLMRefused))
+                if result.outcome != "report_exists":
+                    tell_subject(get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session),
+                                 plan=plan, result=result)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+        return result.outcome
+
+
+def register_report_job(scheduler: Scheduler, job: ReportJob) -> None:
+    """Called at every start-up, like the daily fetch: the same id replaces any job with that id."""
+    scheduler.schedule_daily(REPORT_JOB_ID, job.run, hour=(job.settings or Settings(_env_file=None)).report_hour)
 
 
 # ---------------------------------------------------------------- phase 5: the glossary runs worker

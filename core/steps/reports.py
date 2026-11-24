@@ -42,6 +42,7 @@ from core.steps.patterns import find_patterns, referred_groups
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
 from ports.config import Settings
+from ports.notify.base import Notifier
 
 OPEN_STATES = ("open", "fix_pending")
 FIGURE = re.compile(r"\d+(?:\.\d+)?")
@@ -250,6 +251,15 @@ def report_input(session: Session, *, subject_id: str, role: SubjectRole, period
     latest = ReportRepository(session).latest(period.kind, subject_id, role, period.start)
     return ReportPlan(subject_id=subject_id, role=role, period=period, numbers=stored, existing=latest.id if latest else None,
                       summary_input=ReportSummaryInput(subject_role=role, kind=period.kind, numbers=shown))
+
+
+def tell_subject(notifier: Notifier, *, plan: ReportPlan, result: ReportResult) -> None:
+    """Plan, 2.3: the subject is told through the Notifier (in-app; email stays a stub) with a link to their report."""
+    label = plan.period.start.isoformat() if plan.period.kind == "daily" else f"{plan.period.start:%Y-%m}"
+    totals, exceptions = plan.numbers["totals"], plan.numbers["exceptions"]
+    notifier.notify(recipient=plan.subject_id, subject=f"{plan.period.kind.capitalize()} report: {label}",
+                    body=f"{totals['loads']} loads, {totals['held']} held, {exceptions['open_now']} exception groups open.",
+                    link=f"#/reports/{result.report_id}")
 
 
 def write_report(session: Session, *, plan: ReportPlan, agent: RunsAgent | None, generated_by: str,

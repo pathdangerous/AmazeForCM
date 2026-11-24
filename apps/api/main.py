@@ -19,9 +19,11 @@ from apps.api.jobs import (
     DailyFetch,
     GlossaryRuns,
     OnboardingJobs,
+    ReportJob,
     kick_glossary_runs,
     kick_onboarding_jobs,
     register_daily_fetch,
+    register_report_job,
 )
 from apps.api.routers import (amaze, consumer, dev_identity, exceptions, health, notifications, onboarding, overview,
                               reports, uploads)
@@ -83,6 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             daily.kick_glossary = lambda: kick_glossary_runs(scheduler, app.state.glossary_runs)
         if settings.daily_job_enabled:  # DAILY_JOB_ENABLED=false: none (the e2e API; plan risk 6)
             register_daily_fetch(scheduler, daily)
+            register_report_job(scheduler, ReportJob.from_settings(settings, app.state.identity))  # phase 7.15
         scheduler.start()
         # Kicked at every start so runs left by the last process are taken.
         kick_glossary_runs(scheduler, app.state.glossary_runs)
