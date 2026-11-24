@@ -89,7 +89,8 @@ def _certify(session: Session, load: Load, threshold: Decimal, notifier: Notifie
     LoadCertificationRepository(session).add(
         load_id=load.id, feed_id=load.feed_id, rows=rows, flagged_rows=flagged, rule_counts=counts,
         trust_score=score, threshold=threshold, outcome="released" if released else "held_consumers_warned",
-        warned=warned)
+        warned=warned, waived_rows=records.count_waived(load.id),  # 7.14: unflagged in the score, shown apart
+        waived_counts=records.waived_counts(load.id))
     LoadRepository(session).set_status(load.id, "released" if released else "held")
     shared = dict(load_id=load.id, trust_score=score, threshold=threshold, rows=rows, flagged_rows=flagged)
     if released:

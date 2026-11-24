@@ -24,6 +24,7 @@ import json
 import re
 from collections.abc import Sequence
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -40,6 +41,7 @@ from core.engine.run import _key_policy as engine_key_policy  # the one place th
 from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.errors import (
     ExceptionGroupChangedMeanwhile,
+    GroupDecisionRefused,
     ItemAlreadyPending,
     LoadNotHeld,
     NotAnApprover,
@@ -522,3 +524,167 @@ def add_manual_fix(session: Session, *, load_id: UUID, group_key: str, action: L
 
 class ManualFixRefused(StepInputError):
     """A person's fix is not valid as given (a blank reason; steps for a group that is not one mapped column)."""
+
+
+# ---------------------------------------------------------------- T3: bulk decisions and the rerun
+
+
+class GroupDecided(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    group_key: str
+    proposal_id: UUID
+    state: GroupState
+
+
+class FixesDecided(StepResult):
+    outcome: Literal["fixes_decided"] = "fixes_decided"
+    decided: list[GroupDecided]
+
+
+class NothingSelected(StepResult):
+    outcome: Literal["nothing_selected"] = "nothing_selected"
+
+
+BulkResult = Annotated[FixesDecided | NothingSelected, Field(discriminator="outcome")]
+
+
+def decide_exception_fixes(session: Session, *, load_id: UUID, group_keys: Sequence[str], user: User,
+                           decision: Literal["approved", "rejected"], note: str | None = None) -> FixesDecided | NothingSelected:
+    """Bulk decision (plan, 2.5): each selected group's pending fix gets this person's decision through its own step
+    function (a transformation: decide_transformation; a waiver or referral: decide_exception_fix), one approvals row
+    per step, as "Approve all confident" does. All or nothing, in a savepoint: a group with no pending fix, or whose next
+    step is not this person's, refuses the batch (GroupDecisionRefused names it). Lock order: the feed row, then the
+    proposals in id order. LoadNotHeld, NoteNeeded."""
+    if not group_keys:
+        return NothingSelected()
+    needs_a_note(decision, note)
+    load = LoadRepository(session).get(load_id)
+    FeedRepository(session).lock(load.feed_id)
+    _held(session, load_id)
+    groups = {g.group_key: g for g in _all_groups(session, load_id)}
+    chosen = []
+    for key in dict.fromkeys(group_keys):
+        group = groups.get(key)
+        if group is None or group.fix is None or group.fix.status != "pending":
+            raise GroupDecisionRefused(f"Group {key} has no pending fix on load {load_id}")
+        chosen.append((group.fix.proposal_id, key, group.fix.kind))
+    with session.begin_nested():  # all or nothing
+        for proposal_id, key, kind in sorted(chosen):
+            try:
+                if kind == "transformation":
+                    from core.steps.s10_transform import decide_transformation
+
+                    decide_transformation(session, proposal_id=proposal_id, user=user, decision=decision, note=note)
+                else:
+                    decide_exception_fix(session, proposal_id=proposal_id, user=user, decision=decision, note=note)
+            except (NotAnApprover, ProposalAlreadyDecided) as exc:
+                raise GroupDecisionRefused(f"Group {key}: {exc}") from exc
+    now = {g.group_key: g for g in _all_groups(session, load_id)}
+    return FixesDecided(decided=[GroupDecided(group_key=key, proposal_id=pid, state=now[key].state)
+                                 for pid, key, _ in chosen])
+
+
+RerunReason = Literal["not_held", "nothing_resolved_since"]
+
+
+class RerunStarted(StepResult):
+    """The new received load exists; the caller runs it (step 12, then the engine, steps 15 and 20)."""
+
+    outcome: Literal["rerun_started"] = "rerun_started"
+    load_id: UUID
+    rerun_of: UUID
+
+
+class NothingToRerun(StepResult):
+    outcome: Literal["nothing_to_rerun"] = "nothing_to_rerun"
+    load_id: UUID
+    reason: RerunReason
+
+
+class RerunInProgress(StepResult):
+    outcome: Literal["rerun_in_progress"] = "rerun_in_progress"
+    load_id: UUID
+
+
+class RerunNeedsGoLive(StepResult):
+    outcome: Literal["rerun_needs_go_live"] = "rerun_needs_go_live"
+    load_id: UUID
+    detail: str
+
+
+class RerunReleased(StepResult):
+    outcome: Literal["rerun_released"] = "rerun_released"
+    load_id: UUID  # the new load
+    rerun_of: UUID
+    trust_score: Decimal
+    previous_score: Decimal | None
+    waived_rows: int
+
+
+class RerunStillHeld(StepResult):
+    outcome: Literal["rerun_still_held"] = "rerun_still_held"
+    load_id: UUID
+    rerun_of: UUID
+    trust_score: Decimal
+    previous_score: Decimal | None
+    open_groups: int  # the new load's groups still flagging rows
+
+
+class RerunNotLoaded(StepResult):
+    """The rerun ended before the engine certified it (step 12 held or quarantined it, or the engine failed it)."""
+
+    outcome: Literal["rerun_not_loaded"] = "rerun_not_loaded"
+    load_id: UUID
+    status: str
+    detail: str | None
+
+
+RerunResult = Annotated[RerunStarted | NothingToRerun | RerunInProgress | RerunNeedsGoLive | RerunReleased
+                        | RerunStillHeld | RerunNotLoaded, Field(discriminator="outcome")]
+
+
+def _resolved_since(session: Session, load: Load) -> bool:
+    """A waiver recorded, or an exception transformation approved, for this load's groups after its last rerun (or after
+    the load itself): the only things that can change the new load's score."""
+    since = session.scalar(text("SELECT coalesce(max(created_at), CAST(:t AS timestamptz)) FROM loads "
+                                "WHERE rerun_of_load_id = :l"), {"l": load.id, "t": load.created_at})
+    waived = session.scalar(text("SELECT count(*) FROM exception_resolutions WHERE load_id = :l AND action = 'waived' "
+                                 "AND created_at > :s"), {"l": load.id, "s": since})
+    changed = session.scalar(text(
+        "SELECT count(*) FROM proposals WHERE kind = 'transformation' AND status = 'approved' AND feed_id = :f "
+        "AND payload -> 'exception_group' ->> 'load_id' = :l AND decided_at > :s"),
+        {"f": load.feed_id, "l": str(load.id), "s": since})
+    return bool(waived or changed)
+
+
+def start_rerun(session: Session, *, load_id: UUID, reason: str, user: User) -> RerunResult:
+    """Plan, 2.6: a new scheduled load of the held load's own file, with `rerun_of_load_id` and the reason, under the
+    feed's latest go-live; the caller then runs it. Typed: nothing_to_rerun (not held; nothing resolved since the last
+    rerun), rerun_in_progress (a received load exists), rerun_needs_go_live (the configuration is not the latest
+    go-live's: a transformation fix waits for the owner's step 11). NotAnApprover (not a data steward), StepInputError
+    (no reason). Lock: the feed row."""
+    if "data_steward" not in user.roles:
+        raise NotAnApprover(f"A rerun is started by a data steward; {user.id} has {user.roles}")
+    if not reason.strip():
+        raise StepInputError("A rerun needs a reason")
+    from core.engine.run import configuration_changed
+    from core.repositories.go_lives import GoLiveRepository
+
+    held = LoadRepository(session).get(load_id)
+    FeedRepository(session).lock(held.feed_id)
+    held = LoadRepository(session).get(load_id)
+    if held.status != "held" or held.purpose != "scheduled":
+        return NothingToRerun(load_id=load_id, reason="not_held")
+    if LoadRepository(session).received_for_feed(held.feed_id) is not None:
+        return RerunInProgress(load_id=load_id)
+    if not _resolved_since(session, held):
+        return NothingToRerun(load_id=load_id, reason="nothing_resolved_since")
+    live = GoLiveRepository(session).latest(held.feed_id)
+    if live is None or configuration_changed(session, held.feed_id):
+        return RerunNeedsGoLive(load_id=load_id, detail="A transformation fix changed the configuration: the data owner "
+                                "approves a new go-live (step 11) before the file is loaded again.")
+    new = LoadRepository(session).create(feed_id=held.feed_id, file_ref=held.file_ref, purpose="scheduled",
+                                         go_live_id=live.id, fetch_id=held.fetch_id, rerun_of_load_id=held.id,
+                                         rerun_reason=reason.strip())
+    return RerunStarted(load_id=new.id, rerun_of=held.id)

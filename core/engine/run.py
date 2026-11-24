@@ -50,10 +50,12 @@ from core.engine.curate import (
     uncast_sql,
 )
 from core.engine.passthrough import PASS_THROUGH, PASS_THROUGH_APPLIED, json_value
+from core.engine.pattern import value_pattern
 from core.engine.sandbox import FileUnreadable, RuleFailed, RuleRefused, Sandbox
 from core.engine.transform import label_of, quoted
 from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.errors import ArrivalNotChecked, FeedNotRegistered, LoadNotReceived
+from core.repositories.exception_resolutions import ExceptionResolutionRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.go_lives import GoLiveRepository
@@ -124,6 +126,17 @@ class KeyPolicyToRun(BaseModel):
     key_columns: list[str]
 
 
+class WaiverToRun(BaseModel):
+    """Phase 7.14: a current waiver of the feed (an approved, recorded exception fix): a flag of this rule on a row whose
+    value pattern (over these elements) is this one becomes a waived exception of the new record."""
+
+    model_config = ConfigDict(frozen=True)
+
+    rule_key: str
+    element_keys: list[str]
+    pattern: str
+
+
 class LoadPlan(BaseModel):
     """What one load needs, read in a transaction the caller then ends."""
 
@@ -135,6 +148,7 @@ class LoadPlan(BaseModel):
     configuration_changed: bool  # a scheduled load whose configuration is not the latest go-live's
     transformations: list[TransformationToRun] = Field(default_factory=list)
     key_policy: KeyPolicyToRun | None = None  # None: no key columns, so no duplicate check
+    waivers: list[WaiverToRun] = Field(default_factory=list)  # a scheduled load's: not part of the go-live (Q2)
 
 
 class LoadOutcome(BaseModel):
@@ -180,14 +194,22 @@ def plan_load(session: Session, load_id: UUID) -> LoadPlan:
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}; only a registered feed is loaded")
     config = configuration_of(session, feed.id)
-    changed = False
+    changed, waivers = False, []
     if load.purpose == "scheduled":  # assumption 15: loaded only as the latest go-live approved it
-        live = GoLiveRepository(session).latest(feed.id)
-        changed = (live is None or set(live.mapping_ids) != {c.mapping_id for c in config.columns}
-                   or set(live.rule_ids) != {r.rule_id for r in config.rules}
-                   or set(live.transformation_ids) != {t.transformation_id for t in config.transformations})
+        changed = configuration_changed(session, feed.id, config)
+        waivers = [WaiverToRun(rule_key=r.rule_key, element_keys=list(r.element_keys), pattern=r.pattern)
+                   for r in ExceptionResolutionRepository(session).current_waivers(feed.id)]
     return LoadPlan(load=load, configuration_changed=changed, columns=config.columns, rules=config.rules,
-                    transformations=config.transformations, key_policy=config.key_policy)
+                    transformations=config.transformations, key_policy=config.key_policy, waivers=waivers)
+
+
+def configuration_changed(session: Session, feed_id: UUID, config: Configuration | None = None) -> bool:
+    """Read only: the feed's current mappings, rules and transformations are not the latest go-live's (or it has none)."""
+    config = config or configuration_of(session, feed_id)
+    live = GoLiveRepository(session).latest(feed_id)
+    return (live is None or set(live.mapping_ids) != {c.mapping_id for c in config.columns}
+            or set(live.rule_ids) != {r.rule_id for r in config.rules}
+            or set(live.transformation_ids) != {t.transformation_id for t in config.transformations})
 
 
 class Configuration(BaseModel):
@@ -241,7 +263,7 @@ def execute_load(plan: LoadPlan, *, blob_store: BlobStore, rule_timeout_seconds:
             steps = (("raw", lambda: _raw(plan, blob_store, box, Path(folder) / "file.csv", state)),
                      ("curated", lambda: _curated(plan, box, state)),
                      ("validated", lambda: _validated(plan, box, state)),
-                     ("standard", lambda: _standard(state, records)))
+                     ("standard", lambda: _standard(state, records, plan.waivers)))
             for name, step in steps:
                 started = datetime.now(UTC)
                 result = step()
@@ -393,12 +415,15 @@ def _validated(plan: LoadPlan, box: Sandbox, state: dict) -> RunResult:
     return StageCompleted(stage="validated", rows_in=rows, rows_out=rows, detail=detail)
 
 
-def _standard(state: dict, records: list[StandardRecordDraft]) -> RunResult:
+def _standard(state: dict, records: list[StandardRecordDraft], waivers: list[WaiverToRun] | None = None) -> RunResult:
     keys = [f.element_key for f in state["found"]]
     for row in state["curated"]:
-        records.append(StandardRecordDraft(
-            row_number=int(row[0]), values={k: json_value(v) for k, v in zip(keys, row[1:], strict=True)},
-            flags=sorted(set(state["flags"].get(int(row[0]), [])))))
+        values = {k: json_value(v) for k, v in zip(keys, row[1:], strict=True)}
+        flags = sorted(set(state["flags"].get(int(row[0]), [])))
+        waived = sorted({w.rule_key for w in waivers or () if w.rule_key in flags
+                         and value_pattern(values, w.element_keys) == w.pattern})  # phase 7.14: no model, rule 2
+        records.append(StandardRecordDraft(row_number=int(row[0]), values=values,
+                                           flags=[f for f in flags if f not in waived], waived=waived))
     detail = dict(PASS_THROUGH_APPLIED if state["transformed"] else PASS_THROUGH)
     if state["labels"]:  # a rename: the product shows the label; the record keeps the element key
         detail["labels"] = dict(state["labels"])

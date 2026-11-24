@@ -222,6 +222,8 @@ class LoadOnPage(BaseModel):
     arrival_outcome: str | None = None
     arrival_detail: dict[str, Any] | None = None
     certification: LoadCertification | None = None
+    rerun_of_load_id: UUID | None = None  # phase 7.14: a rerun of this held load's file, and why
+    rerun_reason: str | None = None
 
 
 LOADS_ON_PAGE = 10
@@ -232,7 +234,8 @@ def load_on_page(session: Session, load: Load) -> LoadOnPage:
                       finished_at=load.finished_at, failed_stage=load.failed_stage, failure=load.failure,
                       go_live_id=load.go_live_id, stages=LoadRepository(session).stages(load.id),
                       arrival_outcome=load.arrival_outcome, arrival_detail=load.arrival_detail,
-                      certification=LoadCertificationRepository(session).for_load(load.id))
+                      certification=LoadCertificationRepository(session).for_load(load.id),
+                      rerun_of_load_id=load.rerun_of_load_id, rerun_reason=load.rerun_reason)
 
 
 def parked_columns(session: Session, feed_id: UUID) -> list[str]:

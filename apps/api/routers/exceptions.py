@@ -12,12 +12,23 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.orm import Session
 
 from agents.exception_fix import ExceptionFixAgent
-from apps.api.deps import backend_user, data_steward_user, get_app_settings, get_db_session, get_exception_fix_agent
+from apps.api.deps import (
+    backend_user,
+    data_steward_user,
+    get_app_settings,
+    get_daily_fetch,
+    get_db_session,
+    get_exception_fix_agent,
+)
+from apps.api.jobs import DailyFetch
 from apps.api.transactions import in_transaction, read
 from core.domain.proposal import Proposal
 from core.steps.exceptions import (
     MAX_PAGE,
+    BulkResult,
     FixesResult,
+    RerunResult,
+    decide_exception_fixes,
     LoadExceptionCounts,
     LoadExceptions,
     add_manual_fix,
@@ -34,6 +45,7 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 Steward = Annotated[User, Depends(data_steward_user)]
 FixAgent = Annotated[ExceptionFixAgent, Depends(get_exception_fix_agent)]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
+Daily = Annotated[DailyFetch, Depends(get_daily_fetch)]
 
 
 @router.get("/loads/{load_id}/exceptions", response_model=LoadExceptions)
@@ -59,6 +71,45 @@ def propose_exception_fixes(load_id: UUID, session: DbSession, user: Steward, ag
     plan = read(session, lambda: exception_fix_input(session, load_id=load_id, settings=settings))  # ends the read
     result = in_transaction(session, lambda: propose_fixes(session, agent=agent, agent_input=plan))
     return ProposeFixesResponse(result=result, exceptions=read(session, lambda: load_exceptions(session, load_id)))
+
+
+class DecisionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    group_keys: list[str]
+    decision: Literal["approved", "rejected"]
+    note: str | None = None
+
+
+class BulkDecisionResponse(BaseModel):
+    result: BulkResult
+    exceptions: LoadExceptions
+
+
+@router.post("/loads/{load_id}/exceptions/decision", response_model=BulkDecisionResponse)
+def decide_exception_groups(load_id: UUID, body: DecisionBody, session: DbSession,
+                            user: Annotated[User, Depends(backend_user)]) -> BulkDecisionResponse:
+    """Bulk decision: this person's decision on each selected group's pending fix, all or nothing."""
+    result = in_transaction(session, lambda: decide_exception_fixes(
+        session, load_id=load_id, group_keys=body.group_keys, user=user, decision=body.decision, note=body.note))
+    return BulkDecisionResponse(result=result, exceptions=read(session, lambda: load_exceptions(session, load_id)))
+
+
+class RerunBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class RerunResponse(BaseModel):
+    result: RerunResult
+
+
+@router.post("/loads/{load_id}/rerun", response_model=RerunResponse)
+def rerun_held_load(load_id: UUID, body: RerunBody, session: DbSession, user: Steward, daily: Daily) -> RerunResponse:
+    """Rerun a held load's own file under the current configuration: an explicit, recorded new load (plan, 2.6)."""
+    return RerunResponse(result=in_transaction(
+        session, lambda: daily.rerun_held_load(load_id, reason=body.reason, user=user), keep=False))
 
 
 class ManualFixBody(BaseModel):

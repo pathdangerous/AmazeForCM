@@ -194,3 +194,24 @@ def fetch_source(session: Session, *, feed_id: UUID, connector_factory: Callable
     attempt = fetch_file(plan, connector_factory=connector_factory, blob_store=blob_store)
     return record_fetch(session, attempt, notifier=notifier, backend_team=backend_team,
                         release_after_days=release_after_days, catalogue=catalogue)
+
+
+def run_received(session: Session, blob_store: BlobStore, load_id, *, context, rule_timeout_seconds: float = 5):
+    """A received scheduled load (a rerun, phase 7.14) as the daily job runs it: step 12 (its real check and write),
+    then, if it passed, plan, execute with no session, and the one finishing transaction (steps 13, 15 and 20).
+    Returns (the arrival result, the FinishedLoad or None when the load ended on arrival)."""
+    from core.engine.run import execute_load, plan_load
+    from core.steps.s12_arrival import Recipients, arrival_plan, check_arrival, record_arrival
+    from core.steps.s20_create_product import finish_scheduled_load
+
+    plan = arrival_plan(session, load_id=load_id)
+    end_read(session)
+    checked = check_arrival(plan, blob_store=blob_store)
+    arrival = record_arrival(session, checked, notifier=context.notifier, recipients=Recipients())
+    end_read(session)
+    if arrival.outcome in ("resent_quarantined", "breaking_held"):
+        return arrival, None
+    engine_plan = plan_load(session, load_id)
+    end_read(session)
+    outcome = execute_load(engine_plan, blob_store=blob_store, rule_timeout_seconds=rule_timeout_seconds)
+    return arrival, finish_scheduled_load(session, engine_plan, outcome, context=context)

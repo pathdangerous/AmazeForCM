@@ -46,11 +46,15 @@ class LoadDraft(BaseModel):
     fetch_id: UUID | None = None  # the source_fetches row the file came from
     go_live_id: UUID | None = None  # a scheduled load names the go-live that approved it; a test load has none
     received_at: datetime | None = None  # defaults to the moment of insert
+    rerun_of_load_id: UUID | None = None  # phase 7.14: a rerun of this held load's own file, with its reason
+    rerun_reason: NonBlank | None = None
 
     @model_validator(mode="after")
     def _purpose_fits_the_go_live(self) -> LoadDraft:
         if (self.purpose == "scheduled") != (self.go_live_id is not None):
             raise ValueError("a scheduled load names its go-live; a go_live_test load has none")
+        if (self.rerun_of_load_id is None) != (self.rerun_reason is None):
+            raise ValueError("a rerun names the load it reruns and its reason, both or neither")
         return self
 
 

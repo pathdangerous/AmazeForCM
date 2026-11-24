@@ -43,7 +43,8 @@ function Certification({ load }: { load: LoadOnPage }) {
   return (
     <span data-testid="certification" className={c.outcome === "released" ? "ok" : "bad"}>
       trust {c.trust_score} (threshold {c.threshold}): {words(c.outcome)}
-      <div className="muted">{c.flagged_rows} of {c.rows} rows flagged</div>
+      <div className="muted">{c.flagged_rows} of {c.rows} rows flagged
+        {(c.waived_rows ?? 0) > 0 && `, ${c.waived_rows} more waived (counted as unflagged)`}</div>
     </span>
   );
 }
@@ -86,7 +87,11 @@ export default function LoadsSection({ page, devUser, roles, onChange, onMessage
                 {page.loads.map((l) => (
                   <Table.Tr key={l.id} data-testid="load-row" data-purpose={l.purpose}>
                     <Table.Td>{formatWhen(l.received_at)}</Table.Td>
-                    <Table.Td>{PURPOSE[l.purpose] ?? words(l.purpose)}</Table.Td>
+                    <Table.Td>{PURPOSE[l.purpose] ?? words(l.purpose)}
+                      {l.rerun_of_load_id && (
+                        <div className="muted" data-testid="rerun-of">
+                          Rerun of load {l.rerun_of_load_id.slice(0, 8)}: {l.rerun_reason}
+                        </div>)}</Table.Td>
                     <Table.Td><Arrival load={l} /></Table.Td>
                     <Table.Td>
                       <StatusBadge status={l.status} />

@@ -81,6 +81,53 @@ test("a steward adds a fix by hand; a person without the role sees no button", a
   expect(screen.queryByRole("button", { name: "Add a fix" })).toBeNull();
 });
 
+test("selected groups are decided in bulk; a rejection needs a note", async () => {
+  const fetchStub = stubFetch({ [FEED_PATH]: [counts()], "GET /api/amaze/loads/l1/exceptions?offset=0": view({ groups: [
+    group({ state: "fix_pending", fix: fix({ approvals: 0 }) }), group({ group_key: "g2", rule_key: "other", fix: null })] }),
+    "POST /api/amaze/loads/l1/exceptions/decision": { result: { outcome: "fixes_decided" }, exceptions: view() } });
+  renderWithTheme(<ExceptionsSection feedId={FEED_ID} devUser="dev-data-steward" roles={["data_steward"]} />);
+  await screen.findByTestId("exception-group-g1");
+  expect(screen.queryByLabelText("Select group g2")).toBeNull();  // no fix to decide yet
+  const approve = screen.getByRole("button", { name: "Approve selected" }) as HTMLButtonElement;
+  expect(approve.disabled).toBe(true);
+  fireEvent.click(screen.getByLabelText("Select group g1"));
+  expect(approve.disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Reject selected" }));
+  const confirm = screen.getByRole("button", { name: "Confirm rejection" }) as HTMLButtonElement;
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(approve);
+  await waitFor(() => expect(fetchStub.mock.calls.some(([u, i]) => String(u).endsWith("/exceptions/decision")
+    && String(i?.body).includes('"group_keys":["g1"]') && String(i?.body).includes('"decision":"approved"'))).toBe(true));
+});
+
+test("a held load is rerun with a reason; the typed result is said in words", async () => {
+  const fetchStub = stubFetch({ [FEED_PATH]: [counts()], "GET /api/amaze/loads/l1/exceptions?offset=0": view(),
+    "POST /api/amaze/loads/l1/rerun": { result: { outcome: "rerun_still_held", load_id: "l2", trust_score: "83.3",
+      previous_score: "50.0", open_groups: 1 } } });
+  renderWithTheme(<ExceptionsSection feedId={FEED_ID} devUser="dev-data-steward" roles={["data_steward"]} />);
+  await screen.findByTestId("exception-group-g1");
+  const rerun = screen.getByRole("button", { name: "Rerun this load" }) as HTMLButtonElement;
+  expect(rerun.disabled).toBe(true);  // a reason first
+  fireEvent.change(screen.getByLabelText("Reason for the rerun"), { target: { value: "Waived." } });
+  fireEvent.click(rerun);
+  await waitFor(() => expect(fetchStub.mock.calls.some(([u, i]) => String(u).endsWith("/loads/l1/rerun")
+    && String(i?.body).includes('"reason":"Waived."'))).toBe(true));
+  const said = await screen.findByTestId("rerun-result");
+  expect(said.textContent).toContain("still held");
+  expect(said.textContent).toContain("83.3");
+  expect(said.textContent).toContain("50.0");
+});
+
+test("a rerun that needs the owner's go-live says so", async () => {
+  stubFetch({ [FEED_PATH]: [counts()], "GET /api/amaze/loads/l1/exceptions?offset=0": view(),
+    "POST /api/amaze/loads/l1/rerun": { result: { outcome: "rerun_needs_go_live", load_id: "l1", detail: "The owner approves a go-live." } } });
+  renderWithTheme(<ExceptionsSection feedId={FEED_ID} devUser="dev-data-steward" roles={["data_steward"]} />);
+  await screen.findByTestId("exception-group-g1");
+  fireEvent.change(screen.getByLabelText("Reason for the rerun"), { target: { value: "Trimmed." } });
+  fireEvent.click(screen.getByRole("button", { name: "Rerun this load" }));
+  expect((await screen.findByTestId("rerun-result")).textContent).toContain("needs the data owner's go-live");
+});
+
 test("a released load's groups are for information only", async () => {
   stubFetch({ [FEED_PATH]: [counts({ status: "released" })],
               "GET /api/amaze/loads/l1/exceptions?offset=0": view({ status: "released", can_fix: false }) });

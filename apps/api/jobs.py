@@ -52,6 +52,7 @@ from ports.config import Settings
 from ports.connectors import SourceConnector, get_connector
 from ports.connectors.catalogue import SourceCatalogue
 from ports.identity import Identity
+from ports.identity.base import User
 from ports.notify import get_notifier
 from ports.notify.inapp import InAppNotifier
 from ports.scheduler import Scheduler
@@ -228,6 +229,48 @@ class DailyFetch:
                 return "load_in_progress"
             session.commit()  # the received load is visible to everyone, so a second one is refused
             load_id = load.id
+        return self._run_received(load_id, live, today)
+
+    def rerun_held_load(self, load_id: UUID, *, reason: str, user: User, today: date | None = None):
+        """Phase 7.14, T3: the rerun of a held load (plan, 2.6). start_rerun() makes the new received load (or a typed
+        refusal) and commits it; then the same pipeline as any scheduled load runs it: step 12 (which leaves out only
+        the held load's own hash), the engine (the feed's current waivers applied), steps 15 and 20. The result is typed:
+        released, still held, or not loaded."""
+        from core.repositories.certifications import LoadCertificationRepository
+        from core.steps.exceptions import RerunNotLoaded, RerunReleased, RerunStarted, RerunStillHeld, start_rerun
+        from core.steps.exceptions import load_exceptions
+
+        with self.session_factory() as session:
+            try:
+                started = start_rerun(session, load_id=load_id, reason=reason, user=user)
+                live = GoLiveRepository(session).latest(LoadRepository(session).get(load_id).feed_id)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+        if not isinstance(started, RerunStarted):
+            return started
+        status = self._run_received(started.load_id, live, today or date.today())
+        with self.session_factory() as session:
+            try:
+                new = LoadRepository(session).get(started.load_id)
+                before = LoadCertificationRepository(session).for_load(load_id)
+                after = LoadCertificationRepository(session).for_load(started.load_id)
+                if after is None:
+                    detail = (new.arrival_detail or {}).get("reason") or new.failure
+                    return RerunNotLoaded(load_id=new.id, status=status, detail=detail)
+                previous = before.trust_score if before else None
+                if status == "released":
+                    return RerunReleased(load_id=new.id, rerun_of=load_id, trust_score=after.trust_score,
+                                         previous_score=previous, waived_rows=after.waived_rows)
+                return RerunStillHeld(load_id=new.id, rerun_of=load_id, trust_score=after.trust_score,
+                                      previous_score=previous,
+                                      open_groups=load_exceptions(session, new.id).total_groups)
+            finally:
+                session.rollback()
+
+    def _run_received(self, load_id: UUID, live, today: date) -> str:
+        """Steps 12, 13, 15 and 20 on a received scheduled load: the tail of load_feed(), shared with a rerun."""
         arrival = self._check_arrival(load_id)  # step 12: read, end the read, the file with no session, locked write
         if arrival.outcome in ("resent_quarantined", "breaking_held"):  # the load ended on arrival: no engine
             return "quarantined" if arrival.outcome == "resent_quarantined" else "held"

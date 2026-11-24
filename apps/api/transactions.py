@@ -127,9 +127,9 @@ from core.repositories.errors import UpstreamNotApproved  # noqa: E402
 
 CONFLICTS = CONFLICTS + (UpstreamNotApproved,)
 # phase 7.14: exceptions of a held load
-from core.repositories.errors import ExceptionGroupChangedMeanwhile, LoadNotHeld  # noqa: E402
+from core.repositories.errors import ExceptionGroupChangedMeanwhile, GroupDecisionRefused, LoadNotHeld  # noqa: E402
 
-CONFLICTS = CONFLICTS + (LoadNotHeld, ExceptionGroupChangedMeanwhile)
+CONFLICTS = CONFLICTS + (LoadNotHeld, ExceptionGroupChangedMeanwhile, GroupDecisionRefused)
 
 
 def read(session: Session, work: Callable[[], T]) -> T:

@@ -93,6 +93,12 @@ def held_on(engine, tmp_path):
                             context=FinishContext(notifier=InAppNotifier(session), threshold=Decimal("90"),
                                                   operations=[], backend_team=[]))
         held = a_held_load_with_three_kinds_of_group(w)
+        from core.domain.profiling import FileColumn
+        from tests.onboarded import profiled
+
+        profiled(session, feed, columns=[  # step 12 compares a delivery with the feed's latest profile
+            FileColumn(name=n, type=t, null_count=0, null_rate=0.0, distinct_count=1)
+            for n, t in (("instr_id", "VARCHAR"), ("trade_date", "DATE"), ("traded_qty", "BIGINT"))])
         session.commit()
         return feed, held.id
 
@@ -120,6 +126,57 @@ async def test_the_owners_decision_commits_the_waiver(own_schema, tmp_path):
             assert response.status_code == 200, response.text
     assert committed(own_schema, "SELECT action, rule_key, decided_by, applied_by FROM exception_resolutions") == [
         ("waived", NEGATIVE_RULE, "dev-data-owner", "agent")]
+
+
+async def test_a_bulk_decision_commits_the_decisions(own_schema, tmp_path):
+    _feed, load = held_on(own_schema, tmp_path)
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None)) as client:
+        await client.post(f"/api/amaze/loads/{load}/exceptions/propose", headers=STEWARD)
+        view = (await client.get(f"/api/amaze/loads/{load}/exceptions", headers=STEWARD)).json()
+        keys = [g["group_key"] for g in view["groups"]]
+        response = await client.post(f"/api/amaze/loads/{load}/exceptions/decision", headers=STEWARD,
+                                     json={"group_keys": keys, "decision": "approved"})
+        assert response.status_code == 200, response.text
+        assert response.json()["result"]["outcome"] == "fixes_decided"
+    assert committed(own_schema, "SELECT action FROM exception_resolutions ORDER BY action") == [("referred",)]
+    assert committed(own_schema, "SELECT count(*) FROM transformations") == [(1,)]
+    assert committed(own_schema, "SELECT count(*) FROM approvals a JOIN proposals p ON p.id = a.proposal_id "
+                                 "WHERE a.decided_by = 'dev-data-steward' AND a.decision = 'approved' "
+                                 "AND (p.kind = 'exception_fix' OR p.payload ? 'exception_group')") == [(3,)]
+
+
+async def test_a_rerun_commits_a_new_recorded_load_and_leaves_the_held_one_alone(own_schema, tmp_path):
+    from apps.api.deps import get_daily_fetch
+    from apps.api.main import app
+    from ports.storage.local import LocalBlobStore
+    from tests.test_commit_visibility import daily_on
+
+    _feed, load = held_on(own_schema, tmp_path)
+    daily = daily_on(own_schema, LocalBlobStore(tmp_path / "blob"))
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None)) as client:
+        app.dependency_overrides[get_daily_fetch] = lambda: daily
+        view = (await client.get(f"/api/amaze/loads/{load}/exceptions", headers=STEWARD)).json()
+        for rule in ("volume_over_100000", NEGATIVE_RULE):
+            key = next(g["group_key"] for g in view["groups"] if g["rule_key"] == rule)
+            await client.post(f"/api/amaze/loads/{load}/exceptions/fixes", headers=STEWARD,
+                              json={"group_key": key, "action": "waive", "reason": "Real values."})
+            for headers in (STEWARD, OWNER):
+                done = await client.post(f"/api/amaze/loads/{load}/exceptions/decision", headers=headers,
+                                         json={"group_keys": [key], "decision": "approved"})
+                assert done.status_code == 200, done.text
+        response = await client.post(f"/api/amaze/loads/{load}/rerun", headers=STEWARD,
+                                     json={"reason": "Both are real."})
+        assert response.status_code == 200, response.text
+        assert response.json()["result"]["outcome"] == "rerun_still_held"  # 1 of 6 rows still flagged: 83.3
+        assert (await client.post(f"/api/amaze/loads/{load}/rerun", headers=OWNER,
+                                  json={"reason": "x"})).status_code == 403
+    assert committed(own_schema, "SELECT status, rerun_reason, rerun_of_load_id = :l FROM loads "
+                                 "WHERE rerun_of_load_id IS NOT NULL", l=load) == [("held", "Both are real.", True)]
+    assert committed(own_schema, "SELECT status FROM loads WHERE id = :l", l=load) == [("held",)]
+    assert committed(own_schema, "SELECT waived_rows, flagged_rows FROM load_certifications c JOIN loads l ON l.id = "
+                                 "c.load_id WHERE l.rerun_of_load_id IS NOT NULL") == [(2, 1)]
+    assert committed(own_schema, "SELECT count(*) FROM standard_records WHERE load_id = :l AND cardinality(waived) > 0",
+                     l=load) == [(0,)]  # the held load's records were not touched
 
 
 async def test_a_manual_fix_commits_the_proposal(own_schema, tmp_path):

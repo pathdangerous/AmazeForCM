@@ -149,7 +149,14 @@ export const getFeedExceptions = (feedId: string, devUser: string) =>
   apiGet<LoadExceptionCounts[]>(`/api/amaze/feeds/${feedId}/exceptions`, devUser);
 export const getLoadExceptions = (loadId: string, devUser: string, offset = 0) =>
   apiGet<LoadExceptions>(`/api/amaze/loads/${loadId}/exceptions?offset=${offset}`, devUser);
-export const proposeExceptionFixes = (loadId: string, devUser: string) =>
+export type RerunResult = { outcome: string; load_id: string; reason?: string; detail?: string | null; status?: string;
+  trust_score?: string; previous_score?: string | null; waived_rows?: number; open_groups?: number };
+export const decideExceptionGroups = (loadId: string, body: { group_keys: string[]; decision: "approved" | "rejected";
+  note?: string }, devUser: string) =>
+  apiPost<{ result: { outcome: string }; exceptions: LoadExceptions }>(`/api/amaze/loads/${loadId}/exceptions/decision`, body, devUser);
+export const rerunHeldLoad = (loadId: string, reason: string, devUser: string) =>
+  apiPost<{ result: RerunResult }>(`/api/amaze/loads/${loadId}/rerun`, { reason }, devUser);
+export const proposeExceptionFixes =(loadId: string, devUser: string) =>
   apiPost<{ result: { outcome: string; no_fix: { group_key: string; reason: string }[] }; exceptions: LoadExceptions }>(
     `/api/amaze/loads/${loadId}/exceptions/propose`, {}, devUser);
 export const addExceptionFix = (loadId: string, body: { group_key: string; action: string; reason: string;
@@ -213,6 +220,7 @@ export type ArrivalOutcome = "on_time_complete" | "resent_quarantined" | "additi
 export type Certification = {
   rows: number; flagged_rows: number; trust_score: string; threshold: string;
   outcome: "released" | "held_consumers_warned"; warned: string[];
+  waived_rows?: number; waived_counts?: Record<string, number>;  // 7.14: counted as unflagged, shown apart
 };
 export type Notification = { id: string; created_at: string; subject: string; body: string; link: string | null;
                              read_at: string | null };
@@ -257,6 +265,7 @@ export type LoadOnPage = {
   arrival_detail: { reason?: string | null; columns?: string[]; missing?: string[]; added?: string[];
                     same_as?: string; not_parked?: string } | null;
   certification: Certification | null;
+  rerun_of_load_id?: string | null; rerun_reason?: string | null;  // 7.14: a rerun of a held load's file, and why
 };
 export type ReturnedRule = {
   rule_key: string; sql: string; description: string; share: number; flagged_rows: number; total_rows: number;

@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from uuid import UUID
 
-from sqlalchemy import any_, func, select
+from sqlalchemy import any_, func, select, text
 from sqlalchemy.orm import Session
 
 from core.domain.load import StandardRecord, StandardRecordDraft
@@ -30,6 +30,18 @@ class StandardRecordRepository:
         """The records of the load that at least one rule flagged."""
         return self._session.scalar(select(func.count()).select_from(Row).where(
             Row.load_id == load_id, func.cardinality(Row.flags) > 0)) or 0
+
+    def count_waived(self, load_id: UUID) -> int:
+        """Phase 7.14: records with no flag and at least one waived exception (counted as unflagged in the score)."""
+        return self._session.scalar(select(func.count()).select_from(Row).where(
+            Row.load_id == load_id, func.cardinality(Row.flags) == 0, func.cardinality(Row.waived) > 0)) or 0
+
+    def waived_counts(self, load_id: UUID) -> dict[str, int]:
+        """Phase 7.14: per rule key, the exceptions of the load a waiver took out of the flags."""
+        rows = self._session.execute(text(
+            "SELECT k, count(*) FROM standard_records, unnest(waived) AS u(k) WHERE load_id = :l GROUP BY k"),
+            {"l": load_id})
+        return {rule: n for rule, n in rows}
 
     def flagged_row_numbers(self, load_id: UUID, rule_key: str, limit: int = 5) -> list[int]:
         """The first `limit` file row numbers the rule flagged in the load, ascending."""

@@ -119,6 +119,9 @@ class ArrivalPlan(BaseModel):
     template_types: dict[str, str] = {}  # T4: their DuckDB types, for the drift report
     template_spec: SourceSpec
     earlier: dict[str, UUID]  # SHA-256 -> the oldest scheduled load that had it
+    rerun_of: UUID | None = None  # phase 7.14: the held load this load reruns; only its hash is left out of `earlier`
+    rerun_reason: str | None = None
+    rerun_sha256: str | None = None  # the held load's own hash, so the detail can say the rerun is the same file
 
 
 class ArrivalCheck(BaseModel):
@@ -202,7 +205,9 @@ def arrival_plan(session: Session, *, load_id: UUID) -> ArrivalPlan:
     return ArrivalPlan(load_id=load.id, feed_id=feed.id, feed_code=feed.code, file_ref=load.file_ref,
                        fetch_id=fetch_id, template=[c.name for c in template.columns],
                        template_types={c.name: c.type for c in template.columns}, template_spec=template.spec,
-                       earlier=loads.scheduled_hashes(feed.id))
+                       earlier=loads.scheduled_hashes(feed.id, leave_out=load.rerun_of_load_id),
+                       rerun_of=load.rerun_of_load_id, rerun_reason=load.rerun_reason,
+                       rerun_sha256=(loads.get(load.rerun_of_load_id).content_sha256 if load.rerun_of_load_id else None))
 
 
 # ---------------------------------------------------------------- check (no session)
@@ -291,6 +296,9 @@ def record_arrival(session: Session, check: ArrivalCheck, *, notifier: Notifier,
 
 def _detail(check: ArrivalCheck, *, run_id: UUID | None, run_reused: bool) -> dict:
     detail: dict = {"columns": check.columns, "reason": check.reason}
+    if check.plan.rerun_of is not None:  # 7.14: never silent: what is rerun, why, and that it is the same file
+        detail["rerun"] = {"of": str(check.plan.rerun_of), "reason": check.plan.rerun_reason,
+                           "sha256_matches": check.sha256 is not None and check.sha256 == check.plan.rerun_sha256}
     if check.drift is not None:
         detail["drift"] = check.drift.model_dump(mode="json")
     if check.kind == "resent_quarantined":

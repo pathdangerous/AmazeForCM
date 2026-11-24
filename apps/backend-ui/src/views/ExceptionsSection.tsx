@@ -1,8 +1,9 @@
 import { Button, Group, NativeSelect, Table, Text, TextInput, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import {
-  addExceptionFix, describeError, getFeedExceptions, getLoadExceptions, proposeExceptionFixes, words,
-  type ExceptionGroup, type GroupFix, type LoadExceptionCounts, type LoadExceptions,
+  addExceptionFix, decideExceptionGroups, describeError, getFeedExceptions, getLoadExceptions, proposeExceptionFixes,
+  rerunHeldLoad, words,
+  type ExceptionGroup, type GroupFix, type LoadExceptionCounts, type LoadExceptions, type RerunResult,
 } from "../api";
 import { formatWhen } from "../theme";
 
@@ -29,6 +30,18 @@ function FixText({ fix }: { fix: GroupFix }) {
       <div className="muted">{next ? `waits for ${next}` : words(fix.status)}</div>
     </span>
   );
+}
+
+// The rerun's typed result, in words (plan, 2.6).
+function rerunWords(r: RerunResult): string {
+  switch (r.outcome) {
+    case "rerun_released": return `Rerun released: trust ${r.trust_score} (it was ${r.previous_score ?? "-"}); ${r.waived_rows ?? 0} rows waived.`;
+    case "rerun_still_held": return `Rerun still held: trust ${r.trust_score} (it was ${r.previous_score ?? "-"}); ${r.open_groups ?? 0} groups still flag rows.`;
+    case "rerun_needs_go_live": return `The rerun needs the data owner's go-live first. ${r.detail ?? ""}`;
+    case "nothing_to_rerun": return r.reason === "not_held" ? "Only a held load is rerun." : "Nothing was resolved since the last rerun.";
+    case "rerun_in_progress": return "Another load of this feed is running; try again when it has finished.";
+    default: return `The rerun was not loaded (${r.status ?? r.outcome})${r.detail ? `: ${r.detail}` : ""}.`;
+  }
 }
 
 function AddFix({ groups, onAdd }: { groups: ExceptionGroup[]; onAdd: (g: string, a: string, r: string) => Promise<void> }) {
@@ -59,7 +72,13 @@ export default function ExceptionsSection({ feedId, devUser, roles = [] }: { fee
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState("");
+  const [why, setWhy] = useState("");
+  const [rerun, setRerun] = useState<RerunResult | null>(null);
   const steward = roles.includes("data_steward");
+  const decider = steward || roles.includes("data_owner");
 
   useEffect(() => {
     getFeedExceptions(feedId, devUser).then((all) => {
@@ -115,6 +134,47 @@ export default function ExceptionsSection({ feedId, devUser, roles = [] }: { fee
               <Button variant="default" disabled={busy} onClick={() => setAdding(!adding)}>Add a fix</Button>
             </Group>
           )}
+          {view.can_fix && decider && (
+            <Group gap="sm" mt="xs" data-testid="bulk-decision">
+              <Button disabled={busy || picked.length === 0} onClick={() => void act(async () => {
+                const r = await decideExceptionGroups(view.load_id, { group_keys: picked, decision: "approved" }, devUser);
+                setPicked([]);
+                return r.exceptions;
+              }, `Approved for ${picked.length} group(s).`)}>Approve selected</Button>
+              <Button variant="default" disabled={busy || picked.length === 0} onClick={() => setRejecting(!rejecting)}>
+                Reject selected</Button>
+              {rejecting && (
+                <>
+                  <TextInput aria-label="Why it is rejected" placeholder="Why" value={note}
+                             onChange={(e) => setNote(e.currentTarget.value)} />
+                  <Button disabled={busy || !note.trim()} onClick={() => void act(async () => {
+                    const r = await decideExceptionGroups(view.load_id, { group_keys: picked, decision: "rejected", note: note.trim() }, devUser);
+                    setPicked([]); setRejecting(false); setNote("");
+                    return r.exceptions;
+                  }, `Rejected for ${picked.length} group(s).`)}>Confirm rejection</Button>
+                </>
+              )}
+            </Group>
+          )}
+          {view.can_fix && steward && (
+            <Group gap="sm" align="end" mt="xs" data-testid="rerun">
+              <TextInput label="Reason for the rerun" value={why} onChange={(e) => setWhy(e.currentTarget.value)} />
+              <Button disabled={busy || !why.trim()} onClick={async () => {
+                setBusy(true);
+                try {
+                  setRerun((await rerunHeldLoad(view.load_id, why.trim(), devUser)).result);
+                  setError(null);
+                  load();
+                } catch (err: unknown) {
+                  setError(describeError(err));
+                } finally {
+                  setBusy(false);
+                }
+              }}>Rerun this load</Button>
+              <span className="muted">a new load of the same file, under the current configuration; this load stays held</span>
+            </Group>
+          )}
+          {rerun && <Text mt="xs" data-testid="rerun-result">{rerunWords(rerun)}</Text>}
           {adding && view.can_fix && steward && (
             <AddFix groups={view.groups} onAdd={(group_key, action, reason) => act(async () => {
               const r = await addExceptionFix(view.load_id, { group_key, action, reason }, devUser);
@@ -125,12 +185,16 @@ export default function ExceptionsSection({ feedId, devUser, roles = [] }: { fee
           <Table.ScrollContainer minWidth={900}>
             <Table data-testid="exception-groups" verticalSpacing="xs">
               <Table.Thead>
-                <Table.Tr><Table.Th>Rule</Table.Th><Table.Th>Pattern</Table.Th><Table.Th>Exceptions</Table.Th>
+                <Table.Tr><Table.Th></Table.Th><Table.Th>Rule</Table.Th><Table.Th>Pattern</Table.Th><Table.Th>Exceptions</Table.Th>
                   <Table.Th>Sample rows</Table.Th><Table.Th>State</Table.Th><Table.Th>Fix</Table.Th></Table.Tr>
               </Table.Thead>
               <Table.Tbody>
                 {view.groups.map((g) => (
                   <Table.Tr key={g.group_key} data-testid={`exception-group-${g.group_key}`}>
+                    <Table.Td>{view.can_fix && g.fix?.status === "pending" && (
+                      <input type="checkbox" aria-label={`Select group ${g.group_key}`} checked={picked.includes(g.group_key)}
+                             onChange={(e) => setPicked(e.currentTarget.checked ? [...picked, g.group_key]
+                               : picked.filter((k) => k !== g.group_key))} />)}</Table.Td>
                     <Table.Td><code>{g.rule_key}</code>{g.description && <div className="muted">{g.description}</div>}</Table.Td>
                     <Table.Td><code>{g.pattern}</code>
                       {g.elements.length === 0 && <div className="muted">the rule names no column: one group</div>}</Table.Td>

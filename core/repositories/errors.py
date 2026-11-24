@@ -376,6 +376,11 @@ class LoadNotHeld(RepositoryError):
     """Only a held load's exception groups take fixes (plan, assumption 6). The API answers 409."""
 
 
+class GroupDecisionRefused(RepositoryError):
+    """One group of a bulk decision cannot be decided as asked (no pending fix, not this person's step): the whole batch
+    is refused and the message names the group. The API answers 409."""
+
+
 class ExceptionGroupChangedMeanwhile(RepositoryError):
     """While the agent answered, a group of the input got a fix, lost one, or its load stopped being held: the answer
     is discarded (a discard row, nothing written). The API answers 409."""

@@ -112,13 +112,15 @@ class LoadRepository:
         self._session.flush()
         return Load.model_validate(row)
 
-    def scheduled_hashes(self, feed_id: UUID) -> dict[str, UUID]:
+    def scheduled_hashes(self, feed_id: UUID, *, leave_out: UUID | None = None) -> dict[str, UUID]:
         """The SHA-256 of the feed's scheduled loads that were loaded, released or held, with the oldest load that
         had it. A failed_rolled_back, abandoned or quarantined load is not compared (phase 7 assumption 12): after
-        a new go-live the same file must load."""
+        a new go-live the same file must load. `leave_out` (phase 7.14): the one held load a rerun reruns; every other
+        load still counts, so a rerun cannot hide a real resend."""
         query = (select(Row.content_sha256, Row.id)
                  .where(Row.feed_id == feed_id, Row.purpose == "scheduled", Row.content_sha256.is_not(None),
-                        Row.status.in_(("loaded", "released", "held")))
+                        Row.status.in_(("loaded", "released", "held")),
+                        Row.id != leave_out if leave_out is not None else True)
                  .order_by(Row.received_at.desc(), Row.created_at.desc()))
         return {sha: load_id for sha, load_id in self._session.execute(query)}  # the oldest is read last, so it wins
 
