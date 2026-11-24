@@ -186,6 +186,20 @@ report jobs (in-app notices; email stays a stub), T4 the audit view with a CSV e
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.15.
   Push `phase-7.15`; do not merge.
 
+## Phase 7.16 — Demo data for the reports; recorded erase of profiling history
+
+Plan: `docs/plans/phase-7.16.md`. Tasks: plan, T0a "Preview today so far" on the Reports screen (numbers only, never
+stored), T0b `python -m core.seed --demo-history` (21 days through the real daily pipeline with an injected clock, one
+weekday pattern), T1 `amaze_erase_profiles(feed, before, reason, by)` (migration 0036: the only delete path of a profile;
+keeps the latest profile and any profile a registration, glossary run, arrival, code version or report points to; writes
+append-only `profile_erasures`), T2 the History panel (select, reason, confirm; "erased by X") and the audit view's rows.
+
+- Exception to rules 1/7, like 7.9's: a profile is a measurement of a file, not configuration; only the function deletes it,
+  and the record outlives it.
+- Out of scope: erasing anything but profiles, erasing the latest profile, email.
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.16.
+  Push `phase-7.16`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
