@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
 from core.domain.configuration import Mapping, MappingDraft, Rule, RuleDraft
-from core.domain.proposal import ProposalKind
+from core.domain.proposal import Proposal, ProposalKind
 from core.repositories.errors import (
     FeedNotFound,
     FeedNotRegistered,
@@ -29,6 +29,17 @@ def _check_feed_and_proposal(session: Session, feed_id: UUID, proposal_id: UUID,
     proposal = ProposalRepository(session).require_approved(proposal_id, kind=kind)
     if proposal.feed_id is not None and proposal.feed_id != feed_id:
         raise ProposalForAnotherFeed(f"Proposal {proposal_id} was approved for feed {proposal.feed_id}, not {feed_id}")
+
+
+SYSTEM = "system"  # the actor that rejects a pending proposal so that its step can run again (Back, a stale rerun)
+
+
+def _by_a_person(session: Session, rejected: list[Proposal]) -> list[Proposal]:
+    """The rejected proposals a person rejected (phase 7.13, T4): a rejection by `system` is no judgement on the
+    proposal, so it does not stop the agent proposing the same again."""
+    proposals = ProposalRepository(session)
+    return [p for p in rejected
+            if any(a.decision == "rejected" and a.decided_by != SYSTEM for a in proposals.approvals(p.id))]
 
 
 class MappingRepository:
@@ -86,7 +97,7 @@ class MappingRepository:
         """Every element a rejected mapping proposal of this column offered: not proposed again (assumption 27)."""
         rejected = ProposalRepository(self._session).list_for_feed_column("mapping", feed_id, source_field,
                                                                           status="rejected")
-        return {key for p in rejected for key in p.payload.get("candidates", [])}
+        return {key for p in _by_a_person(self._session, rejected) for key in p.payload.get("candidates", [])}
 
 
 class RuleRepository:
@@ -126,7 +137,7 @@ class RuleRepository:
     def rejected_keys(self, feed_id: UUID) -> set[str]:
         """The rule keys of this feed's rejected rule proposals: not proposed again (phase 6 plan, assumption 11)."""
         rejected = ProposalRepository(self._session).list_for_feed(feed_id, "rule", status="rejected")
-        return {p.payload["rule_key"] for p in rejected}
+        return {p.payload["rule_key"] for p in _by_a_person(self._session, rejected)}
 
     def history(self, feed_id: UUID, rule_key: str) -> list[Rule]:
         query = (
