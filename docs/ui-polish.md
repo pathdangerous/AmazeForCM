@@ -57,3 +57,7 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Reports (phase 7.15) | "Make yesterday's report" is the only way to ask on screen; a day or month cannot be chosen | A date or month picker beside it | open |
 | backend-ui, Audit (phase 7.15) | The person filter is free text (a user id) | A picker of the people who decided something in the month | open |
 | backend-ui, Audit (phase 7.15) | The screen shows 2000 rows at most and has no paging | Page by 100 rows, keep the CSV whole | open |
+| backend-ui, Reports (phase 7.16) | The preview is for the signed-in person's own role only, and shows no narrative; it cannot be kept or compared with the stored report | A "Compare with yesterday" line under the preview's totals | open |
+| backend-ui, Feed page, History (phase 7.16) | The erase picks one cutoff version; a single profile cannot be ticked, and the kept ones are named only in the preview line | A checkbox per profile (kept ones disabled, with the reason beside them) feeding the same cutoff | open |
+| backend-ui, Feed page, History (phase 7.16) | History lists profiles and sign-offs in two blocks; an erased profile and the sign-off beside it are not interleaved | One timeline by time | open |
+| backend-ui, Audit (phase 7.16) | An erase row shows "erased profiles" with the versions in the small print; the role column is empty | Show the versions as a badge and the person's role at the time | open |

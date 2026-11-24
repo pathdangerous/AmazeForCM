@@ -142,3 +142,25 @@ match the arrays and that the reason and the person are not blank.
 ## 6. Deferred
 
 Erasing other history (loads, standard records); an erase of the latest profile; scheduled retention; email.
+
+## 7. Outcome and deviations
+
+- Commits: plan `98ffcc2`, T0a `c346726`, T0b `7cf5044`, T1 `60ca0e9`, T2 `39ce9f0`; the finish: see `git log phase-7.16`.
+- Assumption 3 changed in detail: the demo defaults also name the feed's date column (`RECORD_DATE`, written `31-12-2019`),
+  because a constant provider date would make a second pattern (a provider-date one) beside the weekday one.
+- Found by running the story, not by the unit tests: (1) an approved waiver applies to every later scheduled load, so the
+  seed must run before any waiver (the story seeds right after code version 1); (2) the security master's two duplicate rows
+  flag `duplicate_key` and `one_row_per_ticker` on every day, and 7.15's patterns report a rule that fails on every delivery
+  once per weekday (14 patterns). The seed numbers repeated tickers (`unique_column`) so ordinary days are clean. The
+  pattern finder itself is unchanged: a rule that fails on every load of a feed still appears seven times. Worth a decision
+  in a later phase ("always failing" is a standing defect, not a weekday pattern).
+- Files outside the plan: `apps/api/jobs.py` (the `clock` field), `core/steps/errors.py` (`UnknownProfileVersion`),
+  `core/repositories/tables.py` (`ProfileErasureRow`), `core/seed.py` (the flag), `core/steps/feed_page.py`, `audit.py`,
+  `apps/api/routers/amaze.py` and `reports.py` (the routes), `e2e/demo_history.py` (the command on the story's database),
+  `tests/test_migrations.py` (head 0036, the two 0036 migration tests) and `tests/test_feed_delete.py` (`profile_erasures`
+  is a record that outlives the feed, like `feed_deletions`), `CLAUDE.md` (one sentence under the rule 1/7 exception).
+- Not done: an erase that deletes something is not shown in the demo story (the demo feed's two profiles are both kept); the
+  tests and the component test prove it. The `code_version` keep reason is proved by a code version that names a profile id
+  in its files, since no code version records one today.
+- The two 0036 migration tests (`tests/test_migrations.py`) were written after the migration, so no RED line was taken for
+  them; the 12 database tests were seen failing first (`12 failed`, `function amaze_erase_profiles(...) does not exist`).

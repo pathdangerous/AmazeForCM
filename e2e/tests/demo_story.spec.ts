@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { BACKEND, FEED_CODE, REPO, upload, walk, type StepHooks } from "../operator_flow";
 
@@ -13,6 +14,7 @@ import { BACKEND, FEED_CODE, REPO, upload, walk, type StepHooks } from "../opera
 // page's Mapping section (the mapping) and its Go live section (prepare and approve), as the operator.
 
 const V2 = `${REPO}fixtures/sources/Synthetic_Security_Master_v2.xlsx`;
+const PYTHON = process.platform === "win32" ? ".venv\\Scripts\\python.exe" : ".runtime/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14";
 
 async function reject(page: Page, card: ReturnType<Page["locator"]>, why: string) {
   await card.getByRole("button", { name: "Reject", exact: true }).click();
@@ -98,6 +100,12 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(code.getByTestId("code-meta")).toContainText("Version 1, approved by dev-operator", { timeout: 30_000 });
   await expect(code.getByRole("button", { name: "curated.sql" })).toBeVisible();
   const feedId = page.url().split("/feed/")[1];
+
+  // 7.16: the history of the last 21 days, made by the real daily pipeline (python -m core.seed --demo-history, here on the
+  // story's database, committed while the API runs). After the first load, before version 2: waivers approved later apply
+  // to every later scheduled load, so the Monday failures must be there first.
+  const seeded = execFileSync(PYTHON, ["-m", "e2e.demo_history"], { cwd: REPO, encoding: "utf-8" });
+  expect(seeded).toContain("demo history: 21 days loaded");
 
   // version 2: store the file, then Load now
   await page.getByTestId("reupload-file").setInputFiles(V2);
@@ -196,6 +204,34 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(audit.getByTestId("audit-row").filter({ hasText: /version \d+/ }).first()).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent("download"), audit.getByRole("button", { name: "Download CSV" }).click()]);
   expect(download.suggestedFilename()).toMatch(/^audit-\d{4}-\d{2}\.csv$/);
+
+  // 7.16: Reports on the history seeded after code version 1 (above): the same rule failed on every Monday, so Reports shows
+  // one weekday pattern and a report of yesterday has numbers. "Preview today so far" counts today like a report and stores
+  // nothing.
+  await page.goto(`${BACKEND}#/reports`);
+  const reportRows = page.getByTestId("report-row");
+  await expect(reportRows).toHaveCount(1, { timeout: 30_000 }); // yesterday's report of the 7.15 step, version 1
+  await page.getByRole("button", { name: "Preview today so far (data owner)" }).click();
+  const preview = page.getByTestId("report-preview");
+  await expect(preview).toContainText("Preview: not stored", { timeout: 30_000 });
+  await expect(preview.getByTestId("report-totals")).toContainText("Loads");
+  await expect(reportRows).toHaveCount(1); // the preview stored nothing
+  await page.getByRole("button", { name: "Make yesterday's report (data owner)" }).click();
+  await expect(page.getByText("Yesterday's report was made: version 2.")).toBeVisible({ timeout: 60_000 });
+  await expect(reportRows).toHaveCount(2);
+  await reportRows.first().getByRole("link").click();
+  await expect(page.getByTestId("report-totals")).toContainText("Loads1", { timeout: 30_000 }); // yesterday's history load
+  const patterns = page.getByTestId("report-patterns");
+  await expect(patterns).toContainText("best_sales_not_negative");
+  await expect(patterns).toContainText("every Monday: 3 of 3 loads");
+  await expect(patterns.locator("li")).toHaveCount(1); // one pattern: the weekday one
+
+  // 7.16: the feed's History says why each profile stays; nothing can be erased here (the registered profile and the latest
+  // one are kept), and the panel says so. An erase itself needs older, unreferenced profiles (tests and the component test).
+  await page.goto(`${BACKEND}#/feed/${feedId}`);
+  const history = page.getByTestId("profile-history");
+  await expect(history.getByTestId("history-profile-1")).toContainText("kept: its registration", { timeout: 30_000 });
+  await expect(history.getByTestId("erase-none")).toContainText("Nothing can be erased");
 });
 
 // keeps the unused import honest for tooling that lists spec files

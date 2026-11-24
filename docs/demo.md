@@ -1,6 +1,9 @@
 # Demo: from a file to released data, a second delivery that drifts, its exceptions fixed, and the audit (15 minutes)
 
-Covers phases 7.12 to 7.15. Phase 7.15 adds **Reports** (a daily and a monthly report per data owner and data steward, made
+Covers phases 7.12 to 7.16. Phase 7.16 adds **demo history** (`python -m core.seed --demo-history`: 21 past days through the
+real pipeline, the same rule failing every Monday, so Reports has numbers and one weekday pattern), **Preview today so far**
+on Reports (counted like a report, never stored) and the **recorded erase of old profiles** (History on the feed page; the
+audit lists it). Phase 7.15 adds **Reports** (a daily and a monthly report per data owner and data steward, made
 every morning, numbers counted by code, an optional narrative apart from them), recurring failure patterns, and the monthly
 **Audit** with a CSV. Phase 7.13 adds **Run all agents**: after one click on the profile, every onboarding
 agent drafts ahead on the drafts before it, and you review the whole chain once, top to bottom. Phase 7.14 adds
@@ -31,6 +34,32 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 | 12-13 | "Counted by who did it." | Overview. | **Exceptions**: fixes approved by agent proposals and by hand; groups open and waiting for the owner; reruns released and still held. |
 | 13-14 | "A report every morning; the numbers are code's, the words are the agent's." | **Insights, Reports**: press **Make yesterday's report (data owner)**, open it. | The **Narrative** (written by the ReportSummariserAgent, logged) sits apart from the **Numbers** (loads, held, rows, flagged and waived rows, trust, open groups, waivers, reruns, drift, **recurring patterns** with their dates as evidence, groups **referred to the provider** once each). The demo's loads are today, so yesterday's report is quiet; the job makes one for every owner and steward each morning and on the 1st the month's. **New version** makes version 2: the numbers fingerprint is the same. A narrative that states a figure the report does not hold is refused and the report is kept without it. |
 | 14-15 | "Every decision, who made the item, which code ran." | **Insights, Audit**: this month. Filter by feed or person. **Download CSV**. | One row per decision (who, role, approved or rejected, the item, **agent (ExceptionFixAgent)**, manual or system), the **code version** in force, **(waiver)**, and the **rerun** with who started it and why. The CSV has the same rows; a cell that starts like a formula is quoted. |
+| 15-16 | "Three weeks of history, through the real pipeline." | In a terminal: `.venv\Scripts\python -m core.seed --demo-history`. Then **Insights, Reports**: **Preview today so far (data owner)**, then **Make yesterday's report (data owner)** and open it. | The seed ran the daily pipeline (fetch, step 12, the engine, steps 15 and 20) for each of the 21 days before today, with a clock and a connector it injected; no row was written by the seed itself, so every guard held. The same rule (`best_sales_not_negative`) failed on every Monday: three held loads. The **preview** is today so far, marked "Preview: not stored" (no report, no notice, no model call). Yesterday's report now has **loads, rows and a trust score**, and **Recurring failure patterns** shows `best_sales_not_negative` "every Monday: 3 of 3 loads" with the three dates. |
+| 16-17 | "Old profiles go through one function, and it leaves a record." | Feed page, **History**. | Each profile says why it stays ("kept: its registration", "kept: it is the latest", a sign-off, a glossary run, a load's arrival, a code version, a report). When older profiles nobody points to exist, the panel offers: **Erase profiles older than** (a select), **Why it is erased**, **Erase**, **Confirm erase**. The erased entries stay in the list as "Profile 2: erased by Olive Operator, date: reason", and **Audit** lists the erase with who, why and which versions. In this demo both profiles are kept, so the panel says "Nothing can be erased". |
+
+## What the demo history and the profile erase do and do not do (7.16)
+
+- **Run order.** Onboard the security master and release its first load (minutes 0-8), then run the seed, **before** you
+  load version 2 and approve any waiver: an approved waiver applies to every later scheduled load, so a Monday seeded after
+  it would be waived, not flagged. (The story does it in this order; the three held Mondays then sit beside version 2's
+  held load in Exceptions.) `python -m core.seed --demo-history`
+  refuses in words when the feed, its go-live or its file is missing. Run it again and it changes nothing (a day that has a
+  scheduled load is skipped). Run `alembic upgrade head` (0036) on dev and on Replit first.
+- **What it writes.** Only what a delivery writes: one fetch, one load with its arrival, stages, records and certification
+  for each of the 21 days, and the notices a load in hypercare sends (21 of them). The loads' `received_at` is the injected
+  day (09:00 UTC); every other time column is the database's own, so a certification of a past load says it was made today.
+- **Why a Monday.** Any 21 consecutive days hold three Mondays, which is the pattern threshold (3). The Monday files carry
+  eight negative `BEST_SALES` values (8 of 70 rows: trust 88.6, held); every other day is clean: the file's one repeated
+  ticker is numbered (otherwise `duplicate_key` and `one_row_per_ticker` would fail every day and make a "pattern" for every
+  weekday) and each day's `RECORD_DATE` is that day (otherwise the provider date would repeat). If the feed was onboarded
+  with other rules the seed says so and no pattern appears.
+- **The preview** is numbers only: no narrative (that needs a logged model call), no stored row, no notice.
+- **The erase** is `amaze_erase_profiles(feed, before, reason, by)`, the only way a profile is deleted. It keeps the latest
+  profile and any a registration, sign-off, glossary run, arrival, code version or report points to. A profile is a
+  measurement of a file, not configuration, so this is an exception to rules 1 and 7 like 7.9's feed delete (CLAUDE.md names
+  it). The record (`profile_erasures`) is append-only and outlives the feed. Nothing to erase is an answer, not an error.
+- **Not in the demo.** An erase that deletes something needs unreferenced older profiles (a candidate re-profiled before its
+  sign-off); the tests and the component test cover it, the story shows the "Nothing can be erased" panel.
 
 ## What Exceptions does and does not do (7.14)
 
@@ -57,7 +86,5 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 
 - **More exception fixes.** 7.14 proposes a transformation, a waiver or a referral; a rule change and a remap are not built.
 - **Email for reports.** The report job tells people in the app; the email adapter is still a stub.
-- **Recorded erase of profiling history.** An erase of a feed's profiling history, recorded like 7.9's feed delete, never an
-  edit in place (rule 7).
 - **CI/CD pipeline.** Generated code and configuration promoted through environments by a pipeline, not by hand.
 - **In-house data agents.** The agents run on the company's own model deployment (the Azure move), behind the same port.
