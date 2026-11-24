@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # Phase 7: a scheduled load whose trust score (100 x unflagged rows / rows) is at or above this is released
     # (step 15); below it the load is held and its consumers are warned.
     trust_release_threshold: Decimal = Field(default=Decimal("90"), ge=1, le=100)
+    # Phase 7.15: a recurring failure pattern needs this many failing loads in this many days (UTC); the report job runs
+    # at REPORT_HOUR (UTC) and builds yesterday's daily report, and on the 1st last month's monthly report.
+    pattern_min_loads: int = Field(default=3, ge=2)
+    pattern_window_days: int = Field(default=90, ge=7)
+    report_hour: int = Field(default=6, ge=0, le=23)
     # Phase 7 (plan risk 6): false registers no daily job (the glossary runs worker still runs); the e2e API sets it
     # so the 06:00 UTC fetch cannot fire during a Playwright run.
     daily_job_enabled: bool = True
