@@ -29,8 +29,9 @@ function Subject({ proposal }: { proposal: ConfigProposal }) {
   return (
     <>
       <strong>{WHAT[proposal.payload.outcome ?? ""] ?? "A proposal"}</strong> for column{" "}
-      <code>{proposal.column}</code> of <Anchor href={`#/feed/${proposal.feed_id}`}>{proposal.feed_name}</Anchor>{" "}
-      <span className="muted">({proposal.feed_code})</span>
+      <code>{proposal.column}</code> of{" "}
+      {proposal.feed_deleted ? proposal.feed_name : <Anchor href={`#/feed/${proposal.feed_id}`}>{proposal.feed_name}</Anchor>}{" "}
+      <span className="muted">({proposal.feed_code}{proposal.feed_deleted && ", feed deleted"})</span>
     </>
   );
 }

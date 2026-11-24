@@ -425,6 +425,25 @@ async def test_a_column_name_that_is_no_alias_does_not_fail_the_run(client, odd_
     assert "col_1d_volume" in approved["result"]["element"]["aliases"]
 
 
+async def test_the_decided_list_still_answers_after_its_feed_was_deleted(client, bond, kicks, drain, db_session):
+    """7.9 regression: a glossary proposal outlives its feed (amaze_delete_feed keeps it), so the list must too."""
+    from sqlalchemy import text
+
+    await call(client, "POST", f"feeds/{bond}/glossary/run", headers=GLENN)
+    drain()
+    for p in await call(client, "GET", "proposals", kind="glossary_element", status="pending", feed_id=bond):
+        await decide(client, p["id"], headers=GLENN)
+    db_session.execute(text("SELECT amaze_delete_feed(:f, 'dev-operator', 'Synthetic: the demo is over.')"), {"f": bond})
+    db_session.commit()
+
+    approved = await call(client, "GET", "proposals", kind="glossary_element", status="approved")
+    mine = [p for p in approved if p["feed_id"] == bond]
+    assert {p["column"] for p in mine} == {"rating", "venue_mic_code"}
+    assert all(p["feed_deleted"] and (p["feed_code"], p["feed_name"]) == ("syn_bond_terms", "Bond terms") for p in mine)
+    rejected = await call(client, "GET", "proposals", kind="glossary_element", status="rejected")  # still 200
+    assert all(p["feed_deleted"] for p in rejected if p["feed_id"] == bond)
+
+
 async def test_an_unknown_feed_or_proposal_is_404(client, kicks):
     await propose(client, uuid.uuid4(), expect=404)
     await call(client, "POST", f"feeds/{uuid.uuid4()}/glossary/run", headers=GLENN, expect=404)

@@ -105,6 +105,10 @@ class FeedRepository:
         query = select(Deletion).order_by(Deletion.at.desc(), Deletion.id)
         return [FeedDeletion.model_validate(r) for r in self._session.scalars(query)]
 
+    def deletion_of(self, feed_id: UUID) -> FeedDeletion | None:
+        row = self._session.scalars(select(Deletion).where(Deletion.feed_id == feed_id)).first()
+        return None if row is None else FeedDeletion.model_validate(row)
+
     def record_status_event(self, feed_id: UUID, *, action: Literal["pause", "resume"], reason: str, by: str) -> None:
         """The record the stage guard needs before registered <-> paused (migration 0027): append-only."""
         self._session.add(StatusEvent(feed_id=feed_id, action=action, reason=reason, by=by))

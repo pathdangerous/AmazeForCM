@@ -34,6 +34,7 @@ from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feed_signoffs import FeedSignoffRepository
+from core.repositories.errors import FeedNotFound
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.glossary_runs import GlossaryRunRepository
@@ -114,6 +115,7 @@ class ProposalOnPage(BaseModel):
     feed_id: UUID
     feed_code: str
     feed_name: str
+    feed_deleted: bool = False  # the feed was hard-deleted (7.9); code and name come from feed_deletions
     column: str
     payload: dict[str, Any]  # the options (glossary) or the candidates (mapping)
     reason: str  # the agent's
@@ -342,10 +344,16 @@ def configuration_proposals(session: Session, *, kind: str | None = None, status
 def proposal_on_page(session: Session, proposal_id: UUID) -> ProposalOnPage:
     proposals = ProposalRepository(session)
     p = proposals.get(proposal_id)
-    feed = FeedRepository(session).get(p.feed_id)
+    feeds = FeedRepository(session)
+    try:
+        feed = feeds.get(p.feed_id)
+        code, name, deleted = feed.code, feed.name, False
+    except FeedNotFound:  # 7.9: a proposal a glossary element came from outlives its deleted feed
+        gone = feeds.deletion_of(p.feed_id)
+        code, name, deleted = (gone.code, gone.name, True) if gone else ("deleted feed", "deleted feed", True)
     return ProposalOnPage(
-        id=p.id, kind=p.kind, status=p.status, created_at=p.created_at, decided_at=p.decided_at, feed_id=feed.id,
-        feed_code=feed.code, feed_name=feed.name,
+        id=p.id, kind=p.kind, status=p.status, created_at=p.created_at, decided_at=p.decided_at, feed_id=p.feed_id,
+        feed_code=code, feed_name=name, feed_deleted=deleted,
         column=p.payload.get("source_field") or p.payload.get("rule_key") or "", payload=p.payload,
         reason=p.payload.get("reason", ""), required_approver_roles=p.required_approver_roles,
         decisions=proposals.approvals(p.id))

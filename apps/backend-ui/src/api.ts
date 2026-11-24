@@ -263,7 +263,7 @@ export type Decision = { id: string; created_at: string; step: number; role: str
                          decision: "approved" | "rejected"; note: string | null };
 export type ConfigProposal = {
   id: string; kind: "glossary_element" | "mapping"; status: "pending" | "approved" | "rejected"; created_at: string;
-  decided_at: string | null; feed_id: string; feed_code: string; feed_name: string; column: string;
+  decided_at: string | null; feed_id: string; feed_code: string; feed_name: string; feed_deleted?: boolean; column: string;
   // glossary_element: outcome, options, recommended (an index), clashes; mapping: candidates, recommended (a key)
   payload: { outcome?: "proposed" | "duplicate_alias" | "conflict_to_owner"; options?: ElementOption[];
              recommended: number | string | null; clashes?: string[]; candidates?: string[]; column_type?: string | null };

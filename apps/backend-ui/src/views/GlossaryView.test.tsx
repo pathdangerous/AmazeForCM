@@ -46,6 +46,22 @@ test("task 12: the glossary is converted; P14: an alias says Same as, not Clashe
   expect(within(card).getByTestId("approve").tagName).toBe("BUTTON");
 });
 
+test("a decided proposal of a deleted feed says so and does not link to the feed", async () => {
+  stubFetch({
+    "GET /api/amaze/glossary/domains": [],
+    "GET /api/amaze/proposals?kind=glossary_element&status=pending": [],
+    "GET /api/amaze/proposals?kind=glossary_element&status=approved": [{ ...DECIDED, status: "approved", feed_deleted: true }],
+    "GET /api/amaze/proposals?kind=glossary_element&status=rejected": [],
+    "GET /api/amaze/glossary/elements?": [],
+  });
+  renderWithTheme(<GlossaryView devUser="dev-glossary-owner" canDecide={true} changed={0} people={NAMES}
+                                onChange={() => undefined} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Decided" }));
+  const row = await screen.findByTestId("glossary-decided-row");
+  expect(row.textContent).toContain("feed deleted");
+  expect(within(row).queryByRole("link")).toBeNull();
+});
+
 test("P16: Decided lists each decided proposal with the decision, the person and the note", async () => {
   show();
   fireEvent.click(await screen.findByRole("button", { name: "Decided" }));
