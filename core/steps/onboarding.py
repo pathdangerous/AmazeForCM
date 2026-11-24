@@ -61,6 +61,7 @@ from core.domain.onboarding import (
     ChainBase,
     ChainItem,
     ChainReview,
+    TestedOn,
     ChainStep,
     ConfidentApproved,
     InputFact,
@@ -566,11 +567,38 @@ def chain_review(session: Session, *, session_id: UUID, settings: Settings | Non
                 confident=(item.status == "pending" and sure and not blocked and item.waiting_for is None
                            and all(b.status == "approved" for b in bases)),
                 based_on=[ChainBase(proposal_id=b.id, step=STEP_OF_KIND[b.kind], column=_describe(b)[0],
-                                    status=b.status) for b in bases]))
+                                    status=b.status) for b in bases],
+                tested_on=(transformations_tested_on(session, proposals.get(item.proposal_id))
+                           if item.kind == "rule" else [])))
         found.sort(key=lambda i: 0 if i.blocked else 1 if i.low_confidence else 2)  # stable: the agent's order within
         steps.append(ChainStep(step=step, state=sess.step_states[step], items=found))
     return ChainReview(run_mode=sess.run_mode, current_step=sess.current_step, steps=steps,
                        blocked=done[-1].detail.get("blocked", {}) if done else {}, auto_accept_confidence=threshold)
+
+
+def transformations_tested_on(session: Session, rule: Proposal) -> list[TestedOn]:
+    """Phase 7.14, known gap G1 (plan): a rule draft is not made stale when a newer transformation version is approved
+    after it (stale follows drafts, not approved versions), so its review says which version each transformed column of
+    its elements was back-tested on: the draft it was built on, else the latest version approved before the draft."""
+    from core.steps.exceptions import rule_elements  # the one word match of a rule's SQL on element keys
+
+    mappings = MappingRepository(session).current_for_feed(rule.feed_id)
+    keys = rule.payload.get("element_keys") or rule_elements(str(rule.payload.get("sql", "")),
+                                                             [m.element_key for m in mappings])
+    on_draft = {p.payload.get("source_field") for p in map(ProposalRepository(session).get,
+                                                           ProposalRepository(session).bases(rule.id))
+                if p.kind == "transformation"}
+    transformations, found = TransformationRepository(session), []
+    for column in sorted({m.source_field for m in mappings if m.element_key in keys}):
+        history = transformations.history(rule.feed_id, column)
+        current = history[-1].version if history else None
+        if column in on_draft:
+            found.append(TestedOn(column=column, version=None, current_version=current))
+            continue
+        before = [t.version for t in history if t.created_at <= rule.created_at]
+        if before:
+            found.append(TestedOn(column=column, version=before[-1], current_version=current))
+    return found
 
 
 def approve_confident(session: Session, *, session_id: UUID, step: str, user: User,

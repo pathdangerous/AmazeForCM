@@ -367,3 +367,15 @@ class StepNotReady(RepositoryError):
 
 class UpstreamNotApproved(RepositoryError):
     """Phase 7.13: a draft is approved only after every draft it was built on (top to bottom). The API answers 409."""
+
+
+# ---- phase 7.14: exceptions of a held load
+
+
+class LoadNotHeld(RepositoryError):
+    """Only a held load's exception groups take fixes (plan, assumption 6). The API answers 409."""
+
+
+class ExceptionGroupChangedMeanwhile(RepositoryError):
+    """While the agent answered, a group of the input got a fix, lost one, or its load stopped being held: the answer
+    is discarded (a discard row, nothing written). The API answers 409."""

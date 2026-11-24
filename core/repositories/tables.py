@@ -140,6 +140,10 @@ class ProposalRow(Base):
         Index("uq_proposals_one_pending_transformation_per_feed_column", "feed_id",
               text("(payload ->> 'source_field')"), unique=True,
               postgresql_where=text("status = 'pending' AND kind = 'transformation'")),
+        # 0034 (phase 7.14): one pending exception fix per feed, load and exception group
+        Index("uq_proposals_one_pending_exception_fix", "feed_id", text("(payload ->> 'load_id')"),
+              text("(payload ->> 'group_key')"), unique=True,
+              postgresql_where=text("status = 'pending' AND kind = 'exception_fix'")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -703,6 +707,9 @@ class LoadRow(Base):
     arrival_outcome: Mapped[str | None] = mapped_column(Text)
     arrival_detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     arrival_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("feed_profiles.id"))
+    # 0034 (phase 7.14): a rerun of a held load's own file, with its reason; set once, at insert (trg_loads_c_rerun)
+    rerun_of_load_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("loads.id"))
+    rerun_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class LoadCertificationRow(Base):
@@ -729,6 +736,37 @@ class LoadCertificationRow(Base):
     threshold: Mapped[Decimal] = mapped_column(Numeric(4, 1))
     outcome: Mapped[str] = mapped_column(Text)
     warned: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
+    # 0034 (phase 7.14): rows with no flag and a waived exception (recounted by the database), and per rule
+    waived_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    waived_counts: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+
+
+class ExceptionResolutionRow(Base):
+    """Phase 7.14: one approved exception fix of a held load's group (waived or referred), recorded. Append-only
+    (migration 0034; trigger: an approved exception_fix of the feed, every step decided, matching this row)."""
+
+    __tablename__ = "exception_resolutions"
+    __table_args__ = (
+        UniqueConstraint("proposal_id"),
+        CheckConstraint("action IN ('waived', 'referred')", name="action"),
+        CheckConstraint("applied_by IN ('agent', 'manual')", name="applied_by"),
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+        Index("ix_exception_resolutions_feed_rule", "feed_id", "rule_key", "pattern"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    load_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("loads.id"))
+    rule_key: Mapped[str] = mapped_column(Text)
+    element_keys: Mapped[list[str]] = mapped_column(ARRAY(Text))
+    pattern: Mapped[str] = mapped_column(Text)
+    group_key: Mapped[str] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    proposal_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("proposals.id"))
+    decided_by: Mapped[str] = mapped_column(Text)
+    applied_by: Mapped[str] = mapped_column(Text)
 
 
 class FeedGoLiveRow(Base):
@@ -821,6 +859,8 @@ class StandardRecordRow(Base):
     row_number: Mapped[int] = mapped_column(Integer)
     values: Mapped[dict[str, Any]] = mapped_column(JSONB)
     flags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
+    # 0034 (phase 7.14): rule keys a current waiver turned from a flag into a waived exception (never also in flags)
+    waived: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, server_default=text("'{}'::text[]"))
 
 
 class ProductRow(Base):

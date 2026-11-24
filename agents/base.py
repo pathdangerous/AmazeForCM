@@ -5,7 +5,8 @@ A subclass declares what it is and how its output becomes proposal drafts:
     name, prompt_id, autonomy (A1 | A2), approver_roles (an ordered tuple of roles, each once; () for a
     read-only agent), input_schema, output_schema, and optionally to_proposals(agent_input, output).
 
-run() is defined here only. A subclass may override only to_proposals: one that defines run() or any
+run() is defined here only. A subclass may override only to_proposals and (phase 7.14) roles_for, which gives one
+draft a prefix of the declared roles, checked when the proposals are made, after the call. One that defines run() or any
 other method of this class (_log_call, _own_transaction, __init__ ...) is refused when the class is
 created (independent review, fix 9). It may add helpers of its own. run() does,
 in this order:
@@ -50,6 +51,10 @@ _DECLARED = ("name", "prompt_id", "autonomy", "approver_roles", "input_schema", 
 
 class ReadOnlyAgentProposed(RuntimeError):
     """A read-only agent (approver_roles ()) returned proposal drafts."""
+
+
+class RolesNotAPrefix(RuntimeError):
+    """roles_for() gave roles that are not a non-empty prefix of the agent's declared approver_roles (phase 7.14)."""
 
 
 class SessionInTransaction(RuntimeError):
@@ -107,6 +112,12 @@ class Agent:
     def to_proposals(self, agent_input: BaseModel, output: BaseModel) -> list[AgentProposal]:
         """The proposal drafts for this output. None by default (a read-only agent)."""
         return []
+
+    def roles_for(self, draft: AgentProposal) -> tuple[Role, ...]:
+        """Phase 7.14: who decides this draft, in order: a non-empty prefix of approver_roles (checked in run(),
+        where the proposals are made, after the call). By default all of them, so an agent that does not override it
+        is unchanged."""
+        return self.approver_roles
 
     def run(self, session: Session, agent_input: BaseModel, *,
             before_write: Callable[[Session], None] | None = None,
@@ -171,13 +182,19 @@ class Agent:
             repository = ProposalRepository(session)
             proposals = [
                 repository.create(proposal_log_id=log_id, autonomy=self.autonomy,
-                                  required_approver_roles=list(self.approver_roles), **draft.model_dump())
+                                  required_approver_roles=self._roles(draft), **draft.model_dump())
                 for draft in drafts
             ]
         except Exception as exc:
             self._own_transaction(session, lambda log: log.discard(proposal_log_id=log_id, reason=_reason(exc)))
             raise
         return AgentRun(log_id=log_id, input_ref=input_ref, output=output, proposals=proposals)
+
+    def _roles(self, draft: AgentProposal) -> list[Role]:
+        roles = tuple(self.roles_for(draft))
+        if not roles or roles != self.approver_roles[:len(roles)]:
+            raise RolesNotAPrefix(f"{self.name}: roles {roles!r} are not a prefix of {self.approver_roles!r}")
+        return list(roles)
 
     def _log_call(self, session: Session, input_ref: str, result, *, discard: Exception | None) -> UUID:
         """The call row (and its discard row, if the answer is already discarded), committed at once."""
@@ -202,7 +219,7 @@ class Agent:
 # Every method of the base class but to_proposals: a subclass that defines one is refused at creation.
 _SEALED = frozenset(name for name, value in vars(Agent).items()
                     if isinstance(value, (FunctionType, staticmethod, classmethod, property))
-                    and name != "to_proposals")
+                    and name not in ("to_proposals", "roles_for"))  # roles_for: phase 7.14
 
 
 def _reason(exc: Exception) -> str:

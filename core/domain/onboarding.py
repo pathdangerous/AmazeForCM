@@ -163,6 +163,17 @@ class ChainBase(BaseModel):
     status: str
 
 
+class TestedOn(BaseModel):
+    """Phase 7.14, known gap G1: the transformation of one column a rule draft was back-tested on. version None: a
+    pending (draft) transformation; current_version: the column's approved version now (None if it has none)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    column: str
+    version: int | None
+    current_version: int | None
+
+
 class ChainItem(BaseModel):
     """One draft of the chain review: the workspace item, what it was built on, and why it sorts where it does."""
 
@@ -173,6 +184,7 @@ class ChainItem(BaseModel):
     blocked: bool  # no single recommended value: later agents skipped its column (plan, decision 3)
     low_confidence: bool  # a value, below AUTO_ACCEPT_CONFIDENCE: drafted past, flagged
     confident: bool  # pending, at or above the threshold, its bases approved: "Approve all confident" takes it
+    tested_on: list[TestedOn] = []  # 7.14 (G1): a rule draft's transformations, so a newer approved version shows
 
 
 class ChainStep(BaseModel):

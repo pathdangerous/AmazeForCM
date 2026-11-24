@@ -129,9 +129,14 @@ export const addDriftAction = (feedId: string, body: { action: string; columns: 
 
 // ---- phase 7.14: exceptions of a load (a flagged row and one rule), grouped by rule and value pattern
 export type ExceptionSample = { row_number: number; values: Record<string, unknown> };
+export type GroupFix = {
+  proposal_id: string; kind: string; action: "transformation" | "waive" | "refer" | "none"; reason: string;
+  origin: string; author: string | null; status: string; approvals: number; required_approver_roles: string[];
+  steps: Record<string, unknown>[];
+};
 export type ExceptionGroup = {
   group_key: string; rule_key: string; description: string | null; elements: string[]; pattern: string;
-  exceptions: number; samples: ExceptionSample[]; state: string;
+  exceptions: number; samples: ExceptionSample[]; state: string; fix?: GroupFix | null;
 };
 export type LoadExceptions = {
   load_id: string; feed_id: string; status: string; can_fix: boolean; rows: number; flagged_rows: number;
@@ -144,6 +149,12 @@ export const getFeedExceptions = (feedId: string, devUser: string) =>
   apiGet<LoadExceptionCounts[]>(`/api/amaze/feeds/${feedId}/exceptions`, devUser);
 export const getLoadExceptions = (loadId: string, devUser: string, offset = 0) =>
   apiGet<LoadExceptions>(`/api/amaze/loads/${loadId}/exceptions?offset=${offset}`, devUser);
+export const proposeExceptionFixes = (loadId: string, devUser: string) =>
+  apiPost<{ result: { outcome: string; no_fix: { group_key: string; reason: string }[] }; exceptions: LoadExceptions }>(
+    `/api/amaze/loads/${loadId}/exceptions/propose`, {}, devUser);
+export const addExceptionFix = (loadId: string, body: { group_key: string; action: string; reason: string;
+  steps?: Record<string, unknown>[] }, devUser: string) =>
+  apiPost<{ exceptions: LoadExceptions }>(`/api/amaze/loads/${loadId}/exceptions/fixes`, body, devUser);
 
 // ---- phase 4: one feed's page and the steps 02 to 04
 
@@ -551,8 +562,10 @@ export const editItem = (id: string, proposalId: string, payload: Record<string,
 // ---- phase 7.13: run all agents ahead, review the chain once
 export const CHAIN_STEPS = ["glossary", "mapping", "transformations", "rules"] as const;
 export type ChainBase = { proposal_id: string; step: StepName; column: string | null; status: string };
+// 7.14 (known gap G1): the transformation version a rule draft was back-tested on; version null: a draft transformation
+export type TestedOn = { column: string; version: number | null; current_version: number | null };
 export type ChainItem = { item: OnboardingItem; based_on: ChainBase[]; blocked: boolean; low_confidence: boolean;
-                          confident: boolean };
+                          confident: boolean; tested_on?: TestedOn[] };
 export type ChainStep = { step: StepName; state: StepState; items: ChainItem[] };
 export type ChainReview = { run_mode: "step" | "chain"; current_step: StepName; steps: ChainStep[];
                             blocked: Record<string, string>; auto_accept_confidence: number };

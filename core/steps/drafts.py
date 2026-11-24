@@ -112,7 +112,7 @@ def draft_config(session: Session, feed_id: UUID) -> DraftConfig:
     transformation_bases: dict[str, UUID] = {}
     for p in proposals.list_for_feed(feed_id, "transformation", "pending"):
         column = p.payload["source_field"]
-        if column not in mappings:
+        if column not in mappings or p.payload.get("exception_group"):  # 7.14: a fix of a held load is no draft
             continue
         transformations[column] = Transformation(id=p.id, version=0, feed_id=feed_id, source_field=column,
                                                  steps=p.payload["steps"], proposal_id=p.id, created_by=DRAFT,

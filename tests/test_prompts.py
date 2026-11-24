@@ -64,7 +64,10 @@ def test_every_agent_in_the_registry_names_a_current_prompt():
                                            "GlossaryBuilderAgent", "MappingAgent", "MappingEvaluator",
                                            "RuleRecommenderAgent", "ReviewSummariserAgent",  # phase 6: steps 09, 11
                                            "TableExtractorAgent",  # phase 7.8, task 2.3
-                                           "TransformationAgent"}  # phase 7.8, task 4.3 (old: without it)
+                                           "TransformationAgent",  # phase 7.8, task 4.3 (old: without it)
+                                           "ExceptionFixAgent"}  # phase 7.14, T2
+    assert (registry.AGENT_PROMPTS["ExceptionFixAgent"], registry.PROMPT_VERSIONS["exception_fix"]) == (
+        "exception_fix", "v1")
     assert (registry.AGENT_PROMPTS["TransformationAgent"], registry.PROMPT_VERSIONS["transformation"]) == (
         "transformation", "v2")  # old: v1; 7.12: profile_actions
     assert registry.AGENT_PROMPTS["ReviewSummariserAgent"] == "review_summariser" and (

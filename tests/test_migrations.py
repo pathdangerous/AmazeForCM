@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0033"  # old: "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0034"  # old: "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -256,6 +256,11 @@ REVIEWED_NULLABLE_CHECKS = {
     # 0019 (phase 7 plan, section 6). Their NULL case (a load with no arrival) is in test_db_arrival_guards.py.
     "loads.ck_loads_content_sha256": "content_sha256 IS NULL OR ...: never NULL",
     "loads.ck_loads_arrival_outcome": "arrival_outcome IS NULL OR ...: never NULL",
+    # 0034 (phase 7.14). Their NULL cases are in tests/test_db_exception_guards.py.
+    "proposals.ck_proposals_exception_fix":
+        "kind is NOT NULL; feed_id IS NOT NULL spelt out; each JSON test wrapped in COALESCE(..., false)",
+    "loads.ck_loads_rerun_has_reason":
+        "IS NULL on both sides of the first branch; COALESCE(length(btrim(rerun_reason)) > 0, false): never NULL",
 }
 
 
@@ -1309,3 +1314,64 @@ def test_0033_adds_the_value_pattern_and_downgrade_restores_0032(scratch_schema)
     assert _pattern_function(engine) is None
     command.upgrade(config, "0033")
     assert _pattern_function(engine) == up
+
+
+def _0034_state(engine):
+    with engine.connect() as connection:
+        def function(name: str) -> str | None:
+            return connection.execute(text(
+                "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = :n "
+                "AND p.pronamespace = current_schema()::regnamespace"), {"n": name}).scalar_one_or_none()
+
+        columns = inspect(connection)
+        return {
+            "tables": set(columns.get_table_names()),
+            "load_columns": sorted(c["name"] for c in columns.get_columns("loads")),
+            "record_columns": sorted(c["name"] for c in columns.get_columns("standard_records")),
+            "certification_columns": sorted(c["name"] for c in columns.get_columns("load_certifications")),
+            "kinds": _check_definition(connection, "proposals", "ck_proposals_kind"),
+            "manual": _check_definition(connection, "proposals", "ck_proposals_manual_kinds"),
+            "delete_function": function("amaze_delete_feed"),
+            "certification_guard": function("amaze_guard_load_certification"),
+            "functions": {n for n in ("amaze_guard_exception_resolution", "amaze_guard_waiver_owner",
+                                      "amaze_guard_waived_record", "amaze_guard_load_rerun") if function(n)},
+        }
+
+
+def test_0034_adds_exception_fixes_and_downgrade_restores_0033(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0033")
+    before = _0034_state(engine)
+    command.upgrade(config, "0034")
+    up = _0034_state(engine)
+    assert "exception_resolutions" in up["tables"] and "exception_resolutions" not in before["tables"]
+    assert {"rerun_of_load_id", "rerun_reason"} <= set(up["load_columns"]) - set(before["load_columns"])
+    assert "waived" in up["record_columns"] and "waived" not in before["record_columns"]
+    assert {"waived_rows", "waived_counts"} <= set(up["certification_columns"])
+    assert "exception_fix" in up["kinds"] and "exception_fix" not in before["kinds"]
+    assert "exception_fix" in up["manual"] and "exception_fix" not in before["manual"]
+    assert "DELETE FROM exception_resolutions" in up["delete_function"]
+    assert "n_waived" in up["certification_guard"] and "n_waived" not in before["certification_guard"]
+    assert len(up["functions"]) == 4 and not before["functions"]
+    command.downgrade(config, "0033")
+    assert _0034_state(engine) == before
+    command.upgrade(config, "0034")
+    assert _0034_state(engine) == up
+
+
+def test_0034_downgrade_refuses_while_an_exception_fix_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0034")
+    with engine.begin() as connection:
+        feed = connection.execute(text(
+            "INSERT INTO feeds (code, name, source_code, connector, source_ref) "
+            "VALUES ('syn_fix_mig', 'Fix', 'syn_fix_mig', 'local_file', 'files/x.csv') RETURNING id")).scalar_one()
+        connection.execute(text(
+            "INSERT INTO proposals (origin, author, kind, payload, autonomy, required_approver_roles, feed_id) VALUES "
+            "('manual', 'dev-data-steward', 'exception_fix', CAST(:p AS jsonb), 'A1', ARRAY['data_steward'], :f)"),
+            {"f": feed, "p": '{"load_id": "x", "rule_key": "r", "element_keys": [], "pattern": "(row)", '
+                                    '"group_key": "g", "action": "refer", "reason": "Ask the provider."}'})
+    with pytest.raises(DBAPIError, match="migration 0034"):
+        command.downgrade(config, "0033")

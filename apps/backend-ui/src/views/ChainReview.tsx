@@ -66,7 +66,7 @@ export default function ChainReview({ id, devUser, stamp, onOpenStep, onChanged 
               </Button>
             </div>
             <ul style={{ listStyle: "none", padding: 0, margin: "4px 0" }}>
-              {step.items.map(({ item, based_on, blocked: isBlocked, low_confidence }) => (
+              {step.items.map(({ item, based_on, blocked: isBlocked, low_confidence, tested_on = [] }) => (
                 <li key={item.proposal_id} data-testid={`chain-item-${item.proposal_id}`}
                     style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "2px 0" }}>
                   {isBlocked && <StatusChip tone="attention">Blocked</StatusChip>}
@@ -80,6 +80,14 @@ export default function ChainReview({ id, devUser, stamp, onOpenStep, onChanged 
                             aria-label={`Based on ${STEP_LABELS[b.step]}: ${b.column ?? b.proposal_id}`}>
                       {`based on ${b.column ?? STEP_LABELS[b.step]} (${b.status})`}
                     </Button>
+                  ))}
+                  {tested_on.map((t) => (
+                    <Text key={t.column} size="sm" component="span" className={t.version !== null && t.current_version !== null
+                      && t.current_version > t.version ? "bad" : "muted"}>
+                      {t.version === null ? `tested on the draft transformation of ${t.column}`
+                        : `tested on transformation version ${t.version} of ${t.column}`
+                          + (t.current_version !== null && t.current_version > t.version ? ` (now version ${t.current_version})` : "")}
+                    </Text>
                   ))}
                 </li>
               ))}

@@ -57,3 +57,15 @@ test("Approve all confident sends the step and shows the new chain", async () =>
   expect(fetched).toHaveBeenCalledWith(`${WS_PATH}/chain/approve-confident`, expect.objectContaining({
     method: "POST", body: JSON.stringify({ step: "glossary" }) }));
 });
+
+test("a rule draft says which transformation version it was tested on, and when a newer one exists (7.14, G1)", async () => {
+  const rule = ruleItem();
+  stubFetch({ [`GET ${WS_PATH}/chain`]: chain({ steps: [{ step: "rules", state: "ready", items: [{
+    item: rule, based_on: [], blocked: false, low_confidence: false, confident: true,
+    tested_on: [{ column: "instr_id", version: 1, current_version: 2 }, { column: "px", version: null, current_version: null }],
+  }] }] }) });
+  show();
+  const row = await screen.findByTestId(`chain-item-${rule.proposal_id}`);
+  expect(row.textContent).toContain("tested on transformation version 1 of instr_id (now version 2)");
+  expect(row.textContent).toContain("tested on the draft transformation of px");
+});

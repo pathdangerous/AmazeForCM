@@ -73,6 +73,8 @@ class Load(BaseModel):
     arrival_outcome: ArrivalOutcome | None
     arrival_detail: dict[str, Any] | None
     arrival_profile_id: UUID | None  # additive_parked: the feed_profiles row of the load's own file
+    rerun_of_load_id: UUID | None = None  # phase 7.14: a rerun of this held load's own file (migration 0034)
+    rerun_reason: str | None = None
 
 
 class LoadCertificationDraft(BaseModel):
@@ -90,11 +92,13 @@ class LoadCertificationDraft(BaseModel):
     threshold: Decimal = Field(ge=1, le=100)
     outcome: CertificationOutcome
     warned: list[str] = Field(default_factory=list)  # the user ids told when the load is held
+    waived_rows: int = Field(default=0, ge=0)  # phase 7.14: no flag and a waived exception; counted as unflagged
+    waived_counts: dict[str, Any] = Field(default_factory=dict)  # per rule key
 
     @model_validator(mode="after")
     def _flagged_within_rows(self) -> LoadCertificationDraft:
-        if self.flagged_rows > self.rows:
-            raise ValueError("flagged_rows cannot exceed rows")
+        if self.flagged_rows + self.waived_rows > self.rows:
+            raise ValueError("flagged_rows and waived_rows together cannot exceed rows")
         return self
 
 
@@ -131,6 +135,7 @@ class StandardRecordDraft(BaseModel):
     row_number: int = Field(ge=1)  # the file's data row, from 1
     values: dict[str, Any]  # element key -> value (decimals as exact strings, dates ISO)
     flags: list[str] = Field(default_factory=list)  # the keys of the rules that flagged the row
+    waived: list[str] = Field(default_factory=list)  # phase 7.14: rule keys a current waiver took out of flags
 
 
 class StandardRecord(StandardRecordDraft):

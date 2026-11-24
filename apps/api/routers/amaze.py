@@ -63,6 +63,7 @@ from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.standard_records import StandardRecordRepository
 from core.steps.errors import ChoiceNotOffered, CodeNotConfirmed
+from core.steps.exceptions import ExceptionFixDecided
 from core.steps.feed_lifecycle import FeedDeleted, FeedPaused, FeedResumed, delete_feed, pause_feed, resume_feed
 from core.steps.feed_page import (
     FeedPage,
@@ -512,7 +513,8 @@ class DecisionBody(BaseModel):
 class DecisionResponse(BaseModel):
     result: (Mapped | MappingRejected | ElementDecided | RuleAwaitsChecker | RuleStored | RuleRejected
              | ApprovedScheduled | RejectedBackToStep | TransformationStored | TransformationRejected
-             | ColumnExcluded | ProfileActionDecided)  # 7.12: a column left out (T7); a profile or drift action (T1, T4)
+             | ColumnExcluded | ProfileActionDecided  # 7.12: a column left out (T7); a profile or drift action (T1, T4)
+             | ExceptionFixDecided)  # 7.14: a waiver or a referral of an exception group
     proposal: ProposalOnPage
 
 
@@ -600,6 +602,11 @@ def decide_proposal(session: Session, *, proposal_id: UUID, body: DecisionBody, 
     if kind == "transformation":  # phase 7.8, task 4.3: the data steward
         return decide_transformation(session, proposal_id=proposal_id, user=user, decision=body.decision,
                                      note=body.note)
+    if kind == "exception_fix":  # phase 7.14: the data steward, then (a waiver) the feed's registered owner
+        from core.steps.exceptions import decide_exception_fix
+
+        return decide_exception_fix(session, proposal_id=proposal_id, user=user, decision=body.decision,
+                                    note=body.note)
     raise ProposalNotFound(f"No glossary, mapping, rule, transformation or go-live proposal with id {proposal_id}")
 
 

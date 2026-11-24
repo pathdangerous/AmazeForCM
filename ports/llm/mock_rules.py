@@ -423,6 +423,36 @@ def transformation(data: dict[str, Any]) -> dict[str, Any]:
     return {"columns": answers}
 
 
+TRANSFORM_ORDER = ("trim", "placeholder_to_null", "parse_date", "cast", "rename")
+
+
+def exception_fix(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 7.14 (plan, assumption 18), from the pattern only: a one-column pattern with spaces at the ends is a trim of
+    that column (added to its current steps); a pattern that starts with a minus and a digit is a waiver (negative
+    values are real); anything else is referred to the provider. A fix a person rejected for the group: none."""
+    fixes = []
+    for group in data.get("groups", []):
+        pattern, fields = group["pattern"], group.get("source_fields", {})
+        elements = group.get("elements", [])
+        field = fields.get(elements[0]) if len(elements) == 1 else None
+        if field and pattern != pattern.strip(" "):
+            current = list(group.get("transformations", {}).get(field, []))
+            steps = sorted([*(s for s in current if s.get("op") != "trim"), {"op": "trim"}],
+                           key=lambda s: TRANSFORM_ORDER.index(s["op"]))
+            fix = {"action": "transformation", "source_field": field, "steps": steps, "confidence": 0.9,
+                   "reason": f"{field} has spaces at the ends of {group['exceptions']} value(s); trimming them fixes the rule."}
+        elif pattern.startswith("-9"):
+            fix = {"action": "waive", "confidence": 0.7,
+                   "reason": f"{group['exceptions']} negative value(s): credits or corrections are real for this field."}
+        else:
+            fix = {"action": "refer", "confidence": 0.6,
+                   "reason": f"Only the provider can say whether the {group['exceptions']} value(s) shaped {pattern} are right."}
+        if fix["action"] in group.get("rejected_before", []):
+            fix = {"action": "none", "confidence": 0.5, "reason": "A person rejected this fix before; no other fits."}
+        fixes.append({"group_key": group["group_key"], **fix})
+    return {"fixes": fixes}
+
+
 RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "intent": intent,
     "source_discovery": source_discovery,
@@ -433,4 +463,5 @@ RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "rule_recommender": rule_recommender,
     "review_summariser": review_summariser,
     "transformation": transformation,
+    "exception_fix": exception_fix,
 }
