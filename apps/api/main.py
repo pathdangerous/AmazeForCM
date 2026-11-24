@@ -30,6 +30,7 @@ from apps.api.routers import (amaze, audit, consumer, dev_identity, exceptions, 
 from core.repositories.settings import FourEyesRepository
 from ports.config import get_settings
 from ports.identity import get_identity
+from ports.external_agents import ExternalAgentUnavailable
 from ports.llm.base import LLMRefused, LLMUnavailable
 from ports.scheduler import get_scheduler
 
@@ -112,6 +113,14 @@ async def model_unavailable(request: Request, exc: LLMUnavailable) -> JSONRespon
     its reason. The step wrote nothing; the requester can try again (independent review, fix 4)."""
     return JSONResponse(status_code=503, content={"detail": "The model did not answer. Try again later.",
                                                   "reason": exc.reason})
+
+
+@app.exception_handler(ExternalAgentUnavailable)
+async def external_agent_unavailable(request: Request, exc: ExternalAgentUnavailable) -> JSONResponse:
+    """The in-house data agent that answers one agent did not give a usable answer (phase 7.18): the typed outcome
+    external_agent_unavailable, 503 with its reason. Nothing was written (no log row, no proposal)."""
+    return JSONResponse(status_code=503, content={"outcome": "external_agent_unavailable", "reason": exc.reason,
+                                                  "detail": "The external agent did not answer. Try again later."})
 
 
 @app.exception_handler(LLMRefused)

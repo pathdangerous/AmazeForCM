@@ -42,8 +42,10 @@ from core.domain.proposal import Autonomy, ProposalKind
 from core.domain.sourcing import AgentRun
 from core.proposal_log import ProposalLog
 from core.repositories.proposals import ProposalRepository
+from ports.config import get_settings
+from ports.external_agents import ExternalAgent, ExternalAgentUnavailable, get_external_agent, validated
 from ports.identity.base import ROLES, Role
-from ports.llm.base import LLMProvider
+from ports.llm.base import LLMProvider, LLMResult
 from ports.storage.base import BlobStore
 
 _DECLARED = ("name", "prompt_id", "autonomy", "approver_roles", "input_schema", "output_schema")
@@ -104,10 +106,14 @@ class Agent:
         if not roles and cls.to_proposals is not Agent.to_proposals:
             raise TypeError(f"{cls.__name__} is read-only (approver_roles ()) and cannot define to_proposals")
 
-    def __init__(self, *, provider: LLMProvider, blob_store: BlobStore, prompts: PromptLibrary | None = None):
+    def __init__(self, *, provider: LLMProvider, blob_store: BlobStore, prompts: PromptLibrary | None = None,
+                 external: ExternalAgent | None = None, external_for: str | None = None):
         self._provider = provider
         self._blobs = blob_store
         self._prompts = prompts or PromptLibrary()
+        # Phase 7.18: both None means "ask the settings when run() starts" (EXTERNAL_AGENT_FOR, EXTERNAL_AGENT_PROVIDER)
+        self._external = external
+        self._external_for = external_for
 
     def to_proposals(self, agent_input: BaseModel, output: BaseModel) -> list[AgentProposal]:
         """The proposal drafts for this output. None by default (a read-only agent)."""
@@ -144,11 +150,18 @@ class Agent:
                                        "roll back), so no database connection is held while the model answers")
         if not isinstance(agent_input, self.input_schema):
             raise TypeError(f"{self.name} takes {self.input_schema.__name__}, not {type(agent_input).__name__}")
-        prompt = self._prompts.get(self.prompt_id)
-        messages = prompt.render(agent_input)
-
-        result = self._provider.complete(prompt_id=prompt.prompt_id, prompt_version=prompt.version,
-                                         messages=messages, response_schema=self.output_schema)
+        external = self._external_adapter()
+        if external is None:
+            prompt = self._prompts.get(self.prompt_id)
+            messages = prompt.render(agent_input)
+            result = self._provider.complete(prompt_id=prompt.prompt_id, prompt_version=prompt.version,
+                                             messages=messages, response_schema=self.output_schema)
+            prompt_ref = {"prompt_id": prompt.prompt_id, "prompt_version": prompt.version,
+                          "messages": [m.model_dump() for m in messages]}
+        else:  # phase 7.18: this one agent is answered by the external agent; no prompt, and a failure writes nothing
+            result = self._call_external(external, agent_input)
+            prompt_ref = {"prompt_id": result.prompt_id, "prompt_version": result.prompt_version, "messages": [],
+                          "external": True}
 
         input_ref = f"agent-inputs/{self.name}/{uuid.uuid4()}.json"
         failure: Exception | None = None
@@ -156,8 +169,7 @@ class Agent:
             if not isinstance(result.output, self.output_schema):
                 raise TypeError(f"{self.name}: the provider returned {type(result.output).__name__}, "
                                 f"not {self.output_schema.__name__}")
-            stored = {"agent": self.name, "prompt_id": prompt.prompt_id, "prompt_version": prompt.version,
-                      "input": agent_input.model_dump(mode="json"), "messages": [m.model_dump() for m in messages]}
+            stored = {"agent": self.name, **prompt_ref, "input": agent_input.model_dump(mode="json")}
             self._blobs.put(input_ref, json.dumps(stored, sort_keys=True).encode("utf-8"))
         except Exception as exc:  # the call is logged first, then discarded, then this is raised
             failure = exc
@@ -189,6 +201,31 @@ class Agent:
             self._own_transaction(session, lambda log: log.discard(proposal_log_id=log_id, reason=_reason(exc)))
             raise
         return AgentRun(log_id=log_id, input_ref=input_ref, output=output, proposals=proposals)
+
+    def _external_adapter(self) -> ExternalAgent | None:
+        """The external agent when this agent is the one named by EXTERNAL_AGENT_FOR and a provider is selected; else None
+        (the model provider answers, exactly as before phase 7.18)."""
+        name = self._external_for if self._external_for is not None else get_settings().external_agent_for
+        if not name or name != self.name:
+            return None
+        return self._external if self._external is not None else get_external_agent()
+
+    def _call_external(self, external: ExternalAgent, agent_input: BaseModel) -> LLMResult:
+        """The external answer as an LLMResult for the log. Any failure is ExternalAgentUnavailable, raised before the log
+        or any write (like LLMUnavailable: an expected case, never a 500)."""
+        try:
+            answer = external.call(task=self.name, input=agent_input.model_dump(mode="json"),
+                                   response_schema=self.output_schema)
+            output = validated(self.output_schema, answer.output)
+        except ExternalAgentUnavailable:
+            raise
+        except NotImplementedError as exc:  # the stub, until their API is known
+            raise ExternalAgentUnavailable("not_implemented", str(exc)) from None
+        except Exception as exc:
+            raise ExternalAgentUnavailable("provider_error", f"{type(exc).__name__}: {exc}") from None
+        return LLMResult(output=output, provider=answer.provider, model=answer.model, model_version=answer.model_version,
+                         prompt_id=f"external:{self.name}", prompt_version="external", latency_ms=answer.latency_ms,
+                         raw_ref=answer.raw_ref)
 
     def _roles(self, draft: AgentProposal) -> list[Role]:
         roles = tuple(self.roles_for(draft))

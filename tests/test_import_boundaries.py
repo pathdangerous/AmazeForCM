@@ -20,7 +20,7 @@ SCANNED_PACKAGES = ("core", "agents", "ports", "apps")
 # core.steps: every phase 2 step is deterministic (phase 2 plan, assumption 6). Phase 3 decides how an
 # agent-backed step fits (phase 2 plan, section 16).
 BOUNDARY_PACKAGES = ("core.engine", "core.entitlement", "core.domain", "core.repositories", "core.steps", "core.intake")
-FORBIDDEN = ("agents", "ports.llm")
+FORBIDDEN = ("agents", "ports.llm", "ports.external_agents")  # phase 7.18: the external agent port too
 
 
 # ---------------------------------------------------------------- checker
