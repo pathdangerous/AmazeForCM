@@ -243,11 +243,19 @@ and **0034** (T2: everything else in 2.4 and 2.7). If you prefer one, T1 compute
 - Q3: `purpose = 'scheduled'` + `rerun_of_load_id` + reason.
 - Q4: transformation, waive, refer are enough for now.
 
-## 8. Open for this review
+## 8. Review of the revised T0 (2026-11-24): approved
 
-- **Q5.** The waiver's two steps are steward then owner (I read "not only the steward" as both). Or the owner alone?
-- **Q6.** `roles_for()` in `agents/base.py` (assumption 9) instead of a second agent for waivers. OK?
-- **Q7.** Two migrations (0033 function, 0034 the rest) or one?
+- **Q5:** steward first, then the owner named at registration.
+- **Q6:** `roles_for()` is OK. A test checks that every existing agent still gets its full declared roles, and it must
+  not touch the model-call path in `Agent.run()` (it is applied where the proposals are made, after the call).
+- **Q7:** two migrations: 0033 with T1, 0034 with T2.
+
+## Known gaps (accepted)
+
+- **G1** (2.3 point 7): a pending chain rule draft back-tested on transformation version N does not go stale when an
+  exception fix approves version N+1 (stale follows drafts, not approved versions). Mitigation, built in T2: a chain
+  rule draft shows "tested on transformation version N" for each transformed column it was back-tested on, so a reviewer
+  sees it; the go-live test load runs the real configuration before anything is live.
 
 ## 9. Deferred
 
