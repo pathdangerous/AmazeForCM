@@ -17,7 +17,7 @@ pytestmark = pytest.mark.anyio
 
 LOCAL_ADAPTERS = {
     "llm": "mock", "storage": "local", "scheduler": "local",
-    "identity": "dev", "secrets": "env", "notify": "inapp",
+    "identity": "dev", "secrets": "env", "notify": "inapp", "pipeline": "local",
 }
 
 # (adapter name in /api/health, selector, stub value)
@@ -28,6 +28,7 @@ STUBS = [
     ("identity", "IDENTITY_PROVIDER", "entra_id"),
     ("secrets", "SECRETS_PROVIDER", "key_vault"),
     ("notify", "NOTIFY_PROVIDER", "email"),
+    ("pipeline", "PIPELINE_PROVIDER", "azure_devops"),
 ]
 
 

@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     identity_provider: Literal["dev", "entra_id"] = "dev"
     secrets_provider: Literal["env", "key_vault"] = "env"
     notify_provider: Literal["inapp", "email"] = "inapp"
+    # Phase 7.17: where a feed's generated code is committed. The local adapter is a git repository of its own, never the
+    # project's (git-ignored under data/).
+    pipeline_provider: Literal["local", "azure_devops"] = "local"
+    pipeline_repo_root: Path = REPO_ROOT / "data" / "pipeline-repo"
     local_blob_root: Path = Path("./data/blob")
     # Custom data product (phase 3): the synthetic source catalogue, and the only hosts the HTTP
     # connector may reach (comma-separated). This machine only until the Azure move.
@@ -85,7 +89,7 @@ class Settings(BaseSettings):
     # false (the default) sends none.
     send_sample_values: bool = False
 
-    @field_validator("source_catalogue", "dropzone_root")
+    @field_validator("source_catalogue", "dropzone_root", "pipeline_repo_root")
     @classmethod
     def _path_from_the_repository(cls, path: Path) -> Path:
         """A relative path (as in .env.example) is read from the repository, not the current folder."""

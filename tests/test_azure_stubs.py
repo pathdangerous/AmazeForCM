@@ -25,6 +25,7 @@ PAIRS = [
     ("ports.scheduler.local:LocalScheduler", "ports.scheduler.azure_functions:AzureFunctionsScheduler"),
     ("ports.identity.dev:DevIdentity", "ports.identity.entra_id:EntraIdIdentity"),
     ("ports.notify.inapp:InAppNotifier", "ports.notify.email_teams:EmailNotifier"),
+    ("ports.pipeline.local:LocalGitPipeline", "ports.pipeline.azure_devops:AzureDevOpsPipeline"),  # phase 7.17
 ]
 
 

@@ -17,6 +17,7 @@ from ports.db import database_is_reachable
 from ports.identity import get_identity
 from ports.llm import get_llm_provider
 from ports.notify import get_notifier
+from ports.pipeline import get_pipeline
 from ports.scheduler import get_scheduler
 from ports.secrets import get_secrets
 from ports.storage import get_blob_store
@@ -53,6 +54,7 @@ def unavailable_adapters(settings: Settings) -> list[str]:
         "identity": get_identity(settings),
         "secrets": get_secrets(settings),
         "notify": get_notifier(settings),
+        "pipeline": get_pipeline(settings),
     }
     return [name for name, adapter in selected.items()
             if getattr(adapter, "is_stub", False) or getattr(adapter, "available", True) is False]
@@ -82,6 +84,7 @@ def health(
             "identity": settings.identity_provider,
             "secrets": settings.secrets_provider,
             "notify": settings.notify_provider,
+            "pipeline": settings.pipeline_provider,
         },
         unavailable=unavailable,
         four_eyes=four_eyes_now(engine, database),
