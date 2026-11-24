@@ -171,6 +171,21 @@ are transformation, waive and refer. Exception fixes are kept out of 7.13's `dra
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.14.
   Push `phase-7.14`; do not merge.
 
+## Phase 7.15 — Reports, recurring patterns, audit view
+
+Plan: `docs/plans/phase-7.15.md`. Tasks: T0 plan, T1 recurring failure patterns (code only, no model), T2 a report per data
+owner and per data steward (numbers from code; `ReportSummariserAgent`, A1, may write the narrative), T3 daily and monthly
+report jobs (in-app notices; email stays a stub), T4 the audit view with a CSV export.
+
+- A pattern is the same rule failing on the same weekday, day of month or provider date across at least N loads (a
+  setting), with the dates as evidence; groups referred to the provider in 7.14 are listed once.
+- A report is append-only and versioned (migration 0035); its numbers are counted by code from the tables and hashed by the
+  database; the narrative is a separate field, logged like every model call, and can never change a number (a number the
+  narrative states that the report does not hold refuses the narrative, not the report).
+- Out of scope: sending email, and the erase of profiling history (7.16).
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.15.
+  Push `phase-7.15`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
