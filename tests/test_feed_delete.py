@@ -80,7 +80,8 @@ def test_every_table_with_a_feed_id_is_known_to_the_delete_tests(db_session):
     named = set(db_session.execute(text(
         "SELECT table_name FROM information_schema.columns WHERE column_name = 'feed_id' "
         "AND table_schema = current_schema()")).scalars())
-    assert named - {"feed_deletions"} == set(DIRECT), named ^ set(DIRECT)
+    # feed_deletions and profile_erasures (0036) are records that outlive the feed: no FK, and the delete leaves them
+    assert named - {"feed_deletions", "profile_erasures"} == set(DIRECT), named ^ set(DIRECT)
 
 
 def test_deleting_a_feed_removes_its_rows_and_nothing_of_another_feed(db_session, glossary, tmp_path):

@@ -22,7 +22,7 @@ The system is three platforms, in the order data moves:
 6. **Voided on 2026-11-22.** The rule was "synthetic data only". The code now lives only on company-approved servers (the company GitHub repository and Replit), so client files, client names and real vendor data may be used. Secrets still never go in the repository: `.env` locally, Replit Secrets on Replit. Three tests still check that today's fixtures are synthetic (`tests/test_source_catalogue.py`, `tests/test_glossary_seed.py`, `tests/test_demo_seed.py`); change them in the phase that brings in real data.
 7. **Configuration is versioned, never edited in place.** A change creates a new version.
 
-**Exception to rules 1/7 (phase 7.9):** a feed may be hard-deleted only through `amaze_delete_feed()`; its deletion is recorded in `feed_deletions`. Nothing else deletes from an append-only table (the guards allow a DELETE only while `amaze.deleting_feed` names the row's own feed). Glossary elements and their proposals are kept.
+**Exception to rules 1/7 (phase 7.9):** a feed may be hard-deleted only through `amaze_delete_feed()`; its deletion is recorded in `feed_deletions`. Nothing else deletes from an append-only table (the guards allow a DELETE only while `amaze.deleting_feed` names the row's own feed). Glossary elements and their proposals are kept. **Phase 7.16 adds one more:** a `feed_profiles` row may be deleted only through `amaze_erase_profiles()`, which keeps the latest profile and every profile a registration, sign-off, glossary run, arrival, code version or report points to, and records the erase in `profile_erasures`.
 
 ## Tech stack
 

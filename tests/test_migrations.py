@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0035"  # old: "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0036"  # old: "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -1420,3 +1420,43 @@ def test_0035_downgrade_refuses_while_a_report_exists(scratch_schema):
             "'2026-11-02', '2026-11-03', 1, '{}', 'x', 'none', 'job')"))
     with pytest.raises(DBAPIError, match="migration 0035"):
         command.downgrade(config, "0034")
+
+
+def _0036_state(engine):
+    with engine.connect() as connection:
+        functions = set(connection.execute(text(
+            "SELECT proname FROM pg_proc WHERE proname LIKE 'amaze_%profile%' "
+            "AND pronamespace = current_schema()::regnamespace")).scalars())
+        may_delete = connection.execute(text(
+            "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_may_delete' "
+            "AND p.pronamespace = current_schema()::regnamespace")).scalar_one()
+        return {"tables": set(inspect(connection).get_table_names()), "functions": functions, "may_delete": may_delete}
+
+
+def test_0036_adds_the_erase_and_downgrade_restores_0035(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0035")
+    before = _0036_state(engine)
+    command.upgrade(config, "0036")
+    up = _0036_state(engine)
+    assert "profile_erasures" in up["tables"] and "profile_erasures" not in before["tables"]
+    assert up["functions"] == {"amaze_erase_profiles", "amaze_profile_keep_reason"} and not before["functions"]
+    assert "amaze_erasable" in up["may_delete"] and "amaze_erasable" not in before["may_delete"]
+    command.downgrade(config, "0035")
+    assert _0036_state(engine) == before
+    command.upgrade(config, "0036")
+    assert _0036_state(engine) == up
+
+
+def test_0036_downgrade_refuses_while_an_erase_is_recorded(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0036")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO profile_erasures (feed_id, feed_code, before, \"by\", reason, erased_count, erased_ids, "
+            "erased_versions, kept, kept_count) VALUES (gen_random_uuid(), 'syn_a', now(), 'dev-operator', 'Old.', 1, "
+            "ARRAY[gen_random_uuid()], ARRAY[2], '[]', 0)"))
+    with pytest.raises(DBAPIError, match="migration 0036"):
+        command.downgrade(config, "0035")

@@ -335,6 +335,35 @@ class FeedDeletionRow(Base):
     rows_deleted: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
+class ProfileErasureRow(Base):
+    """The record of an erase of profiling history: who, when, why, which profiles went (ids and versions) and which were
+    kept with the reason (migration 0036). Append-only; written only by amaze_erase_profiles(). No FK: it outlives the
+    feed, as feed_deletions does."""
+
+    __tablename__ = "profile_erasures"
+    __table_args__ = (
+        CheckConstraint("length(btrim(reason)) > 0", name="reason"),
+        CheckConstraint('length(btrim("by")) > 0', name="by"),
+        CheckConstraint("erased_count >= 1 AND erased_count = cardinality(erased_ids) "
+                        "AND erased_count = cardinality(erased_versions)", name="erased_count_matches"),
+        CheckConstraint("jsonb_typeof(kept) = 'array' AND kept_count = jsonb_array_length(kept)", name="kept_count_matches"),
+        Index("ix_profile_erasures_feed_id", "feed_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    feed_code: Mapped[str] = mapped_column(Text)
+    before: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    by: Mapped[str] = mapped_column("by", Text)
+    reason: Mapped[str] = mapped_column(Text)
+    erased_count: Mapped[int] = mapped_column(Integer)
+    erased_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid))
+    erased_versions: Mapped[list[int]] = mapped_column(ARRAY(Integer))
+    kept: Mapped[list[Any]] = mapped_column(JSONB)
+    kept_count: Mapped[int] = mapped_column(Integer)
+
+
 class SourceChoiceRow(Base):
     """Which source, and so which candidate feed, a requirement was handed to: one row per version, a
     selection or a release; the highest version is current. Append-only (migrations 0008 and 0009).
