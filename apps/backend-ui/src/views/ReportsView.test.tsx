@@ -89,3 +89,14 @@ test("New version asks the API for the same report again and shows its version",
     && String(i?.body).includes('"period_start":"2026-11-02"') && String(i?.body).includes('"role":"data_owner"'))).toBe(true));
   expect((await screen.findByTestId("report-made")).textContent).toContain("version 2");
 });
+
+test("Preview today so far shows the numbers marked as not stored and writes no report", async () => {
+  const fetchStub = stubFetch({ [LIST]: [], "GET /api/amaze/reports/preview?role=data_owner": numbers() });
+  renderWithTheme(<ReportsView devUser="dev-data-owner" roles={["data_owner"]} reportId={null} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Preview today so far (data owner)" }));
+  const preview = await screen.findByTestId("report-preview");
+  expect(preview.textContent).toContain("Preview: not stored");
+  expect(preview.textContent).toContain("Loads2");
+  expect(preview.textContent).toContain("every Monday: 3 of 4 loads");
+  expect(fetchStub.mock.calls.some(([, i]) => i?.method === "POST")).toBe(false);
+});

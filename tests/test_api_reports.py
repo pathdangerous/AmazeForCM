@@ -74,3 +74,36 @@ async def test_making_a_report_commits_it_and_the_narrative_call(own_schema, tmp
     assert committed(own_schema, "SELECT count(*) FROM proposal_log WHERE agent_name = 'ReportSummariserAgent'") == [(1,)]
     assert committed(own_schema, "SELECT r.narrative_log_id = l.id FROM reports r, proposal_log l "
                                  "WHERE l.agent_name = 'ReportSummariserAgent'") == [(True,)]
+
+
+# ---------------------------------------------------------------- phase 7.16 T0a: preview today so far
+
+COUNTS = ("SELECT (SELECT count(*) FROM reports), (SELECT count(*) FROM notifications), (SELECT count(*) FROM proposal_log)")
+
+
+async def test_the_preview_of_today_is_the_numbers_of_today_and_stores_nothing(client, db_session, feeds):
+    from datetime import UTC, datetime
+
+    loaded_on(db_session, feeds[0], feeds[1], datetime.now(UTC), flags={VOLUME_RULE: 4})
+    db_session.commit()
+    before = sql(db_session, COUNTS)
+    got = await client.get("/api/amaze/reports/preview", headers=OWNER, params={"role": "data_owner"})
+    assert got.status_code == 200, got.text
+    numbers = got.json()
+    today = datetime.now(UTC).date()
+    assert (numbers["period"]["kind"], numbers["period"]["start"]) == ("daily", today.isoformat())
+    assert (numbers["totals"]["loads"], numbers["totals"]["held"], numbers["totals"]["flagged_rows"]) == (1, 1, 4)
+    assert sql(db_session, COUNTS) == before  # no reports row, no notification, no model call logged
+    # a stored report of today is still refused: stored reports are past periods only
+    assert (await client.post("/api/amaze/reports", headers=OWNER,
+                              json={**BODY, "period_start": today.isoformat()})).status_code == 422
+    assert sql(db_session, COUNTS) == before
+
+
+async def test_a_person_previews_their_own_view_and_operations_may_preview_anyone(client):
+    assert (await client.get("/api/amaze/reports/preview", headers=STEWARD,
+                             params={"role": "data_owner", "subject": "dev-data-owner"})).status_code == 403
+    assert (await client.get("/api/amaze/reports/preview", headers=OPERATOR,
+                             params={"role": "data_owner", "subject": "dev-data-owner"})).status_code == 200
+    assert (await client.get("/api/amaze/reports/preview", headers={"X-Dev-User": "dev-requester"},
+                             params={"role": "data_owner"})).status_code == 403

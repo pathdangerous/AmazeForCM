@@ -178,6 +178,9 @@ export type ReportT = ReportRowT & { numbers: ReportNumbers; numbers_sha256: str
   narrative_note: string | null; narrative_log_id: string | null };
 export const getReports = (devUser: string) => apiGet<ReportRowT[]>("/api/amaze/reports", devUser);
 export const getReport = (id: string, devUser: string) => apiGet<ReportT>(`/api/amaze/reports/${id}`, devUser);
+// phase 7.16: today so far, counted like a report and never stored
+export const getReportPreview = (role: string, devUser: string) =>
+  apiGet<ReportNumbers>(`/api/amaze/reports/preview?role=${role}`, devUser);
 export const makeReport = (body: { kind: string; period_start: string; role: string; subject_id?: string }, devUser: string) =>
   apiPost<{ result: { outcome: string; report_id: string; version: number; reason?: string; figure?: string | null } }>(
     "/api/amaze/reports", body, devUser);

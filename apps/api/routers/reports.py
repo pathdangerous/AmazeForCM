@@ -18,9 +18,9 @@ from sqlalchemy.orm import Session
 from agents.report_summariser import ReportSummariserAgent
 from apps.api.deps import backend_user, get_app_settings, get_db_session, get_report_agent
 from apps.api.transactions import in_transaction, read
-from core.domain.report import Period, Report, ReportKind, SubjectRole
+from core.domain.report import Period, Report, ReportKind, ReportNumbers, SubjectRole
 from core.repositories.reports import ReportNotFound, ReportRepository
-from core.steps.reports import ReportResult, report_input, write_report
+from core.steps.reports import ReportResult, build_numbers, report_input, write_report
 from ports.config import Settings
 from ports.identity.base import User
 from ports.llm.base import LLMRefused, LLMUnavailable
@@ -57,6 +57,18 @@ def list_reports(session: DbSession, user: BackendUser, subject: str | None = No
                  role: SubjectRole | None = None) -> list[ReportRow]:
     """The subject's reports (default: the signed-in person's), newest period first, then the highest version."""
     return read(session, lambda: [_row(r) for r in ReportRepository(session).list_for(subject or user.id, role)])
+
+
+@router.get("/reports/preview", response_model=ReportNumbers)
+def preview_report(session: DbSession, user: BackendUser, settings: AppSettings, role: SubjectRole,
+                   subject: str | None = None) -> ReportNumbers:
+    """Phase 7.16: today so far, counted like a report and never stored: no reports row, no notice, no model call (so
+    no narrative). Own view, or operations for anyone. Declared before /reports/{report_id}."""
+    who = subject or user.id
+    if who != user.id and "operations" not in user.roles:
+        raise HTTPException(status_code=403, detail="Only operations previews another person's report")
+    period = Period.daily(datetime.now(UTC).date())
+    return read(session, lambda: build_numbers(session, subject_id=who, role=role, period=period, settings=settings))
 
 
 @router.get("/reports/{report_id}", response_model=Report)
