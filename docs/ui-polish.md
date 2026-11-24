@@ -52,3 +52,8 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Feed page, Exceptions (phase 7.14) | A manual transformation fix cannot be added on screen (only waive and refer); the API takes it | Add "Transformation" to Add a fix, with the steps of the column | open |
 | backend-ui, Feed page, Exceptions (phase 7.14) | Add a fix lists only open groups by rule and pattern, with no sample rows to choose by | Show the group's first sample row in each option | open |
 | backend-ui, Feed page, Exceptions (phase 7.14) | The waivers waiting for the owner are found only on the feed page; the owner has a notification, not a list | A "Waivers to approve" list on the owner's Overview | open |
+| backend-ui, Reports (phase 7.15) | The list shows only the signed-in person's reports; operations cannot browse another owner's without the API | A person picker for operations | open |
+| backend-ui, Reports (phase 7.15) | A report's numbers are tables and counts only; a trend over days is not drawn | A small chart of trust score and held loads over the last 30 daily reports | open |
+| backend-ui, Reports (phase 7.15) | "Make yesterday's report" is the only way to ask on screen; a day or month cannot be chosen | A date or month picker beside it | open |
+| backend-ui, Audit (phase 7.15) | The person filter is free text (a user id) | A picker of the people who decided something in the month | open |
+| backend-ui, Audit (phase 7.15) | The screen shows 2000 rows at most and has no paging | Page by 100 rows, keep the CSV whole | open |

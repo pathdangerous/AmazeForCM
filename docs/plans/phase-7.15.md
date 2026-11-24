@@ -123,6 +123,22 @@ spreadsheet never runs it). Who started a rerun was not recorded before 7.15: mi
 - The narrative check cannot judge words. It stops a wrong *figure*; it does not stop a wrong *claim*. The numbers sit beside it.
 - Reports for many feeds can be large; `numbers` lists only what happened in the period, not every feed's history.
 
+## 7. Outcome and deviations (T1 to T4)
+
+- Commits: T0 `5dd9992`, T1 `b49f924`, T2 `d07459e`, T3 `ff5bc8c`, T4 and finish: see `git log phase-7.15`.
+- Files outside the plan: `core/domain/pattern.py` and `core/domain/report.py` (the models; the step modules import them),
+  `core/repositories/reports.py`, `apps/api/routers/reports.py` and `audit.py`, `tests/reporting.py` (loads on chosen dates),
+  `tests/configured.py` (`go_live()` lets a named owner other than `dev-data-owner` decide), `tests/test_api.py` and
+  `tests/test_jobs.py` (the start-up job list now holds the report job), `tests/phase711.shell.test.tsx` (two more views).
+- `core/steps` may not import `ports.llm` (rule 2's boundary test caught it): `write_report()` takes the errors that mean "the
+  model could not answer" from its caller (`no_narrative_on`). The notice to a subject lives in `core/steps/reports.py`, so the
+  pinned digest of the notify calls in `jobs.py` is unchanged.
+- The `reports` period check is the database's too: a daily report is one day, a monthly one a calendar month.
+- A report of a period that has not ended is refused (422): the demo's loads are of today, so its report is of yesterday and quiet.
+- The code version of a decision is the latest `code_versions` row at or before it. Approvals are stamped with the transaction
+  start, so tests on one shared transaction cannot show it; `tests/test_api_audit.py` proves it on committed data.
+- Not done: a monthly scheduler of its own (a daily job that acts on the 1st), email, a report per requester.
+
 ## 6. Deferred
 
 Sending email (stub stays); a monthly scheduler of its own; erase of profiling history (7.16); a report per requester.

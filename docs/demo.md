@@ -1,6 +1,8 @@
-# Demo: from a file to released data, a second delivery that drifts, and its exceptions fixed (13 minutes)
+# Demo: from a file to released data, a second delivery that drifts, its exceptions fixed, and the audit (15 minutes)
 
-Covers phases 7.12, 7.13 and 7.14. Phase 7.13 adds **Run all agents**: after one click on the profile, every onboarding
+Covers phases 7.12 to 7.15. Phase 7.15 adds **Reports** (a daily and a monthly report per data owner and data steward, made
+every morning, numbers counted by code, an optional narrative apart from them), recurring failure patterns, and the monthly
+**Audit** with a CSV. Phase 7.13 adds **Run all agents**: after one click on the profile, every onboarding
 agent drafts ahead on the drafts before it, and you review the whole chain once, top to bottom. Phase 7.14 adds
 **Exceptions**: the rows a held load's rules flagged, grouped; an agent proposes one fix per group; a person approves in
 bulk; the held file is rerun as a new, recorded load.
@@ -27,6 +29,8 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 | 9-10 | "Agents propose the update; a person approves; version 2." | All on screen, as Olive Operator: **Glossary tab**: approve BEST_FCF's element. **Feed page, Mapping**: Propose mappings, pick and approve BEST_FCF's element. **Go live**: Prepare, then Approve go-live. **Generated code**: version 2, Compare with version 1. | The diff names `curated.sql` and `README.md`: BEST_FCF is now loaded. Overview: switch Daily / Monthly; the drift event and the actions applied by agents vs by hand are counted. |
 | 10-12 | "Flagged rows become exceptions; agents propose fixes; people approve; the file is rerun." | Feed page, section **Exceptions** (version 2 scored 88.6, below the threshold of 90, so it was held). Press **Propose fixes**. Tick every group, press **Approve selected**. Type a reason, press **Rerun this load**. | Groups of flagged rows by rule and value pattern (digits 9, capitals A), with counts and sample rows; one fix per group, each marked agent or "added by", with who decides next (a waiver: the data steward, then the owner named at registration; here one person holds both). The held load stays **held**. The rerun is a new load: "Rerun of load ...: reason" in Loads; **Rerun released: trust 97.1 (it was 88.6); 6 rows waived**; the certification says "waived (counted as unflagged)". The owner is notified at each step. |
 | 12-13 | "Counted by who did it." | Overview. | **Exceptions**: fixes approved by agent proposals and by hand; groups open and waiting for the owner; reruns released and still held. |
+| 13-14 | "A report every morning; the numbers are code's, the words are the agent's." | **Insights, Reports**: press **Make yesterday's report (data owner)**, open it. | The **Narrative** (written by the ReportSummariserAgent, logged) sits apart from the **Numbers** (loads, held, rows, flagged and waived rows, trust, open groups, waivers, reruns, drift, **recurring patterns** with their dates as evidence, groups **referred to the provider** once each). The demo's loads are today, so yesterday's report is quiet; the job makes one for every owner and steward each morning and on the 1st the month's. **New version** makes version 2: the numbers fingerprint is the same. A narrative that states a figure the report does not hold is refused and the report is kept without it. |
+| 14-15 | "Every decision, who made the item, which code ran." | **Insights, Audit**: this month. Filter by feed or person. **Download CSV**. | One row per decision (who, role, approved or rejected, the item, **agent (ExceptionFixAgent)**, manual or system), the **code version** in force, **(waiver)**, and the **rerun** with who started it and why. The CSV has the same rows; a cell that starts like a formula is quoted. |
 
 ## What Exceptions does and does not do (7.14)
 
@@ -52,10 +56,8 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 ## Roadmap (not built yet)
 
 - **More exception fixes.** 7.14 proposes a transformation, a waiver or a referral; a rule change and a remap are not built.
-- **Owner reports with recurring-failure patterns.** A report to each feed owner: what failed, how often, and the pattern.
+- **Email for reports.** The report job tells people in the app; the email adapter is still a stub.
 - **Recorded erase of profiling history.** An erase of a feed's profiling history, recorded like 7.9's feed delete, never an
   edit in place (rule 7).
 - **CI/CD pipeline.** Generated code and configuration promoted through environments by a pipeline, not by hand.
 - **In-house data agents.** The agents run on the company's own model deployment (the Azure move), behind the same port.
-- **Monthly audit view.** One page per month: every proposal, who made it (agent, rules or person), who decided it, which
-  code version ran.

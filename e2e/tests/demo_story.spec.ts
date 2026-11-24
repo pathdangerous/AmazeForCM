@@ -179,6 +179,23 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(page.getByTestId("overview-exceptions")).toContainText("Reruns:");
   await page.getByRole("button", { name: "Daily" }).click();
   await expect(page.getByTestId("overview-drift")).toContainText(FEED_CODE);
+
+  // 7.15: a report (yesterday's: the demo's loads are today, so it is quiet; the job makes one every morning), its narrative
+  // apart from its numbers, then the audit view of the month and its CSV
+  await page.goto(`${BACKEND}#/reports`);
+  await page.getByRole("button", { name: "Make yesterday's report (data owner)" }).click();
+  await expect(page.getByText("Yesterday's report was made: version 1.")).toBeVisible({ timeout: 60_000 });
+  await page.getByTestId("report-row").first().getByRole("link").click();
+  await expect(page.getByTestId("report-narrative")).toContainText("separate from the numbers", { timeout: 30_000 });
+  await expect(page.getByTestId("report-totals")).toContainText("Average trust score");
+  await page.goto(`${BACKEND}#/audit`);
+  const audit = page.getByTestId("audit");
+  await expect(audit.getByTestId("audit-row").first()).toBeVisible({ timeout: 30_000 });
+  await expect(audit.getByTestId("audit-row").filter({ hasText: "rerun of load" })).toHaveCount(1);
+  await expect(audit.getByTestId("audit-row").filter({ hasText: "(waiver)" }).first()).toBeVisible();
+  await expect(audit.getByTestId("audit-row").filter({ hasText: /version \d+/ }).first()).toBeVisible();
+  const [download] = await Promise.all([page.waitForEvent("download"), audit.getByRole("button", { name: "Download CSV" }).click()]);
+  expect(download.suggestedFilename()).toMatch(/^audit-\d{4}-\d{2}\.csv$/);
 });
 
 // keeps the unused import honest for tooling that lists spec files
