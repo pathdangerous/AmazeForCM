@@ -237,8 +237,16 @@ class DailyFetch:
         the held load's own hash), the engine (the feed's current waivers applied), steps 15 and 20. The result is typed:
         released, still held, or not loaded."""
         from core.repositories.certifications import LoadCertificationRepository
-        from core.steps.exceptions import RerunNotLoaded, RerunReleased, RerunStarted, RerunStillHeld, start_rerun
-        from core.steps.exceptions import load_exceptions
+        from core.steps.exceptions import (
+            RerunNotLoaded,
+            RerunReleased,
+            RerunStarted,
+            RerunStillHeld,
+            load_exceptions,
+            start_rerun,
+            tell_rerun,
+        )
+        from core.steps.s12_arrival import consumers_of
 
         with self.session_factory() as session:
             try:
@@ -260,14 +268,20 @@ class DailyFetch:
                     detail = (new.arrival_detail or {}).get("reason") or new.failure
                     return RerunNotLoaded(load_id=new.id, status=status, detail=detail)
                 previous = before.trust_score if before else None
-                if status == "released":
-                    return RerunReleased(load_id=new.id, rerun_of=load_id, trust_score=after.trust_score,
-                                         previous_score=previous, waived_rows=after.waived_rows)
-                return RerunStillHeld(load_id=new.id, rerun_of=load_id, trust_score=after.trust_score,
-                                      previous_score=previous,
-                                      open_groups=load_exceptions(session, new.id).total_groups)
-            finally:
+                result = (RerunReleased(load_id=new.id, rerun_of=load_id, trust_score=after.trust_score,
+                                        previous_score=previous, waived_rows=after.waived_rows)
+                          if status == "released" else
+                          RerunStillHeld(load_id=new.id, rerun_of=load_id, trust_score=after.trust_score,
+                                         previous_score=previous,
+                                         open_groups=load_exceptions(session, new.id).total_groups))
+                notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+                tell_rerun(session, result, feed_id=new.feed_id, notifier=notifier,  # the owner and the consumers
+                           consumers=consumers_of(session, new.feed_id))
+                session.commit()
+                return result
+            except Exception:
                 session.rollback()
+                raise
 
     def _run_received(self, load_id: UUID, live, today: date) -> str:
         """Steps 12, 13, 15 and 20 on a received scheduled load: the tail of load_feed(), shared with a rerun."""

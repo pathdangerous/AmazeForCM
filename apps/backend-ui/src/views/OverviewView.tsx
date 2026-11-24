@@ -103,6 +103,12 @@ export default function OverviewView({ devUser }: { devUser: string }) {
               </li>)}</ul>}
           </div>
         </SectionCard>}
+        {data.exceptions && <SectionCard title="Exceptions">
+          <div data-testid="overview-exceptions">
+            <p>{`Exception fixes approved in the period: ${data.exceptions.by_agent} resolved by agent proposals, ${data.exceptions.by_hand} by hand.`}</p>
+            <p>{`${data.exceptions.open} groups open, ${data.exceptions.waiting_for_owner} waiting for the data owner. Reruns: ${data.exceptions.reruns_released} released, ${data.exceptions.reruns_still_held} still held.`}</p>
+          </div>
+        </SectionCard>}
         <SectionCard title="Recent loads" bare actions={<div className="page-actions">
           <span className="overview-note">All loads in period · scheduled and go-live tests</span>
           <div className="column-chooser">

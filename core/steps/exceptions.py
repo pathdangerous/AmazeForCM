@@ -61,6 +61,7 @@ from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
 from ports.config import Settings
 from ports.identity.base import User
+from ports.notify.base import Notifier
 
 SAMPLES = 5
 MAX_PAGE = 50
@@ -549,8 +550,36 @@ class NothingSelected(StepResult):
 BulkResult = Annotated[FixesDecided | NothingSelected, Field(discriminator="outcome")]
 
 
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def _tell_owner(session: Session, load: Load, notifier: Notifier, decided: Sequence[GroupDecided]) -> None:
+    """Plan, 2.7: the registered owner is told when a waiver waits for them, and when groups are resolved (and by
+    whom: an agent's proposal or a person's own fix). Recipients come from the registration, not from a list."""
+    owner = _owner(session, load.feed_id)
+    if owner is None:
+        return
+    feed = FeedRepository(session).get(load.feed_id)
+    link = f"#/feed/{feed.id}"
+    waiting = [d for d in decided if d.state == "waiting_for_owner"]
+    if waiting:
+        notifier.notify(recipient=owner, subject=f"Waivers wait for you: {feed.code}", link=link,
+                        body=f"{_plural(len(waiting), 'waiver')} of exception groups in the held load of {feed.code} "
+                             "wait for your decision. The data steward has approved them.")
+    done = [d for d in decided if d.state in ("waived", "referred", "transformation_approved")]
+    if done:
+        proposals = ProposalRepository(session)
+        by_agent = sum(proposals.get(d.proposal_id).origin == "agent" for d in done)
+        notifier.notify(recipient=owner, subject=f"Exception groups resolved: {feed.code}", link=link,
+                        body=f"{_plural(len(done), 'group')} of the held load of {feed.code} resolved: "
+                             f"{by_agent} by agent proposal, {len(done) - by_agent} by hand. The load is rerun only "
+                             "when a data steward starts it.")
+
+
 def decide_exception_fixes(session: Session, *, load_id: UUID, group_keys: Sequence[str], user: User,
-                           decision: Literal["approved", "rejected"], note: str | None = None) -> FixesDecided | NothingSelected:
+                           decision: Literal["approved", "rejected"], note: str | None = None,
+                           notifier: Notifier | None = None) -> FixesDecided | NothingSelected:
     """Bulk decision (plan, 2.5): each selected group's pending fix gets this person's decision through its own step
     function (a transformation: decide_transformation; a waiver or referral: decide_exception_fix), one approvals row
     per step, as "Approve all confident" does. All or nothing, in a savepoint: a group with no pending fix, or whose next
@@ -581,8 +610,27 @@ def decide_exception_fixes(session: Session, *, load_id: UUID, group_keys: Seque
             except (NotAnApprover, ProposalAlreadyDecided) as exc:
                 raise GroupDecisionRefused(f"Group {key}: {exc}") from exc
     now = {g.group_key: g for g in _all_groups(session, load_id)}
-    return FixesDecided(decided=[GroupDecided(group_key=key, proposal_id=pid, state=now[key].state)
-                                 for pid, key, _ in chosen])
+    decided = [GroupDecided(group_key=key, proposal_id=pid, state=now[key].state) for pid, key, _ in chosen]
+    if notifier is not None and decision == "approved":
+        _tell_owner(session, load, notifier, decided)
+    return FixesDecided(decided=decided)
+
+
+def tell_rerun(session: Session, result: RerunResult, *, feed_id: UUID, notifier: Notifier,
+               consumers: Sequence[str] = ()) -> None:
+    """Plan, 2.7: after a rerun the owner and the consumers are told whether it was released or still held."""
+    if not isinstance(result, (RerunReleased, RerunStillHeld)):
+        return
+    feed = FeedRepository(session).get(feed_id)
+    released = isinstance(result, RerunReleased)
+    body = (f"The rerun of the held load of {feed.code} was released: trust score {result.trust_score} "
+            f"(it was {result.previous_score}). Its data is available." if released else
+            f"The rerun of the held load of {feed.code} is still held: trust score {result.trust_score} "
+            f"(it was {result.previous_score}), {_plural(result.open_groups, 'exception group')} still flag rows.")
+    owner = _owner(session, feed_id)
+    for person in dict.fromkeys([*([owner] if owner else []), *consumers]):
+        notifier.notify(recipient=person, subject=f"Rerun {'released' if released else 'still held'}: {feed.code}",
+                        body=body, link=f"#/feed/{feed_id}")
 
 
 RerunReason = Literal["not_held", "nothing_resolved_since"]

@@ -80,10 +80,24 @@ class ActionCounts(BaseModel):
     pending: int
 
 
+class ExceptionCounts(BaseModel):
+    """Phase 7.14, T4: exception groups resolved in the period by an agent's proposal and by a person's own fix; groups
+    of the held loads still open, and waiting for the owner; and the loads rerun in the period, by how they ended."""
+
+    by_agent: int
+    by_hand: int
+    open: int
+    waiting_for_owner: int
+    reruns_released: int
+    reruns_still_held: int
+
+
 class Overview(BaseModel):
     days: int
     drift_events: list[DriftEvent] = []
     actions: ActionCounts = ActionCounts(by_agent=0, by_hand=0, pending=0)
+    exceptions: ExceptionCounts = ExceptionCounts(by_agent=0, by_hand=0, open=0, waiting_for_owner=0,
+                                                  reruns_released=0, reruns_still_held=0)
     feeds_live: int
     feeds_paused: int
     onboardings_active: int
@@ -98,6 +112,26 @@ class Overview(BaseModel):
 def _confidence(payload: dict) -> float | None:
     value = payload.get("confidence")
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1 else None
+
+
+def _exception_counts(session: Session, since: datetime, records) -> ExceptionCounts:
+    """Counted from proposals and loads; nothing new is stored. A group is resolved by the approved proposal that fixed
+    it: an exception_fix (waive or refer) or a transformation made for a group; its origin says by whom."""
+    from core.steps.exceptions import load_exceptions
+
+    fixes = session.execute(select(ProposalRow.origin).where(
+        ProposalRow.status == "approved", ProposalRow.decided_at >= since,
+        (ProposalRow.kind == "exception_fix") | ((ProposalRow.kind == "transformation")
+                                                 & ProposalRow.payload.has_key("exception_group")))).scalars().all()
+    open_groups = waiting = 0
+    for (load_id,) in session.execute(select(LoadRow.id).where(LoadRow.status == "held", LoadRow.purpose == "scheduled")):
+        groups = load_exceptions(session, load_id, limit=50)
+        open_groups += sum(g.state in ("open", "fix_pending") for g in groups.groups)
+        waiting += sum(g.state == "waiting_for_owner" for g in groups.groups)
+    reruns = [load.status for load, _f, _c in records if load.rerun_of_load_id is not None]
+    return ExceptionCounts(by_agent=sum(o == "agent" for o in fixes), by_hand=sum(o == "manual" for o in fixes),
+                           open=open_groups, waiting_for_owner=waiting, reruns_released=reruns.count("released"),
+                           reruns_still_held=reruns.count("held"))
 
 
 @router.get("/overview", response_model=Overview)
@@ -178,7 +212,7 @@ def overview(
                           by_hand=sum(p.get("applied_by") == "manual" for p in selected),
                           pending=sum(status == "pending" for status, _, _ in actions))
     return Overview(
-        drift_events=drift_events, actions=counts,
+        drift_events=drift_events, actions=counts, exceptions=_exception_counts(session, since, records),
         days=days, feeds_live=stages.get("registered", 0), feeds_paused=stages.get("paused", 0),
         onboardings_active=active, loads_count=len(recent),
         average_trust_score=sum(scores) / len(scores) if scores else None,

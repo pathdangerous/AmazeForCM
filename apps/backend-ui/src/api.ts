@@ -26,6 +26,9 @@ export type OperationsOverview = {
   drift_events?: { load_id: string; feed_id: string; feed_code: string; at: string; outcome: string | null; new_columns: number;
                    missing_columns: number; type_changes: number; order_changed: boolean }[];
   actions?: { by_agent: number; by_hand: number; pending: number };
+  // phase 7.14, T4: exception groups resolved by agent proposals and by hand; open and waiting groups; reruns
+  exceptions?: { by_agent: number; by_hand: number; open: number; waiting_for_owner: number; reruns_released: number;
+                 reruns_still_held: number };
   feeds_live: number;
   feeds_paused: number;
   onboardings_active: number;

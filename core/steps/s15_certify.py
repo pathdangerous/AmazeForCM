@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from core.domain.load import Load
 from core.engine.run import AfterLoadRefused
 from core.repositories.certifications import LoadCertificationRepository
+from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.standard_records import StandardRecordRepository
@@ -85,7 +86,9 @@ def _certify(session: Session, load: Load, threshold: Decimal, notifier: Notifie
     feed = FeedRepository(session).get(load.feed_id)
     warned: list[str] = []
     if not released:
-        warned = list(dict.fromkeys([*consumers_of(session, load.feed_id), *operations, *backend_team]))
+        registration = FeedRegistrationRepository(session).current(load.feed_id)  # 7.14: the owner is told too
+        warned = list(dict.fromkeys([*consumers_of(session, load.feed_id), *operations, *backend_team,
+                                     *([registration.owner_id] if registration else [])]))
     LoadCertificationRepository(session).add(
         load_id=load.id, feed_id=load.feed_id, rows=rows, flagged_rows=flagged, rule_counts=counts,
         trust_score=score, threshold=threshold, outcome="released" if released else "held_consumers_warned",
@@ -95,9 +98,13 @@ def _certify(session: Session, load: Load, threshold: Decimal, notifier: Notifie
     shared = dict(load_id=load.id, trust_score=score, threshold=threshold, rows=rows, flagged_rows=flagged)
     if released:
         return Released(**shared)
+    from core.steps.exceptions import load_exceptions  # 7.14: the open groups a person can resolve
+
+    groups = load_exceptions(session, load.id, limit=1).total_groups
     for person in warned:
         notifier.notify(recipient=person, subject=f"Load held: {feed.code}",
                         body=f"The scheduled load of {feed.code} scored {score} (threshold {threshold}): "
-                             f"{flagged} of {rows} rows were flagged by a rule. It was held, not released; the data "
-                             "released earlier stays available.", link=f"#/feed/{feed.id}")  # phase 7.5, P28
+                             f"{flagged} of {rows} rows were flagged by a rule, in {groups} exception groups. It was "
+                             "held, not released; the data released earlier stays available.",
+                        link=f"#/feed/{feed.id}")  # phase 7.5, P28
     return HeldConsumersWarned(**shared, warned=warned)

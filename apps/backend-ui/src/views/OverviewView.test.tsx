@@ -40,6 +40,16 @@ test("drift events and the actions applied by agents and by hand are shown, as c
   expect(screen.getByTestId("overview-drift").textContent).toContain("1 new, 0 missing, 0 type changes, order changed");
 });
 
+test("exception fixes are counted by agent and by hand, with the open groups and the reruns (7.14)", async () => {
+  stubFetch({ "GET /api/amaze/overview?days=7": overview(7, { exceptions: { by_agent: 3, by_hand: 1, open: 2,
+    waiting_for_owner: 1, reruns_released: 1, reruns_still_held: 2 } }) });
+  renderWithTheme(<OverviewView devUser="dev-operator" />);
+  const box = await screen.findByTestId("overview-exceptions");
+  expect(box.textContent).toContain("3 resolved by agent proposals, 1 by hand");
+  expect(box.textContent).toContain("2 groups open, 1 waiting for the data owner");
+  expect(box.textContent).toContain("Reruns: 1 released, 2 still held");
+});
+
 test("with no drift in the period it says so, and an older API answer without these fields shows no section", async () => {
   stubFetch({ "GET /api/amaze/overview?days=7": overview(7, { drift_events: [] }) });
   renderWithTheme(<OverviewView devUser="dev-operator" />);

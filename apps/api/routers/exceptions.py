@@ -19,6 +19,7 @@ from apps.api.deps import (
     get_daily_fetch,
     get_db_session,
     get_exception_fix_agent,
+    get_request_notifier,
 )
 from apps.api.jobs import DailyFetch
 from apps.api.transactions import in_transaction, read
@@ -39,6 +40,7 @@ from core.steps.exceptions import (
 )
 from ports.config import Settings
 from ports.identity.base import User
+from ports.notify.base import Notifier
 
 router = APIRouter(prefix="/api/amaze", tags=["exceptions"], dependencies=[Depends(backend_user)])
 DbSession = Annotated[Session, Depends(get_db_session)]
@@ -46,6 +48,7 @@ Steward = Annotated[User, Depends(data_steward_user)]
 FixAgent = Annotated[ExceptionFixAgent, Depends(get_exception_fix_agent)]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
 Daily = Annotated[DailyFetch, Depends(get_daily_fetch)]
+RequestNotifier = Annotated[Notifier, Depends(get_request_notifier)]
 
 
 @router.get("/loads/{load_id}/exceptions", response_model=LoadExceptions)
@@ -88,10 +91,11 @@ class BulkDecisionResponse(BaseModel):
 
 @router.post("/loads/{load_id}/exceptions/decision", response_model=BulkDecisionResponse)
 def decide_exception_groups(load_id: UUID, body: DecisionBody, session: DbSession,
-                            user: Annotated[User, Depends(backend_user)]) -> BulkDecisionResponse:
+                            user: Annotated[User, Depends(backend_user)], notifier: RequestNotifier) -> BulkDecisionResponse:
     """Bulk decision: this person's decision on each selected group's pending fix, all or nothing."""
     result = in_transaction(session, lambda: decide_exception_fixes(
-        session, load_id=load_id, group_keys=body.group_keys, user=user, decision=body.decision, note=body.note))
+        session, load_id=load_id, group_keys=body.group_keys, user=user, decision=body.decision, note=body.note,
+        notifier=notifier))
     return BulkDecisionResponse(result=result, exceptions=read(session, lambda: load_exceptions(session, load_id)))
 
 
