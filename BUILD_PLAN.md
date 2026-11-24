@@ -200,6 +200,22 @@ append-only `profile_erasures`), T2 the History panel (select, reason, confirm; 
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.16.
   Push `phase-7.16`; do not merge.
 
+## Phase 7.17 — Code pipeline: commit, checks, test load, result; go-live needs a pass
+
+Plan: `docs/plans/phase-7.17.md`. Tasks: plan, T1 port `Pipeline` (`ports/pipeline`, `PIPELINE_PROVIDER=local|azure_devops`;
+local = a separate git repository under `PIPELINE_REPO_ROOT`, one folder per feed, one commit per code version; Azure DevOps
+a stub), T2 `pipeline_runs` (migration 0037, append-only) with the stages commit, SQL parse, sandbox rule check, test load
+and a typed result, and a go-live that needs a passed run of the code version it pins, T3 the Code view (runs, stages, logs,
+commit hash, "Run pipeline") and the endpoints.
+
+- Code is generated from approved configuration (7.12); the pipeline only checks and records it. No model call anywhere
+  (rule 2's spirit: deterministic code); nothing is written inside this repository.
+- Outcomes: `passed`, `failed_at_commit`, `failed_at_sql_parse`, `failed_at_rule_check`, `failed_at_test_load`; a go-live
+  without a passed run is the named refusal `PipelineNotPassed` (409).
+- Out of scope: Azure DevOps implementation, remotes and pushes, scheduled runs, a run of anything but the generated code.
+- **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.17.
+  Push `phase-7.17`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0037).
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
