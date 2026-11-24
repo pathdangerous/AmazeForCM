@@ -747,6 +747,14 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
             ("glossary", "queued")]
         assert committed(engine, "SELECT count(*) FROM onboarding_events WHERE event = 'back'") == [(1,)]
 
+        # run all agents (phase 7.13): the run mode and its event
+        ran_all = await r.call("POST", f"/{oid}/run-all")
+        assert ran_all["session"]["run_mode"] == "chain"
+        assert committed(engine, "SELECT run_mode FROM onboarding_sessions") == [("chain",)]
+        assert committed(engine, "SELECT step, actor FROM onboarding_events WHERE event = 'chain_started'") == [
+            ("glossary", "dev-operator")]
+        await r.call("POST", f"/{oid}/run-all", expect=409)  # one click, once
+
 
 # ---------------------------------------------------------------- resume after a restart
 

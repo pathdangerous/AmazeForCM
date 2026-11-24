@@ -126,7 +126,8 @@ from core.steps.s02_profile import (
 from core.steps.s03_signoff import sign_off
 from core.steps.s04_register import NoOwner, register_feed, revise_visibility
 from core.steps.s05_glossary import builder_input, claim_run, decide_element, fail_run, record_run
-from core.steps.s06_map import decide_mapping, mapping_input, record_mappings
+from core.steps.drafts import draft_config
+from core.steps.s06_map import decide_mapping, excluded_columns, mapping_input, record_mappings
 from core.steps.s09_rules import (
     RuleAwaitsChecker,
     backtest_for,
@@ -171,6 +172,9 @@ STEP_OF_KIND = {kind: step for step, kinds in STEP_KINDS.items() for kind in kin
 AGENT_NAMES = {"profile": "ProfilerAgent", "glossary": "GlossaryBuilderAgent", "mapping": "MappingAgent",
                "transformations": "TransformationAgent", "rules": "RuleRecommenderAgent",
                "go_live": "ReviewSummariserAgent"}
+# phase 7.13: in chain mode these agents run one after the other on the drafts before them, with no click
+CHAIN_STEPS: tuple[str, ...] = ("glossary", "mapping", "transformations", "rules")
+DRAFTED = ("ready", "needs_decision", "done")  # a chain step whose agent has answered (or that a person approved)
 SECOND_PERSON = "a second person"
 RERUN_NOTE = "rerun after Back"
 MAX_GLOSSARY_RUNS = 20  # runs of other feeds that may sit in front of this feed's in the queue
@@ -401,6 +405,71 @@ def _enter(session: Session, sess: OnboardingSession, step: str, *, actor: str, 
     sessions.add_event(sess.id, step=step, event="agent_queued", actor=actor)
 
 
+def _queue_draft(session: Session, sess: OnboardingSession, step: str, *, actor: str) -> None:
+    """Chain mode: queue a step's agent ahead of the cursor (phase 7.13). The cursor does not move: it stays at the
+    first step a person has not approved."""
+    sessions = OnboardingRepository(session)
+    sessions.set_step_state(sess.id, step, "agent_working")
+    OnboardingJobRepository(session).queue(session_id=sess.id, step=step)
+    sessions.add_event(sess.id, step=step, event="agent_queued", actor=actor, detail={"chain": True})
+
+
+def _next_draft(sess: OnboardingSession) -> str | None:
+    """The first chain step still waiting, once the profile is approved and every chain step before it has answered;
+    None when there is none (or the chain waits on a step that is working or failed)."""
+    if sess.step_states["profile"] != "done":
+        return None
+    for step in CHAIN_STEPS:
+        state = sess.step_states[step]
+        if state == "waiting":
+            return step
+        if state not in DRAFTED:
+            return None
+    return None
+
+
+def _go_on_with_the_chain(session: Session, session_id: UUID, *, actor: str) -> None:
+    """After a chain step answered (or Run all agents was clicked): queue the next draft, or say the chain is done."""
+    sessions = OnboardingRepository(session)
+    sess = sessions.get(session_id)
+    if sess.run_mode != "chain" or OnboardingJobRepository(session).active_for_session(session_id) is not None:
+        return
+    following = _next_draft(sess)
+    if following is not None:
+        _queue_draft(session, sess, following, actor=actor)
+    elif sess.step_states["profile"] == "done" and all(sess.step_states[s] in DRAFTED for s in CHAIN_STEPS):
+        sessions.add_event(session_id, step=CHAIN_STEPS[-1], event="chain_done", actor="system",
+                           detail={"blocked": _blocked_columns(session, sess.feed_id)})
+
+
+def _blocked_columns(session: Session, feed_id: UUID) -> dict[str, str]:
+    """The columns the chain could not draft past (plan, decision 3): no single recommended value."""
+    draft = draft_config(session, feed_id)
+    blocked = dict(draft.blocked)
+    profile = FeedProfileRepository(session).latest(feed_id)
+    mapped = {m.source_field for m in draft.mappings} | excluded_columns(session, feed_id)
+    mapped |= {p.payload["source_field"] for p in ProposalRepository(session).list_for_feed(feed_id, "mapping", "pending")}
+    for column in (profile.columns if profile else []):
+        if column.name not in mapped and column.name not in blocked:
+            blocked[column.name] = "no glossary element fits"
+    return blocked
+
+
+def run_all(session: Session, *, session_id: UUID, user: User) -> OnboardingSession:
+    """Run all agents (phase 7.13): the session's run_mode becomes chain, for good. After the profile approval (the one
+    click that registers the feed) every agent ahead runs in turn on the drafts before it. StepNotEnterable: the chain
+    is on already, or the onboarding is finished."""
+    sess = _locked(session, session_id)
+    if sess.status == "done" or sess.run_mode == "chain":
+        raise StepNotEnterable("Run all agents is on already" if sess.run_mode == "chain"
+                               else "This onboarding is finished")
+    sessions = OnboardingRepository(session)
+    sessions.set_run_mode(session_id, "chain")
+    sessions.add_event(session_id, step=sess.current_step, event="chain_started", actor=user.id)
+    _go_on_with_the_chain(session, session_id, actor=user.id)
+    return sessions.get(session_id)
+
+
 def _locked(session: Session, session_id: UUID) -> OnboardingSession:
     """The feed row, then the session row, both fresh."""
     sessions = OnboardingRepository(session)
@@ -424,14 +493,20 @@ def enter_step(session: Session, *, session_id: UUID, step: str, user: User) -> 
     """Run the current step's agent again (after a failure, or a stale step). StepNotEnterable: not the current step,
     a step that is done, or a finished session. StepJobActive: the agent is already working."""
     sess = _locked(session, session_id)
-    if sess.status == "done" or step != sess.current_step or step not in AGENT_STEPS + ("first_load",):
+    # phase 7.13: in chain mode, a failed chain step ahead of the cursor is entered again, and the chain goes on
+    ahead = (sess.run_mode == "chain" and step in CHAIN_STEPS and step != sess.current_step
+             and sess.step_states.get(step) == "failed")
+    if sess.status == "done" or (step != sess.current_step and not ahead) or step not in AGENT_STEPS + ("first_load",):
         raise StepNotEnterable(f"{step} is not the step this onboarding is on ({sess.current_step})")
     state = sess.step_states[step]
     if OnboardingJobRepository(session).active_for_session(session_id) is not None or state == "agent_working":
         raise StepJobActive(f"The agent is already working on {step}")
     if state == "done":
         raise StepNotEnterable(f"{step} is done; go Back to run it again")
-    _enter(session, sess, step, actor=user.id, rerun=state == "stale")
+    if ahead:
+        _queue_draft(session, sess, step, actor=user.id)
+    else:
+        _enter(session, sess, step, actor=user.id, rerun=state == "stale")
     return OnboardingRepository(session).get(session_id)
 
 
@@ -503,6 +578,10 @@ class _Env:
     feed_id: UUID
     created_by: str
     agents: StepAgents
+    chain: bool = False  # phase 7.13: the agents draft on the drafts before them (draft_config)
+
+    def draft(self):
+        return self.read(lambda s: draft_config(s, self.feed_id)) if self.chain else None
 
     def read(self, work: Callable[[Session], Any]) -> Any:
         """Read, then end the transaction, so no connection is held afterwards."""
@@ -545,7 +624,7 @@ def run_job(session_factory: SessionFactory, *, ctx: OnboardingContext, lease_se
                         mapper=counted(a.mapper), transformer=counted(a.transformer),
                         rule_recommender=counted(a.rule_recommender), summariser=counted(a.summariser))
     env = _Env(sf=session_factory, ctx=ctx, session_id=sess.id, feed_id=sess.feed_id, created_by=sess.created_by,
-               agents=agents)
+               agents=agents, chain=sess.run_mode == "chain" and step in CHAIN_STEPS)
     cap = ctx.settings.max_model_calls_per_onboarding
 
     with session_factory() as s:  # the cap, then `agent_started`
@@ -557,6 +636,7 @@ def run_job(session_factory: SessionFactory, *, ctx: OnboardingContext, lease_se
                                detail={"cap": cap, "model_calls": locked.model_calls, "message": message})
             sessions.set_step_state(sess.id, step, "failed")
             OnboardingJobRepository(s).discard(job.id)
+            _chain_stopped(sessions, locked, step, "call_cap_reached", message)
             s.commit()
             return JobRun(job_id=job.id, session_id=sess.id, step=step, status="discarded", detail=message)
         sessions.add_event(sess.id, step=step, event="agent_started", actor="system", detail={"attempt": job.attempt})
@@ -574,6 +654,14 @@ def run_job(session_factory: SessionFactory, *, ctx: OnboardingContext, lease_se
             log.exception("onboarding job %s (%s) failed", job.id, step)
         return _fail_job(session_factory, job, sess, step, calls[0], exc)
     return _finish_job(session_factory, ctx, job, sess, step, calls[0], work)
+
+
+def _chain_stopped(sessions: OnboardingRepository, sess: OnboardingSession, step: str, reason: str,
+                   message: str) -> None:
+    """Chain mode: the chain stops at this step (the cap, or a failed call); entering the step again resumes it."""
+    if sess.run_mode == "chain" and step in CHAIN_STEPS:
+        sessions.add_event(sess.id, step=step, event="chain_stopped", actor="system",
+                           detail={"reason": reason, "message": message})
 
 
 def _count_calls(sf: SessionFactory, session_id: UUID, calls: int) -> None:
@@ -606,6 +694,7 @@ def _record_failure(sf: SessionFactory, job, sess: OnboardingSession, step: str,
         sessions.add_event(sess.id, step=step, event="agent_failed", actor="system",
                            detail={"reason": reason, "error": error, "message": message})
         sessions.set_step_state(sess.id, step, "failed")
+        _chain_stopped(sessions, sessions.get(sess.id), step, "agent_failed", message)
         s.commit()
     return JobRun(job_id=job.id, session_id=sess.id, step=step, status="failed", detail=message, model_calls=calls)
 
@@ -652,6 +741,8 @@ def _finish_job(sf: SessionFactory, ctx: OnboardingContext, job, sess: Onboardin
                                    "model_calls": calls, "nothing_to_do": work.nothing_to_do})
         items = _step_items(s, sessions.get(sess.id), step)
         sessions.set_step_state(sess.id, step, _settled_state(items))
+        if step in CHAIN_STEPS:  # phase 7.13: in chain mode the next agent is queued now, with no click
+            _go_on_with_the_chain(s, sess.id, actor="system")
         s.commit()
     return JobRun(job_id=job.id, session_id=sess.id, step=step, status="done", model_calls=calls,
                   detail=work.nothing_to_do)
@@ -722,9 +813,11 @@ def _description(catalogue: SourceCatalogue, source_code: str | None) -> str | N
 def _job_mapping(env: _Env) -> _Work:
     feed_id, ctx = env.feed_id, env.ctx
 
+    draft = env.draft()
+
     def build(s: Session):
         feed = FeedRepository(s).get(feed_id)
-        return mapping_input(s, feed_id=feed_id,
+        return mapping_input(s, feed_id=feed_id, draft=draft,
                              source_description=_description(_catalogue(s, ctx.settings), feed.source_code))
 
     try:
@@ -732,29 +825,33 @@ def _job_mapping(env: _Env) -> _Work:
     except NothingToMap as exc:  # every column is mapped or waits for the steward
         return _Work(nothing_to_do=str(exc))
     user = _person(ctx, env.created_by)
-    env.write(lambda s: record_mappings(s, agent=env.agents.mapper, agent_input=agent_input, user=user))
+    env.write(lambda s: record_mappings(s, agent=env.agents.mapper, agent_input=agent_input, user=user, draft=draft))
     return _Work(scores={c.name: {x.key: x.score for x in c.candidates} for c in agent_input.columns})
 
 
 def _job_transformations(env: _Env) -> _Work:
     feed_id, ctx = env.feed_id, env.ctx
+    draft = env.draft()
     try:
-        agent_input = env.read(lambda s: transform_input(s, feed_id=feed_id, settings=ctx.settings))
+        agent_input = env.read(lambda s: transform_input(s, feed_id=feed_id, settings=ctx.settings, draft=draft))
     except NothingToTransform as exc:
         return _Work(nothing_to_do=str(exc))
-    env.write(lambda s: propose_transformations(s, agent=env.agents.transformer, agent_input=agent_input))
+    env.write(lambda s: propose_transformations(s, agent=env.agents.transformer, agent_input=agent_input, draft=draft))
     return _Work()
 
 
 def _job_rules(env: _Env) -> _Work:
     feed_id, ctx = env.feed_id, env.ctx
+    draft = env.draft()
     try:
-        agent_input = env.read(lambda s: rules_input(s, feed_id=feed_id, catalogue=_catalogue(s, ctx.settings)))
+        agent_input = env.read(lambda s: rules_input(s, feed_id=feed_id, catalogue=_catalogue(s, ctx.settings),
+                                                     draft=draft))
     except NothingToMap as exc:
         return _Work(nothing_to_do=str(exc))
     backtest = backtest_for(agent_input, connector_factory=ctx.connector, blob_store=ctx.blob_store,
                             rule_timeout_seconds=ctx.settings.rule_timeout_seconds)  # runs after the call, no session
-    env.write(lambda s: record_rules(s, agent=env.agents.rule_recommender, agent_input=agent_input, backtest=backtest))
+    env.write(lambda s: record_rules(s, agent=env.agents.rule_recommender, agent_input=agent_input, backtest=backtest,
+                                     draft=draft))
     return _Work()
 
 

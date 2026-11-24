@@ -6,6 +6,7 @@ GET  /api/amaze/onboardings/{id}[?step=<step>]    the workspace view (steps, the
                                                   inputs); another step than the current is read only
 POST /api/amaze/onboardings/{id}/steps/{step}/enter    run the step's agent in the background (queues its job)
 POST /api/amaze/onboardings/{id}/approve          Approve & next; 409 decision_needed lists the items to decide first
+POST /api/amaze/onboardings/{id}/run-all          Run all agents (7.13): run_mode chain; agents ahead draft on drafts
 POST /api/amaze/onboardings/{id}/back             {to_step}: later steps become stale and the step reruns
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/decision   one item, by the decision code of
                                                   POST /api/amaze/proposals/{id}/decision (decide_proposal)
@@ -57,6 +58,7 @@ from core.steps.onboarding import (
     edit_item,
     enter_step,
     manual_rule_input,
+    run_all,
     timeline,
     workspace,
 )
@@ -185,6 +187,16 @@ def approve(session_id: UUID, options: ApproveOptions, session: DbSession, user:
             "items": [i.model_dump(mode="json") if hasattr(i, "model_dump") else i for i in exc.items]}) from None
     kick()
     return Advanced(advance=advance, workspace=_view(session, session_id, settings))
+
+
+@router.post("/{session_id}/run-all", response_model=Workspace,
+             responses={409: {"description": "Run all agents is on already, or the onboarding is finished"}})
+def run_all_agents(session_id: UUID, session: DbSession, user: Operator, settings: AppSettings,
+                   kick: Kick) -> Workspace:
+    """Run all agents (phase 7.13): after the profile approval every agent ahead drafts on the drafts before it."""
+    in_transaction(session, lambda: run_all(session, session_id=session_id, user=user))
+    kick()  # after the commit: a draft job may be queued
+    return _view(session, session_id, settings)
 
 
 @router.post("/{session_id}/back", response_model=Workspace)
