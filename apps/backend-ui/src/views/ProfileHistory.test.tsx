@@ -69,6 +69,44 @@ test("a person who is not the owner or operations sees the history but no erase"
   expect(screen.queryByLabelText("Erase profiles older than")).toBeNull();
 });
 
+const AGAIN = `POST /api/amaze/feeds/${FEED_ID}/profile-again`;
+const showAgain = (canProfile: boolean, over = {}) => {
+  const onChange = vi.fn();
+  renderWithTheme(<ProfileHistory page={feedPage({ profiles: [profile(1, "registration"), profile(2, "latest")], signoffs: [], ...over })}
+    devUser="dev-backend-team" people={PEOPLE} canErase={false} canProfile={canProfile} onChange={onChange} />);
+  return onChange;
+};
+
+test("Profile again runs step 02 on the latest file, says no sign-off is made, and reads the page again", async () => {
+  const fetchStub = stubFetch({ [AGAIN]: { result: { outcome: "profiled_again", profile: { version: 3 } }, feed: feedPage() } });
+  const onChange = showAgain(true);
+  expect(screen.getByTestId("profile-again-note").textContent).toContain("No sign-off is made");
+  fireEvent.click(screen.getByRole("button", { name: "Profile again" }));
+  await waitFor(() => expect(onChange).toHaveBeenCalled());
+  expect(fetchStub.mock.calls.some(([, i]) => i?.method === "POST")).toBe(true);
+  expect(screen.getByTestId("profile-again-result").textContent).toContain("Profile 3 was made");
+});
+
+test("a file with other columns is shown as an answer, with the columns, and the page is not changed", async () => {
+  stubFetch({ [AGAIN]: { result: { outcome: "profile_differs", added: ["extra"], missing: ["qty"], detail: "The file's columns differ." },
+    feed: feedPage() } });
+  const onChange = showAgain(true);
+  fireEvent.click(screen.getByRole("button", { name: "Profile again" }));
+  const result = await screen.findByTestId("profile-again-result");
+  expect(result.textContent).toContain("The file's columns differ.");
+  expect(result.textContent).toContain("New: extra");
+  expect(result.textContent).toContain("Missing: qty");
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+test("Profile again is offered only on a registered feed, to someone who may", () => {
+  showAgain(false);
+  expect(screen.queryByRole("button", { name: "Profile again" })).toBeNull();
+  cleanup();
+  showAgain(true, { feed: { ...feedPage().feed, stage: "candidate" } });
+  expect(screen.queryByRole("button", { name: "Profile again" })).toBeNull();
+});
+
 test("a refusal by the API is shown and the form keeps what was typed", async () => {
   stubFetch({ [ERASE]: new Reply(403, { detail: "Only the owner of syn_test_feed or the operations team may do this" }) });
   const onChange = show();

@@ -16,7 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.domain.common import NonBlank
-from core.domain.pattern import ReferredGroup, RulePattern
+from core.domain.pattern import AlwaysFailing, ReferredGroup, RulePattern
 
 ReportKind = Literal["daily", "monthly"]
 SubjectRole = Literal["data_owner", "data_steward"]
@@ -114,6 +114,7 @@ class ReportNumbers(BaseModel):
     reruns: RerunNumbers
     drift_events: int
     patterns: list[RulePattern]
+    always_failing: list[AlwaysFailing] = []  # phase 7.16: rules that fail on every load, once each, no pattern
     referred_groups: list[ReferredGroup]  # each once (plan, assumption 5)
     decisions: DecisionNumbers | None  # a data steward's own decisions in the period; None for an owner
 

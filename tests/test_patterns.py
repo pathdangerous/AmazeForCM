@@ -59,6 +59,7 @@ def test_the_threshold_is_a_setting(db_session, feed):
     feed_id, live = feed
     for day in ("2026-11-02", "2026-11-09"):
         loaded_on(db_session, feed_id, live, at(day), flags={RULE: 1})
+    loaded_on(db_session, feed_id, live, at("2026-11-10"), flags={})  # a load that did not fail: the rule is not "always"
     assert [(p.dimension, p.failing_loads) for p in found(db_session, feed_id, min_loads=2)
             if p.dimension == "weekday"] == [("weekday", 2)]
 
@@ -67,6 +68,7 @@ def test_the_same_day_of_the_month_is_a_pattern_whatever_the_weekday(db_session,
     feed_id, live = feed
     for day in ("2026-09-15", "2026-10-15", "2026-11-15"):  # a Tuesday, a Thursday, a Sunday
         loaded_on(db_session, feed_id, live, at(day), flags={RULE: 3})
+    loaded_on(db_session, feed_id, live, at("2026-11-20"), flags={})  # a clean load, so the rule does not fail on every load
     patterns = [p for p in found(db_session, feed_id) if p.rule_key == RULE]
     assert [(p.dimension, p.value, p.failing_loads) for p in patterns] == [("day_of_month", "15", 3)]
 
@@ -75,9 +77,46 @@ def test_the_same_provider_date_in_three_loads_is_a_pattern_of_that_date(db_sess
     feed_id, live = feed
     for day in ("2026-11-03", "2026-11-06", "2026-11-11"):  # a Tuesday, a Friday, a Wednesday
         loaded_on(db_session, feed_id, live, at(day), flags={RULE: 1}, provider_date=date(2026, 10, 30))
+    loaded_on(db_session, feed_id, live, at("2026-11-13"), flags={}, provider_date=date(2026, 11, 12))  # a clean load
     patterns = [p for p in found(db_session, feed_id) if p.rule_key == RULE]
     assert [(p.dimension, p.value, p.failing_loads) for p in patterns] == [("provider_date", "2026-10-30", 3)]
     assert [e.provider_date for e in patterns[0].evidence] == [date(2026, 10, 30)] * 3
+
+
+def test_a_rule_that_fails_on_every_load_is_reported_once_as_always_failing_and_makes_no_weekday_pattern(db_session, feed):
+    from core.steps.patterns import find_always_failing
+
+    feed_id, live = feed
+    for day in ("2026-11-02", "2026-11-03", "2026-11-04", "2026-11-09", "2026-11-10"):  # every load fails the rule
+        loaded_on(db_session, feed_id, live, at(day), flags={RULE: 1}, provider_date=date(2026, 10, 30))
+    assert [p for p in found(db_session, feed_id) if p.rule_key == RULE] == []  # no weekday, day or date pattern
+    [always] = find_always_failing(db_session, feed_ids=[feed_id], as_of=AS_OF, window_days=90, min_loads=3)
+    assert (always.feed_code, always.rule_key, always.failing_loads, always.first_on, always.last_on) == (
+        "syn_patterns", RULE, 5, date(2026, 11, 2), date(2026, 11, 10))
+
+
+def test_a_rule_that_fails_on_some_loads_and_not_others_is_a_pattern_and_not_always_failing(db_session, feed):
+    from core.steps.patterns import find_always_failing
+
+    feed_id, live = feed
+    for day in ("2026-11-02", "2026-11-09", "2026-11-16"):  # Mondays: fail
+        loaded_on(db_session, feed_id, live, at(day), flags={RULE: 1, "standing_rule": 1})
+    for day in ("2026-11-03", "2026-11-04"):  # other days: only the standing rule fails
+        loaded_on(db_session, feed_id, live, at(day), flags={"standing_rule": 1})
+    assert [(p.rule_key, p.dimension, p.value) for p in found(db_session, feed_id) if p.dimension == "weekday"] == [
+        (RULE, "weekday", "Monday")]
+    assert [a.rule_key for a in find_always_failing(db_session, feed_ids=[feed_id], as_of=AS_OF, window_days=90,
+                                                    min_loads=3)] == ["standing_rule"]
+
+
+def test_too_few_loads_make_neither_a_pattern_nor_an_always_failing_rule(db_session, feed):
+    from core.steps.patterns import find_always_failing
+
+    feed_id, live = feed
+    for day in ("2026-11-02", "2026-11-03"):
+        loaded_on(db_session, feed_id, live, at(day), flags={RULE: 1})
+    assert found(db_session, feed_id) == []
+    assert find_always_failing(db_session, feed_ids=[feed_id], as_of=AS_OF, window_days=90, min_loads=3) == []
 
 
 def test_a_load_outside_the_window_and_a_rerun_do_not_count(db_session, feed):
@@ -96,6 +135,7 @@ def test_patterns_are_deterministic_and_each_feed_stands_alone(db_session, feed)
     feed_id, live = feed
     for day in ("2026-11-02", "2026-11-09", "2026-11-16"):
         loaded_on(db_session, feed_id, live, at(day), flags={RULE: 2, "other_rule": 1})
+    loaded_on(db_session, feed_id, live, at("2026-11-17"), flags={})  # a clean load: both rules fail on some loads only
     first, second = found(db_session, feed_id), found(db_session, feed_id)
     assert first == second and [p.rule_key for p in first if p.dimension == "weekday"] == ["other_rule", RULE]
     other, other_live = loadable_feed(db_session, "syn_patterns_other")

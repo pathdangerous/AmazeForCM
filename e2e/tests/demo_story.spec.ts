@@ -107,6 +107,25 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   const seeded = execFileSync(PYTHON, ["-m", "e2e.demo_history"], { cwd: REPO, encoding: "utf-8" });
   expect(seeded).toContain("demo history: 21 days loaded");
 
+  // 7.16: a profile nothing points to. "Profile again" runs step 02 on the latest file as a new version and writes no sign-off
+  // (only a file with the feed's current columns is taken); twice makes profile 2 and 3. Profile 1 is the registered one and
+  // profile 3 the latest: both stay. Erase the profiles older than 3: profile 2 goes, with a reason, after a confirm.
+  await page.goto(`${BACKEND}#/feed/${feedId}`);
+  const again = page.getByTestId("profile-history");
+  await expect(again).toBeVisible({ timeout: 30_000 });
+  for (const version of [2, 3]) {
+    await again.getByRole("button", { name: "Profile again" }).click();
+    await expect(again.getByTestId(`history-profile-${version}`)).toBeVisible({ timeout: 60_000 });
+  }
+  await expect(again.getByTestId("erase-preview")).toContainText("Would erase: Profile 2.");
+  await expect(again.getByTestId("erase-preview")).toContainText("Kept: Profile 1 (its registration)");
+  await again.getByLabel("Why it is erased").fill("Profiled twice to show the erase.");
+  await again.getByRole("button", { name: "Erase", exact: true }).click();
+  await again.getByRole("button", { name: "Confirm erase" }).click();
+  await expect(again.getByTestId("history-profile-2")).toContainText("erased by", { timeout: 30_000 });
+  await expect(again.getByTestId("history-profile-2")).toContainText("Profiled twice to show the erase.");
+  await expect(again.getByTestId("history-profile-3")).toContainText("kept: it is the latest");
+
   // version 2: store the file, then Load now
   await page.getByTestId("reupload-file").setInputFiles(V2);
   await expect(page.getByText("Press Load now to load it.")).toBeVisible({ timeout: 30_000 });
@@ -204,6 +223,7 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(audit.getByTestId("audit-row").filter({ hasText: /version \d+/ }).first()).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent("download"), audit.getByRole("button", { name: "Download CSV" }).click()]);
   expect(download.suggestedFilename()).toMatch(/^audit-\d{4}-\d{2}\.csv$/);
+  await expect(audit.getByTestId("audit-row").filter({ hasText: "erased profiles" })).toHaveCount(1); // 7.16: the erase
 
   // 7.16: Reports on the history seeded after code version 1 (above): the same rule failed on every Monday, so Reports shows
   // one weekday pattern and a report of yesterday has numbers. "Preview today so far" counts today like a report and stores
@@ -225,13 +245,16 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(patterns).toContainText("best_sales_not_negative");
   await expect(patterns).toContainText("every Monday: 3 of 3 loads");
   await expect(patterns.locator("li")).toHaveCount(1); // one pattern: the weekday one
+  // the duplicate-key rules fail on every load of the file: once, in their own section, not as a pattern for every weekday
+  const always = page.getByTestId("report-always-failing");
+  await expect(always).toContainText("fails on every load");
+  await expect(always).toContainText("one_row_per_ticker");
 
-  // 7.16: the feed's History says why each profile stays; nothing can be erased here (the registered profile and the latest
-  // one are kept), and the panel says so. An erase itself needs older, unreferenced profiles (tests and the component test).
+  // 7.16: the feed's History still says who erased profile 2, and why each other profile stays
   await page.goto(`${BACKEND}#/feed/${feedId}`);
   const history = page.getByTestId("profile-history");
   await expect(history.getByTestId("history-profile-1")).toContainText("kept: its registration", { timeout: 30_000 });
-  await expect(history.getByTestId("erase-none")).toContainText("Nothing can be erased");
+  await expect(history.getByTestId("history-profile-2")).toContainText("erased by");
 });
 
 // keeps the unused import honest for tooling that lists spec files

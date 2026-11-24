@@ -583,19 +583,19 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
           <RulesSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("rules")} />
           <GoLiveSection page={page} devUser={devUser} userId={me?.id ?? ""} roles={me?.roles ?? []} people={people}
                          onChange={onChange} {...reporter("go-live")} />
-          <DriftSection key={`drift-${page.loads.length}`} feedId={feedId} devUser={devUser} canAct={canMap} />
+          <DriftSection key={`drift-${page.loads.length}-${page.loads[0]?.id}`} feedId={feedId} devUser={devUser} canAct={canMap} />
           <Section name="code" title="Generated code" result={result}>
-            <CodeView key={`code-${page.loads.length}`} feedId={feed.id} devUser={devUser} />
+            <CodeView key={`code-${page.loads.length}-${page.loads[0]?.id}`} feedId={feed.id} devUser={devUser} />
           </Section>
           <LoadsSection page={page} devUser={devUser} roles={me?.roles ?? []} onChange={onChange} {...reporter("loads")} />
-          <ExceptionsSection key={`exceptions-${page.loads.length}`} feedId={feedId} devUser={devUser}
+          <ExceptionsSection key={`exceptions-${page.loads.length}-${page.loads[0]?.id}`} feedId={feedId} devUser={devUser}
                              roles={me?.roles ?? []} />
         </>
       )}
 
       {(page.profiles.length > 0 || page.signoffs.length > 0 || (page.erasures ?? []).length > 0) && (
         <Section name="history" title="History" result={result}>
-          <ProfileHistory page={page} devUser={devUser} people={people} onChange={onChange}
+          <ProfileHistory page={page} devUser={devUser} people={people} onChange={onChange} canProfile={canAct}
                           canErase={!!me && (me.roles.includes("operations") || (feed.owner_id !== null && feed.owner_id === me.id))} />
         </Section>
       )}

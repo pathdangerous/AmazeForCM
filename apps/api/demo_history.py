@@ -46,9 +46,6 @@ class HistorySpec(BaseModel):
     # date differs from load to load and the failing Mondays make no provider-date pattern, only the weekday one
     date_column: str | None = "RECORD_DATE"
     date_format: str = "%d-%m-%Y"  # as the file writes it (the security master: 31-12-2019)
-    # a key column whose repeated values are numbered, so the feed's duplicate-key rules flag nothing on an ordinary day:
-    # otherwise a rule that fails on every delivery would make a pattern for each weekday, not the one that is wanted
-    unique_column: str | None = "TICKER_NAME"
     days: int = 21
     hour: int = 9  # UTC, when each day's load is received
 
@@ -113,12 +110,6 @@ def _day_file(header: list[str], rows: list[list[str]], spec: HistorySpec, day: 
     if day.weekday() == 0:
         for row in out[:spec.bad_rows]:
             row[at] = spec.bad_value
-    if spec.unique_column is not None:
-        key, seen = header.index(spec.unique_column), {}
-        for row in out:
-            seen[row[key]] = seen.get(row[key], 0) + 1
-            if seen[row[key]] > 1:
-                row[key] = f"{row[key]}-{seen[row[key]]}"
     if spec.date_column is not None:
         for row in out:
             row[header.index(spec.date_column)] = day.strftime(spec.date_format)
@@ -154,7 +145,7 @@ def seed_demo_history(daily: DailyFetch, *, today: date | None = None, spec: His
         session.rollback()  # the file is read with no connection held
     table = list(csv.reader(io.StringIO(daily.blob_store.get(blob_ref).decode("utf-8-sig"))))
     header, rows = table[0], [row for row in table[1:] if row]
-    missing = [c for c in (spec.column, spec.date_column, spec.unique_column) if c is not None and c not in header]
+    missing = [c for c in (spec.column, spec.date_column) if c is not None and c not in header]
     if missing:
         return HistoryRefused(reason="column_missing", detail=f"The file has no column {missing[0]!r}.")
     if len(rows) <= spec.bad_rows or not any(_number(r[header.index(spec.column)]) is not None for r in rows[spec.bad_rows:]):

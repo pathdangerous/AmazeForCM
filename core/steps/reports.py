@@ -38,7 +38,7 @@ from core.domain.report import (
 from core.repositories.reports import ReportRepository  # noqa: F401 (the step's own name for it)
 from core.repositories.exception_resolutions import ExceptionResolutionRepository  # noqa: F401
 from core.steps.exceptions import load_exceptions
-from core.steps.patterns import find_patterns, referred_groups
+from core.steps.patterns import analyse_failures, referred_groups
 from core.steps.result import StepResult
 from core.steps.s1_scope import RunsAgent
 from ports.config import Settings
@@ -130,8 +130,8 @@ def build_numbers(session: Session, *, subject_id: str, role: SubjectRole, perio
     settings = settings or Settings(_env_file=None)
     feeds = _feeds_of(session, subject_id, role)
     ids = [feed_id for feed_id, _ in feeds]
-    patterns = find_patterns(session, feed_ids=ids, as_of=_start(period.end), window_days=settings.pattern_window_days,
-                             min_loads=settings.pattern_min_loads)
+    patterns, always_failing = analyse_failures(session, feed_ids=ids, as_of=_start(period.end),
+                                                window_days=settings.pattern_window_days, min_loads=settings.pattern_min_loads)
     referred = referred_groups(session, feed_ids=ids)
     per_feed = [_feed_numbers(session, feed_id, code, period, [p for p in patterns if p.feed_id == feed_id],
                               sum(g.feed_id == feed_id for g in referred)) for feed_id, code in feeds]
@@ -163,7 +163,8 @@ def build_numbers(session: Session, *, subject_id: str, role: SubjectRole, perio
         exceptions=ExceptionNumbers(open_now=total("open_now"), waiting_for_owner=total("waiting_for_owner"),
                                     resolved_by_agent=total("resolved_by_agent"), resolved_by_hand=total("resolved_by_hand")),
         waivers=total("waivers"), reruns=RerunNumbers(released=total("reruns_released"), still_held=total("reruns_still_held")),
-        drift_events=total("drift_events"), patterns=patterns, referred_groups=referred, decisions=decisions)
+        drift_events=total("drift_events"), patterns=patterns, always_failing=always_failing, referred_groups=referred,
+        decisions=decisions)
 
 
 # ---------------------------------------------------------------- the narrative check

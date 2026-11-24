@@ -1,6 +1,6 @@
 import { Alert, Button, NativeSelect, Text, TextInput } from "@mantine/core";
 import { useState } from "react";
-import { describeError, eraseProfiles, type FeedPage } from "../api";
+import { describeError, eraseProfiles, profileAgain, type FeedPage } from "../api";
 import { formatWhen } from "../theme";
 
 // Phase 7.16: a feed's profile history and the recorded erase of its old profiles. The database decides what may go
@@ -14,9 +14,30 @@ const KEPT: Record<string, string> = {
   load_arrival: "a load's arrival", code_version: "a code version", report: "a report",
 };
 
-export default function ProfileHistory({ page, devUser, people, canErase, onChange }: {
-  page: FeedPage; devUser: string; people: Record<string, string>; canErase: boolean; onChange: () => void;
+export default function ProfileHistory({ page, devUser, people, canErase, canProfile = false, onChange }: {
+  page: FeedPage; devUser: string; people: Record<string, string>; canErase: boolean; canProfile?: boolean; onChange: () => void;
 }) {
+  const [again, setAgain] = useState<string | null>(null);
+  const [profiling, setProfiling] = useState(false);
+  const [againError, setAgainError] = useState<string | null>(null);
+  async function profileThePageAgain() {
+    setProfiling(true);
+    setAgainError(null);
+    try {
+      const { result } = await profileAgain(page.feed.id, devUser);
+      if (result.outcome === "profiled_again") {
+        setAgain(`Profile ${result.profile.version} was made from the latest file.`);
+        onChange();
+      } else {
+        setAgain(`${result.detail}${result.added.length ? ` New: ${result.added.join(", ")}.` : ""}${
+          result.missing.length ? ` Missing: ${result.missing.join(", ")}.` : ""}`);
+      }
+    } catch (e: unknown) {
+      setAgainError(describeError(e));
+    } finally {
+      setProfiling(false);
+    }
+  }
   const name = (id: string) => people[id] ?? id;
   const profiles = page.profiles;
   const erasures = page.erasures ?? [];
@@ -80,6 +101,17 @@ export default function ProfileHistory({ page, devUser, people, canErase, onChan
           </li>
         ))}
       </ul>
+      {canProfile && page.feed.stage === "registered" && (
+        <div style={{ marginTop: 8 }}>
+          <Button size="xs" variant="default" disabled={profiling} onClick={() => void profileThePageAgain()}>Profile again</Button>
+          <Text className="muted" size="sm" mt={4} data-testid="profile-again-note">
+            Profiles the latest file once more as a new profile version. No sign-off is made, and only a file with the
+            feed's current columns is taken.
+          </Text>
+          {again && <Text size="sm" mt={4} data-testid="profile-again-result">{again}</Text>}
+          {againError && <Text role="alert" className="bad" size="sm">{againError}</Text>}
+        </div>
+      )}
       {done && <Text data-testid="erase-result" mt="xs">{done}</Text>}
       {canErase && chosen === null && profiles.length > 0 && (
         <Text className="muted" size="sm" mt="xs" data-testid="erase-none">

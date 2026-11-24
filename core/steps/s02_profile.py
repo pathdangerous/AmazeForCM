@@ -109,10 +109,11 @@ class ProfileAttempt(BaseModel):
     detail: str | None = None
 
 
-def profile_plan(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue) -> ProfilePlan:
-    """Read only. FeedNotFound, FeedNotACandidate, FeedHasNoFile; UnknownSource if the source left the catalogue."""
+def profile_plan(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue, stage: str = "candidate") -> ProfilePlan:
+    """Read only. FeedNotFound, FeedNotACandidate, FeedHasNoFile; UnknownSource if the source left the catalogue.
+    `stage` is "registered" only for core/steps/profile_again.py (phase 7.16)."""
     feed = FeedRepository(session).get(feed_id)
-    if feed.stage != "candidate":
+    if feed.stage != stage:
         raise FeedNotACandidate(f"Feed {feed.code!r} is {feed.stage}; only a candidate feed is profiled")
     fetch = SourceFetchRepository(session).latest_fetched(feed.id)
     if fetch is None:
@@ -144,11 +145,12 @@ def run_profile(plan: ProfilePlan, *, blob_store: BlobStore) -> ProfileAttempt:
     return ProfileAttempt(plan=plan, file=file)
 
 
-def record_profile(session: Session, attempt: ProfileAttempt, *, profiled_by: str) -> Profiled | SpecOnlyLowConfidence:
+def record_profile(session: Session, attempt: ProfileAttempt, *, profiled_by: str,
+                   stage: str = "candidate") -> Profiled | SpecOnlyLowConfidence:
     """Lock the feed row (so two profiles take versions one after the other), check its stage again, write."""
     plan = attempt.plan
     feed = FeedRepository(session).lock(plan.feed_id)
-    if feed.stage != "candidate":
+    if feed.stage != stage:
         raise FeedNotACandidate(f"Feed {feed.code!r} became {feed.stage} during the profile; nothing is written")
     file = attempt.file
     profile = FeedProfileRepository(session).add_version(

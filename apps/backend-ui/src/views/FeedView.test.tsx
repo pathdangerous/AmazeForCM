@@ -1,6 +1,9 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { MantineProvider } from "@mantine/core";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { createElement } from "react";
 import { afterEach, expect, test, vi } from "vitest";
 import { fireEvent } from "@testing-library/react";
+import { cssVariablesResolver, theme } from "../theme";
 import {
   FEED_ID, feedPage, feedRoutes, PEOPLE, renderWithTheme, REQUIREMENT_ID, scheduledLoad, stubFetch, USERS,
 } from "../test/fixtures";
@@ -44,6 +47,25 @@ test("task 8: a registered feed page renders every section with a converted head
   expect(load.textContent).toContain("trust 100.0");
   expect(within(load).getByTestId("stages").textContent).toBe(
     "raw 10→10 · curated 10→10 · validated 10→10 · standard 10→10");
+});
+
+test("a new load re-reads the drift section even when the page already shows its maximum number of loads", async () => {
+  // the page lists at most 10 loads, so their count stops changing; the newest load's id is what changes
+  const loadsStartingAt = (first: string) => [scheduledLoad({ id: first }), ...Array.from({ length: 9 }, (_, n) => scheduledLoad({ id: `old-${n}` }))];
+  const driftUrl = `GET /api/amaze/feeds/${FEED_ID}/drift`;
+  const empty = { load_id: null, report: { new_columns: [], missing_columns: [], type_changes: [], order_changed: false, rule_rises: [] }, actions: [] };
+  const fetchStub = stubFetch({ ...feedRoutes(feedPage({ loads: loadsStartingAt("a") }), USERS[1]), [driftUrl]: empty });
+  const feed = (changed: number) => (
+    <FeedView feedId={FEED_ID} devUser={USERS[1].id} me={USERS[1]} people={NAMES} canAct={false} canRun={false} canMap={true}
+              changed={changed} onChange={() => undefined} />);
+  const view = renderWithTheme(feed(0)); // also installs the browser stubs Mantine needs
+  await screen.findByTestId("feed-view");
+  const drifts = () => fetchStub.mock.calls.filter(([u]) => String(u).endsWith("/drift")).length;
+  await waitFor(() => expect(drifts()).toBe(1));
+  stubFetch({ ...feedRoutes(feedPage({ loads: loadsStartingAt("b") }), USERS[1]), [driftUrl]: empty });
+  const second = vi.mocked(fetch);
+  view.rerender(createElement(MantineProvider, { theme, cssVariablesResolver, children: feed(1) }));
+  await waitFor(() => expect(second.mock.calls.some(([u]) => String(u).endsWith("/drift"))).toBe(true));
 });
 
 test("task 8: the sign-off and register forms keep native radios, a native select and the disabled attribute",

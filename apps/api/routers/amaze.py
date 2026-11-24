@@ -65,6 +65,7 @@ from core.repositories.standard_records import StandardRecordRepository
 from core.steps.errors import ChoiceNotOffered, CodeNotConfirmed
 from core.steps.exceptions import ExceptionFixDecided
 from core.steps.feed_lifecycle import FeedDeleted, FeedPaused, FeedResumed, delete_feed, pause_feed, resume_feed
+from core.steps.profile_again import ProfileAgainResult, again_plan, profile_again
 from core.steps.profile_erase import ProfileErasureResult, erase_profiles
 from core.steps.feed_page import (
     FeedPage,
@@ -398,6 +399,22 @@ def profile(feed_id: UUID, session: DbSession, user: BackendTeam, catalogue: Cat
     attempt = run_profile(plan, blob_store=blobs)  # no connection held while DuckDB runs
     result = in_transaction(session, lambda: record_profile(session, attempt, profiled_by=user.id))
     return ProfileResponse(result=result, feed=_page(session, feed_id, catalogue))
+
+
+class ProfileAgainResponse(BaseModel):
+    result: ProfileAgainResult
+    feed: FeedPage
+
+
+@router.post("/feeds/{feed_id}/profile-again", response_model=ProfileAgainResponse)
+def profile_again_route(feed_id: UUID, session: DbSession, user: BackendTeam, catalogue: Catalogue,
+                        blobs: Blobs) -> ProfileAgainResponse:
+    """Phase 7.16: step 02 on a registered feed's latest file as a new profile version, with no sign-off; only when the
+    file has the feed's current columns."""
+    plan = read(session, lambda: again_plan(session, feed_id=feed_id, catalogue=catalogue))
+    attempt = run_profile(plan, blob_store=blobs)  # no connection held while DuckDB runs
+    result = in_transaction(session, lambda: profile_again(session, attempt, profiled_by=user.id))
+    return ProfileAgainResponse(result=result, feed=_page(session, feed_id, catalogue))
 
 
 @router.post("/feeds/{feed_id}/profile/summary", response_model=SummaryResponse)

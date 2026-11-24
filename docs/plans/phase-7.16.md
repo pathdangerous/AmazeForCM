@@ -154,13 +154,22 @@ Erasing other history (loads, standard records); an erase of the latest profile;
   once per weekday (14 patterns). The seed numbers repeated tickers (`unique_column`) so ordinary days are clean. The
   pattern finder itself is unchanged: a rule that fails on every load of a feed still appears seven times. Worth a decision
   in a later phase ("always failing" is a standing defect, not a weekday pattern).
+- Follow-up before merge (review round 2): (1) `core/steps/patterns.py` `analyse_failures()`: a rule that flagged rows on every
+  load of the window (at least `PATTERN_MIN_LOADS` loads) is `always_failing`, once, in its own section of a report and its
+  preview; it makes no weekday, day or date pattern, which needs failures on some loads and not others. `ReportNumbers`
+  gains `always_failing` (default empty, so stored 7.15 reports still read). The seed's ticker numbering is removed.
+  Four tests of 7.15 had every load failing and each gained a clean load. (2) `core/steps/profile_again.py`,
+  `POST /feeds/{id}/profile-again`, a "Profile again" button in History: step 02 on a registered feed's latest file as a
+  new profile version, no sign-off, only when the file has exactly the current profile's columns (it becomes step 12's
+  template, so a changed structure is answered, not taken). No keep rule changed. (3) Found by the story: the feed page keyed
+  its Drift, Code and Exceptions sections by the number of loads, which stops at 10; they now also key by the newest load's id.
+  (4) `docs/ui-polish.md` logs that the code-version and report keep checks scan text.
 - Files outside the plan: `apps/api/jobs.py` (the `clock` field), `core/steps/errors.py` (`UnknownProfileVersion`),
   `core/repositories/tables.py` (`ProfileErasureRow`), `core/seed.py` (the flag), `core/steps/feed_page.py`, `audit.py`,
   `apps/api/routers/amaze.py` and `reports.py` (the routes), `e2e/demo_history.py` (the command on the story's database),
   `tests/test_migrations.py` (head 0036, the two 0036 migration tests) and `tests/test_feed_delete.py` (`profile_erasures`
   is a record that outlives the feed, like `feed_deletions`), `CLAUDE.md` (one sentence under the rule 1/7 exception).
-- Not done: an erase that deletes something is not shown in the demo story (the demo feed's two profiles are both kept); the
-  tests and the component test prove it. The `code_version` keep reason is proved by a code version that names a profile id
+- The demo story now erases a profile (see the follow-up below). The `code_version` keep reason is proved by a code version that names a profile id
   in its files, since no code version records one today.
 - The two 0036 migration tests (`tests/test_migrations.py`) were written after the migration, so no RED line was taken for
   them; the 12 database tests were seen failing first (`12 failed`, `function amaze_erase_profiles(...) does not exist`).

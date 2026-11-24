@@ -170,6 +170,8 @@ export type ReportNumbers = {
   feeds: ReportFeed[];
   exceptions: { open_now: number; waiting_for_owner: number; resolved_by_agent: number; resolved_by_hand: number };
   waivers: number; reruns: { released: number; still_held: number }; drift_events: number; patterns: ReportPattern[];
+  always_failing?: { feed_id: string; feed_code: string; rule_key: string; failing_loads: number; first_on: string;
+    last_on: string }[]; // phase 7.16: absent in a report stored before it
   referred_groups: { feed_id: string; feed_code: string; rule_key: string; pattern: string; load_id: string; reason: string;
     decided_by: string; referred_at: string }[];
   decisions: { approved: number; rejected: number; by_kind: Record<string, number> } | null;
@@ -405,6 +407,11 @@ export type NothingToErase = { outcome: "nothing_to_erase"; kept: { id: string; 
 export const eraseProfiles = (feedId: string, beforeVersion: number, reason: string, devUser: string) =>
   apiPost<{ result: ProfileErased | NothingToErase; feed: FeedPage }>(
     `/api/amaze/feeds/${feedId}/profiles/erase`, { before_version: beforeVersion, reason }, devUser);
+
+export type ProfileAgainResult = { outcome: "profiled_again"; profile: { version: number } }
+  | { outcome: "profile_differs"; added: string[]; missing: string[]; detail: string };
+export const profileAgain = (feedId: string, devUser: string) =>
+  apiPost<{ result: ProfileAgainResult; feed: FeedPage }>(`/api/amaze/feeds/${feedId}/profile-again`, {}, devUser);
 
 // ---- phase 7.9: pause, resume and delete of a feed
 export const pauseFeed = (feedId: string, reason: string, devUser: string) =>

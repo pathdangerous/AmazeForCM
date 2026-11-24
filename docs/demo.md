@@ -35,7 +35,7 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 | 13-14 | "A report every morning; the numbers are code's, the words are the agent's." | **Insights, Reports**: press **Make yesterday's report (data owner)**, open it. | The **Narrative** (written by the ReportSummariserAgent, logged) sits apart from the **Numbers** (loads, held, rows, flagged and waived rows, trust, open groups, waivers, reruns, drift, **recurring patterns** with their dates as evidence, groups **referred to the provider** once each). The demo's loads are today, so yesterday's report is quiet; the job makes one for every owner and steward each morning and on the 1st the month's. **New version** makes version 2: the numbers fingerprint is the same. A narrative that states a figure the report does not hold is refused and the report is kept without it. |
 | 14-15 | "Every decision, who made the item, which code ran." | **Insights, Audit**: this month. Filter by feed or person. **Download CSV**. | One row per decision (who, role, approved or rejected, the item, **agent (ExceptionFixAgent)**, manual or system), the **code version** in force, **(waiver)**, and the **rerun** with who started it and why. The CSV has the same rows; a cell that starts like a formula is quoted. |
 | 15-16 | "Three weeks of history, through the real pipeline." | In a terminal: `.venv\Scripts\python -m core.seed --demo-history`. Then **Insights, Reports**: **Preview today so far (data owner)**, then **Make yesterday's report (data owner)** and open it. | The seed ran the daily pipeline (fetch, step 12, the engine, steps 15 and 20) for each of the 21 days before today, with a clock and a connector it injected; no row was written by the seed itself, so every guard held. The same rule (`best_sales_not_negative`) failed on every Monday: three held loads. The **preview** is today so far, marked "Preview: not stored" (no report, no notice, no model call). Yesterday's report now has **loads, rows and a trust score**, and **Recurring failure patterns** shows `best_sales_not_negative` "every Monday: 3 of 3 loads" with the three dates. |
-| 16-17 | "Old profiles go through one function, and it leaves a record." | Feed page, **History**. | Each profile says why it stays ("kept: its registration", "kept: it is the latest", a sign-off, a glossary run, a load's arrival, a code version, a report). When older profiles nobody points to exist, the panel offers: **Erase profiles older than** (a select), **Why it is erased**, **Erase**, **Confirm erase**. The erased entries stay in the list as "Profile 2: erased by Olive Operator, date: reason", and **Audit** lists the erase with who, why and which versions. In this demo both profiles are kept, so the panel says "Nothing can be erased". |
+| 16-17 | "Old profiles go through one function, and it leaves a record." | Feed page, **History**. | Each profile says why it stays ("kept: its registration", "kept: it is the latest", a sign-off, a glossary run, a load's arrival, a code version, a report). When older profiles nobody points to exist, the panel offers: **Erase profiles older than** (a select), **Why it is erased**, **Erase**, **Confirm erase**. The erased entries stay in the list as "Profile 2: erased by Olive Operator, date: reason", and **Audit** lists the erase with who, why and which versions. In the demo, press **Profile again** twice (profiles 2 and 3), then erase the profiles older than profile 3: profile 2 goes, profile 1 (registration) and profile 3 (latest) stay. |
 
 ## What the demo history and the profile erase do and do not do (7.16)
 
@@ -49,17 +49,20 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
   for each of the 21 days, and the notices a load in hypercare sends (21 of them). The loads' `received_at` is the injected
   day (09:00 UTC); every other time column is the database's own, so a certification of a past load says it was made today.
 - **Why a Monday.** Any 21 consecutive days hold three Mondays, which is the pattern threshold (3). The Monday files carry
-  eight negative `BEST_SALES` values (8 of 70 rows: trust 88.6, held); every other day is clean: the file's one repeated
-  ticker is numbered (otherwise `duplicate_key` and `one_row_per_ticker` would fail every day and make a "pattern" for every
-  weekday) and each day's `RECORD_DATE` is that day (otherwise the provider date would repeat). If the feed was onboarded
-  with other rules the seed says so and no pattern appears.
+  eight negative `BEST_SALES` values (8 of 70 rows: trust 88.6, held); every other day is clean for that rule, and each
+  day's `RECORD_DATE` is that day (otherwise the provider date would repeat). The file's own duplicate tickers make
+  `duplicate_key` and `one_row_per_ticker` fail on every load: Reports lists them once under **Fails on every load**, not as
+  a pattern for each weekday (a weekday, day or date pattern needs failures on some loads and not on others). If the feed was
+  onboarded with other rules the seed says so and no pattern appears.
+- **Profile again** (feed page, History) runs step 02 on the latest file as a new profile version and writes no sign-off.
+  It is taken only when the file has exactly the feed's current columns (otherwise it answers with the added and missing
+  columns: a changed structure goes through the load, step 12). The story presses it twice after the seed, so profile 2 is
+  one nothing points to; it erases the profiles older than profile 3, and History then reads "Profile 2: erased by ...".
 - **The preview** is numbers only: no narrative (that needs a logged model call), no stored row, no notice.
 - **The erase** is `amaze_erase_profiles(feed, before, reason, by)`, the only way a profile is deleted. It keeps the latest
   profile and any a registration, sign-off, glossary run, arrival, code version or report points to. A profile is a
   measurement of a file, not configuration, so this is an exception to rules 1 and 7 like 7.9's feed delete (CLAUDE.md names
   it). The record (`profile_erasures`) is append-only and outlives the feed. Nothing to erase is an answer, not an error.
-- **Not in the demo.** An erase that deletes something needs unreferenced older profiles (a candidate re-profiled before its
-  sign-off); the tests and the component test cover it, the story shows the "Nothing can be erased" panel.
 
 ## What Exceptions does and does not do (7.14)
 

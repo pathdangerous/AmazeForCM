@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from core.domain.pattern import Dimension, Evidence, ReferredGroup, RulePattern
+from core.domain.pattern import AlwaysFailing, Dimension, Evidence, ReferredGroup, RulePattern
 from core.repositories.configuration import MappingRepository
 from core.repositories.exception_resolutions import ExceptionResolutionRepository
 from core.repositories.feeds import FeedRepository
@@ -64,8 +64,23 @@ def _values(received: datetime, provider: date | None) -> dict[Dimension, str | 
 def find_patterns(session: Session, *, feed_ids: Sequence[UUID], as_of: datetime, window_days: int = WINDOW_DAYS,
                   min_loads: int = MIN_LOADS) -> list[RulePattern]:
     """Read only. Most failing loads first, then feed code, rule key, dimension and value."""
+    return analyse_failures(session, feed_ids=feed_ids, as_of=as_of, window_days=window_days, min_loads=min_loads)[0]
+
+
+def find_always_failing(session: Session, *, feed_ids: Sequence[UUID], as_of: datetime, window_days: int = WINDOW_DAYS,
+                        min_loads: int = MIN_LOADS) -> list[AlwaysFailing]:
+    """Read only. Feed code, then rule key."""
+    return analyse_failures(session, feed_ids=feed_ids, as_of=as_of, window_days=window_days, min_loads=min_loads)[1]
+
+
+def analyse_failures(session: Session, *, feed_ids: Sequence[UUID], as_of: datetime, window_days: int = WINDOW_DAYS,
+                     min_loads: int = MIN_LOADS) -> tuple[list[RulePattern], list[AlwaysFailing]]:
+    """One pass for both. A rule that flagged rows on every load of the window (and the window has at least `min_loads`
+    loads) is always failing, once; it makes no weekday, day or date pattern, which needs failures on some loads and not
+    others."""
     since = as_of - timedelta(days=window_days)
     found: list[RulePattern] = []
+    always: list[AlwaysFailing] = []
     for feed_id in dict.fromkeys(feed_ids):
         feed = FeedRepository(session).get(feed_id)
         loads = session.execute(LOADS, {"feed": feed_id, "since": since, "until": as_of}).all()
@@ -83,7 +98,17 @@ def find_patterns(session: Session, *, feed_ids: Sequence[UUID], as_of: datetime
                 if value is not None:
                     in_window[(dimension, value)] += 1
         failing: dict[tuple[str, str, str], list[Evidence]] = defaultdict(list)
+        flagged_loads: dict[str, list[UUID]] = defaultdict(list)
         for load_id, rule_key, flagged in session.execute(FLAGS, {"loads": ids}):
+            flagged_loads[rule_key].append(load_id)
+        every = {rule for rule, loads_of in flagged_loads.items() if len(loads_of) == len(ids)}
+        for rule in sorted(every):
+            if len(ids) >= min_loads:
+                always.append(AlwaysFailing(feed_id=feed_id, feed_code=feed.code, rule_key=rule, failing_loads=len(ids),
+                                            first_on=min(received.values()), last_on=max(received.values())))
+        for load_id, rule_key, flagged in session.execute(FLAGS, {"loads": ids}):
+            if rule_key in every:
+                continue
             for dimension, value in per_load[load_id].items():
                 if value is not None:
                     failing[(rule_key, dimension, value)].append(Evidence(
@@ -95,7 +120,8 @@ def find_patterns(session: Session, *, feed_ids: Sequence[UUID], as_of: datetime
                     feed_id=feed_id, feed_code=feed.code, rule_key=rule_key, dimension=dimension, value=value,
                     failing_loads=len(evidence), loads_in_window=in_window[(dimension, value)],
                     evidence=sorted(evidence, key=lambda e: (e.received_on, str(e.load_id)))))
-    return sorted(found, key=lambda p: (-p.failing_loads, p.feed_code, p.rule_key, p.dimension, p.value))
+    return (sorted(found, key=lambda p: (-p.failing_loads, p.feed_code, p.rule_key, p.dimension, p.value)),
+            sorted(always, key=lambda a: (a.feed_code, a.rule_key)))
 
 
 def referred_groups(session: Session, *, feed_ids: Sequence[UUID]) -> list[ReferredGroup]:

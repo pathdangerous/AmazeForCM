@@ -34,6 +34,20 @@ class RulePattern(BaseModel):
     evidence: list[Evidence]
 
 
+class AlwaysFailing(BaseModel):
+    """A rule that flagged rows on every load of the window (at least the minimum number): a standing defect of the feed or
+    its rule, not a pattern of a weekday, a day or a date, so it is reported once (phase 7.16)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    feed_id: UUID
+    feed_code: str
+    rule_key: str
+    failing_loads: int  # all the feed's loads of the window (reruns left out)
+    first_on: date
+    last_on: date
+
+
 class ReferredGroup(BaseModel):
     model_config = ConfigDict(frozen=True)
 

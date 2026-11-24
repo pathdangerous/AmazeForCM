@@ -78,6 +78,15 @@ function NumbersBody({ n }: { n: ReportNumbers }) {
           </li>))}
         </ul>
       )}
+      <Title order={4} mt="md">Fails on every load</Title>
+      {(n.always_failing ?? []).length === 0 ? <Text className="muted" data-testid="report-always-none">None in this window.</Text> : (
+        <ul data-testid="report-always-failing">{(n.always_failing ?? []).map((a) => (
+          <li key={`${a.feed_id}${a.rule_key}`}>
+            <code>{a.rule_key}</code> in {a.feed_code} fails on every load: {a.failing_loads} loads, {a.first_on} to {a.last_on}.
+            <div className="muted">A standing defect of the data or the rule, not a pattern of a day.</div>
+          </li>))}
+        </ul>
+      )}
       <Title order={4} mt="md">Referred to the provider</Title>
       {n.referred_groups.length === 0 ? <Text className="muted">None open.</Text> : (
         <ul>{n.referred_groups.map((g) => (

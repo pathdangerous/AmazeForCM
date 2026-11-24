@@ -72,6 +72,30 @@ test("a recurring pattern shows its dates as evidence, and a referred group appe
   expect(screen.getAllByTestId("report-referred")).toHaveLength(1);
 });
 
+const ALWAYS = [{ feed_id: "f1", feed_code: "syn_security_master", rule_key: "duplicate_key", failing_loads: 21,
+  first_on: "2026-11-03", last_on: "2026-11-23" }];
+
+test("a rule that fails on every load has its own section, in a report and in a preview, and is no weekday pattern", async () => {
+  stubFetch({ [LIST]: [], [`GET /api/amaze/reports/${ID}`]: report({ numbers: numbers({ patterns: [], always_failing: ALWAYS }) }),
+    "GET /api/amaze/reports/preview?role=data_owner": numbers({ patterns: [], always_failing: ALWAYS }) });
+  renderWithTheme(<ReportsView devUser="dev-data-owner" roles={["data_owner"]} reportId={ID} />);
+  const section = await screen.findByTestId("report-always-failing");
+  expect(section.textContent).toContain("duplicate_key");
+  expect(section.textContent).toContain("fails on every load");
+  expect(section.textContent).toContain("21 loads, 2026-11-03 to 2026-11-23");
+  expect(screen.queryByTestId("report-patterns")).toBeNull();
+  cleanup();
+  renderWithTheme(<ReportsView devUser="dev-data-owner" roles={["data_owner"]} reportId={null} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Preview today so far (data owner)" }));
+  expect((await screen.findByTestId("report-preview")).textContent).toContain("fails on every load");
+});
+
+test("a report made before the section existed shows none", async () => {
+  stubFetch({ [`GET /api/amaze/reports/${ID}`]: report() }); // numbers() has no always_failing, as a stored 7.15 report
+  renderWithTheme(<ReportsView devUser="dev-data-owner" roles={["data_owner"]} reportId={ID} />);
+  expect((await screen.findByTestId("report-always-none")).textContent).toContain("None");
+});
+
 test("a refused narrative says why, and shows no text", async () => {
   stubFetch({ [`GET /api/amaze/reports/${ID}`]: report({ narrative: null, narrative_status: "refused",
     narrative_note: "The narrative stated 42, which is no number of this report; it was not kept." }) });

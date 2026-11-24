@@ -126,6 +126,17 @@ def test_drift_events_and_patterns_are_counted_from_the_loads(db_session, feeds)
     assert (pattern.rule_key, pattern.value, pattern.failing_loads) == (VOLUME_RULE, "Monday", 4)
 
 
+def test_a_rule_failing_on_every_load_is_listed_once_apart_from_the_patterns(db_session, feeds):
+    mine, live, *_ = feeds
+    for day in ("2026-10-12", "2026-10-19", "2026-10-26", "2026-11-02"):  # every load fails the rule, four Mondays
+        loaded_on(db_session, mine, live, at(day, 8), flags={VOLUME_RULE: 1})
+    numbers = numbers_of(db_session)
+    assert numbers.patterns == []
+    [always] = numbers.always_failing
+    assert (always.feed_code, always.rule_key, always.failing_loads) == ("syn_report_mine", VOLUME_RULE, 4)
+    assert numbers.model_dump(mode="json")["always_failing"][0]["first_on"] == "2026-10-12"
+
+
 # ---------------------------------------------------------------- exceptions, waivers, reruns, referrals, decisions
 
 

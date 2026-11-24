@@ -27,7 +27,7 @@ from ports.storage.local import LocalBlobStore
 from tests.configured import VOLUME_RULE, loadable_feed, volume_csv
 
 SPEC = HistorySpec(feed_code="syn_history", column="traded_qty", rule_key=VOLUME_RULE, bad_value="200000", bad_rows=4,
-                   date_column="trade_date", date_format="%Y-%m-%d", unique_column=None)
+                   date_column="trade_date", date_format="%Y-%m-%d")
 TODAY = date.today()
 DAYS = [TODAY - timedelta(days=n) for n in range(21, 0, -1)]
 
@@ -142,15 +142,16 @@ def test_the_demo_defaults_are_the_security_masters_and_its_date_column_is_writt
     from apps.api.demo_history import _day_file
 
     spec = HistorySpec()
-    assert (spec.feed_code, spec.column, spec.rule_key, spec.date_column, spec.date_format, spec.unique_column) == (
-        "syn_security_master", "BEST_SALES", "best_sales_not_negative", "RECORD_DATE", "%d-%m-%Y", "TICKER_NAME")
+    assert (spec.feed_code, spec.column, spec.rule_key, spec.date_column, spec.date_format) == (
+        "syn_security_master", "BEST_SALES", "best_sales_not_negative", "RECORD_DATE", "%d-%m-%Y")
+    assert "unique_column" not in HistorySpec.model_fields  # a rule failing every day is reported once, not hidden (7.16)
     header = ["TICKER_NAME", "RECORD_DATE", "BEST_SALES"]
     rows = [["T0000" if n <= 2 else f"T{n:04d}", "31-12-2019", str(-n if n % 2 else n)] for n in range(1, 13)]  # rows 1, 2: one ticker
     monday = date(2026, 11, 2)
     lines = _day_file(header, rows, spec, monday, 5).decode().splitlines()[1:]
     assert {line.split(",")[1] for line in lines} == {"02-11-2026"}  # every row is of that day, written as the file writes dates
     assert [line.split(",")[2] for line in lines[:8]] == ["-1"] * 8  # a Monday: the first eight are bad
-    assert len({line.split(",")[0] for line in lines}) == 12  # a repeated ticker is numbered: no duplicate-key rule flags it
+    assert len({line.split(",")[0] for line in lines}) == 11  # the file's own duplicate is left as it is
     ordinary = _day_file(header, rows, spec, date(2026, 11, 3), 6).decode().splitlines()[1:]
     assert all(float(line.split(",")[2]) >= 0 for line in ordinary)  # any other day: nothing negative
     assert ordinary != lines
