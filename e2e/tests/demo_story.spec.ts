@@ -269,6 +269,12 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   const history = page.getByTestId("profile-history");
   await expect(history.getByTestId("history-profile-1")).toContainText("kept: its registration", { timeout: 30_000 });
   await expect(history.getByTestId("history-profile-2")).toContainText("erased by");
+
+  // 7.18: Settings (read only): each agent and its provider; EXTERNAL_AGENT_FOR is not set, so every agent is the model's
+  await page.goto(`${BACKEND}#/settings`);
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("agent-MappingAgent")).toContainText("mock", { timeout: 30_000 });
+  await expect(page.getByTestId("external-agent")).toContainText("EXTERNAL_AGENT_FOR is not set");
 });
 
 // keeps the unused import honest for tooling that lists spec files

@@ -96,6 +96,10 @@ ports/                    Ports (interfaces) and adapters — see Placeholders. 
   identity/               Identity: dev users, entra_id (stub)
   secrets/                Secrets: env file, key_vault (stub)
   notify/                 Notifier: in-app, email/Teams (stub)
+  external_agents/        ExternalAgent (phase 7.18): none (default, never called) | hexaware (a stub until their API is known).
+                          Only agents/base.py calls it: EXTERNAL_AGENT_FOR=<agent name> routes that one agent through it,
+                          logged with the adapter's provider; a failure is ExternalAgentUnavailable (503
+                          external_agent_unavailable) and writes nothing. core/ never imports it (a test enforces this)
   pipeline/               Pipeline (phase 7.17): local = a git repository of its own under PIPELINE_REPO_ROOT (one folder
                           per feed, one commit per code version, never this repository), azure_devops (stub)
   connectors/             Source connectors: local file, HTTP (for the custom data product), and the source
@@ -130,6 +134,7 @@ Every adapter below is selected by an environment variable. The default is the l
 | `Secrets` | `.env` file | Azure Key Vault | `SECRETS_PROVIDER=env\|key_vault` |
 | `Notifier` | In-app notifications table | Email or Teams | `NOTIFY_PROVIDER=inapp\|email` |
 | `Pipeline` | Git repository of its own (`PIPELINE_REPO_ROOT`) | Azure DevOps repository | `PIPELINE_PROVIDER=local\|azure_devops` |
+| `ExternalAgent` (phase 7.18) | none (nothing is called) | Hexaware in-house data agents (stub until their API is known) | `EXTERNAL_AGENT_PROVIDER=none\|hexaware`, `EXTERNAL_AGENT_FOR=<agent name>` |
 | Database | Local PostgreSQL (Windows install) | Azure Database for PostgreSQL | `DATABASE_URL` |
 
 ### LLMProvider contract
