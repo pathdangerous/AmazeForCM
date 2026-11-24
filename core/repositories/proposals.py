@@ -35,6 +35,7 @@ from core.repositories.errors import (
     ProposalNotApproved,
     ProposalNotFound,
     SameApproverTwice,
+    UpstreamNotApproved,
     WrongProposalKind,
 )
 from core.repositories.settings import FourEyesRepository
@@ -202,6 +203,11 @@ class ProposalRepository:
             raise NotAnApprover(f"Step {step} of proposal {proposal_id} needs role {role}; {user.id} has {user.roles}")
         if any(a.decided_by == user.id for a in done) and FourEyesRepository(self._session).current():
             raise SameApproverTwice(f"{user.id} already decided a step of proposal {proposal_id}")
+        if decision == "approved":  # phase 7.13: top to bottom (trg_approvals_c_bases_approved is the last line)
+            open_bases = [b for b in self.bases(proposal_id) if self._row(b).status != "approved"]
+            if open_bases:
+                raise UpstreamNotApproved(f"Proposal {proposal_id} is built on draft(s) not approved yet: "
+                                          f"{', '.join(str(b) for b in open_bases)}; approve top to bottom")
 
         approval = ApprovalRow(
             proposal_id=proposal_id, step=step, role=role, decided_by=user.id, decision=decision, note=note

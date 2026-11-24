@@ -12,7 +12,6 @@ import json
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 
 from core.domain.mapping import ElementOption
 from core.repositories.onboarding import OnboardingRepository
@@ -87,17 +86,18 @@ def test_a_person_made_item_has_no_bases(s, feed):
     refused(s, "agent", BASE, p=manual, b=g.id, f=feed)
 
 
+APPROVE = ("INSERT INTO approvals (proposal_id, step, role, decided_by, decision) "
+           "VALUES (:p, 1, 'data_steward', 'dev-data-steward', :d)")
+
+
 def test_a_draft_is_approved_only_after_every_draft_it_was_built_on(s, feed):
+    """The database itself (the code refuses first with UpstreamNotApproved: tests/test_chain_review.py)."""
     g, m, t, r = chain(s, feed)
     repo, steward = ProposalRepository(s), dev_user_for("data_steward")
-    with pytest.raises(DBAPIError, match="not approved"):
-        with s.begin_nested():
-            repo.record_decision(m.id, user=steward, decision="approved")
+    refused(s, "not approved", APPROVE, p=m.id, d="approved")
     repo.record_decision(g.id, user=dev_user_for("glossary_owner"), decision="approved")
     repo.record_decision(m.id, user=steward, decision="approved")
-    with pytest.raises(DBAPIError, match="not approved"):  # the rule's transformation is still pending
-        with s.begin_nested():
-            repo.record_decision(r.id, user=steward, decision="approved")
+    refused(s, "not approved", APPROVE, p=r.id, d="approved")  # the rule's transformation is still pending
     repo.record_decision(t.id, user=steward, decision="approved")
     repo.record_decision(r.id, user=steward, decision="approved")
     s.flush()
@@ -107,9 +107,7 @@ def test_a_draft_on_a_rejected_draft_can_be_rejected_but_never_approved(s, feed)
     g, m, t, r = chain(s, feed)
     repo = ProposalRepository(s)
     repo.record_decision(g.id, user=dev_user_for("glossary_owner"), decision="rejected", note="not an element")
-    with pytest.raises(DBAPIError, match="not approved"):
-        with s.begin_nested():
-            repo.record_decision(m.id, user=dev_user_for("data_steward"), decision="approved")
+    refused(s, "not approved", APPROVE, p=m.id, d="approved")
     repo.record_decision(m.id, user=dev_user_for("data_steward"), decision="rejected", note="its element is gone")
     s.flush()
 

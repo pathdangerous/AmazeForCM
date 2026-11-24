@@ -30,6 +30,7 @@ from agents.transformation import TransformationAgent
 from apps.api.jobs import DailyFetch, GlossaryRuns, OnboardingJobs, kick_onboarding_jobs
 from core.repositories.onboarding import OnboardingJobRepository, OnboardingRepository
 from core.repositories.products import ProductRepository
+from core.repositories.proposals import ProposalRepository
 from core.repositories.settings import FourEyesRepository
 from core.seed import seed_glossary
 from core.steps.onboarding import OnboardingContext, StepAgents
@@ -602,6 +603,32 @@ async def test_the_lease_wait_is_the_time_to_the_earliest_live_lease(world):
     job = OnboardingJobRepository(w.session).claim(lease_seconds=300)
     w.session.commit()
     assert job is not None and 250 < w.worker.lease_wait() <= 300
+
+
+async def test_a_rejected_glossary_draft_reruns_the_mapping_drafts_built_on_it_through_the_api(world):
+    """Phase 7.13: Run all agents, the profile click, the chain; then one rejection through the item decision route.
+    The mapping drafts built on it are rejected by system and the mapping step drafts again; a draft approved before
+    the draft it is built on is a 409."""
+    w = world
+    oid = (await upload_and_confirm(w.client))["onboarding_id"]
+    await call(w, "POST", f"/{oid}/run-all")
+    w.worker.drain()
+    await call(w, "POST", f"/{oid}/approve", json={})  # the profile: the one click
+    w.worker.drain()
+    proposals = ProposalRepository(w.session)
+    feed_id = OnboardingRepository(w.session).get(UUID(oid)).feed_id
+    mapping = next(m for m in proposals.list_for_feed(feed_id, "mapping", "pending") if proposals.bases(m.id))
+    base = proposals.bases(mapping.id)[0]
+    w.session.rollback()
+
+    await call(w, "POST", f"/{oid}/items/{mapping.id}/decision", json={"decision": "approved"}, expect=409)
+    await call(w, "POST", f"/{oid}/items/{base}/decision", json={"decision": "rejected", "note": "Not an element."})
+    assert proposals.get(mapping.id).status == "rejected"
+    assert proposals.approvals(mapping.id)[0].decided_by == "system"
+    w.session.rollback()
+    w.worker.drain()
+    states = (await workspace_of(w, oid))["session"]["step_states"]
+    assert all(states[s] in ("ready", "needs_decision") for s in ("glossary", "mapping", "transformations", "rules"))
 
 
 # ---------------------------------------------------------------- the app's real sessions, on a schema of its own

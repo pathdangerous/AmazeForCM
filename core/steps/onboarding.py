@@ -177,6 +177,7 @@ CHAIN_STEPS: tuple[str, ...] = ("glossary", "mapping", "transformations", "rules
 DRAFTED = ("ready", "needs_decision", "done")  # a chain step whose agent has answered (or that a person approved)
 SECOND_PERSON = "a second person"
 RERUN_NOTE = "rerun after Back"
+STALE_NOTE = "stale: a draft it was built on was edited or rejected"  # phase 7.13
 MAX_GLOSSARY_RUNS = 20  # runs of other feeds that may sit in front of this feed's in the queue
 
 
@@ -350,22 +351,32 @@ def _step_items(session: Session, sess: OnboardingSession, step: str) -> list[On
     last proposal. needs_decision: pending, not accepted (by confidence or by an editor), and not waiting for a second
     person."""
     events = OnboardingRepository(session).events(sess.id)
-    answers = [e for e in events if e.step == step and e.event == "agent_done"]
-    if not answers:
+    mine = [e for e in events if e.step == step]
+    entered = max((i for i, e in enumerate(mine) if e.event == "entered"), default=-1)
+    since = mine[entered + 1:]  # since the step was last entered: a chain rerun adds to the answers, never resets
+    if not any(e.event == "agent_done" for e in since):
         return []
     accepted = {e.proposal_id for e in events if e.event == "pre_accepted" and e.proposal_id is not None}
     proposals = ProposalRepository(session)
     items = []
-    # T7: what people added after the agent's latest answer sits beside its proposals
-    added = [str(e.proposal_id) for e in events[events.index(answers[-1]) + 1:]
-             if e.step == step and e.event == "item_added" and e.proposal_id is not None]
-    for raw in [*answers[-1].detail.get("proposal_ids", []), *added]:
+    raws: dict[str, float | None] = {}  # proposal id -> the confidence its answer gave
+    for e in since:
+        if e.event == "agent_done":
+            for raw in e.detail.get("proposal_ids", []):
+                raws[raw] = e.detail.get("confidence", {}).get(raw)
+        elif e.event == "item_added" and e.proposal_id is not None:  # T7: what people added sits beside them
+            raws.setdefault(str(e.proposal_id), None)
+    seen: set[UUID] = set()
+    for raw, confidence in raws.items():
         chain = _chain(session, raw)
         tip = chain[-1]
         approvals = proposals.approvals(tip.id)
+        if tip.id in seen or (tip.status == "rejected" and approvals and approvals[-1].note == STALE_NOTE
+                              and approvals[-1].decided_by == "system"):
+            continue  # phase 7.13: a stale draft is replaced by its rerun's
+        seen.add(tip.id)
         waiting = SECOND_PERSON if (tip.status == "pending" and approvals
                                     and len(approvals) < len(tip.required_approver_roles)) else None
-        confidence = answers[-1].detail.get("confidence", {}).get(raw)
         column, summary, reason = _describe(tip, confidence)
         is_accepted = tip.id in accepted
         items.append(OnboardingItem(
@@ -408,6 +419,7 @@ def _enter(session: Session, sess: OnboardingSession, step: str, *, actor: str, 
 def _queue_draft(session: Session, sess: OnboardingSession, step: str, *, actor: str) -> None:
     """Chain mode: queue a step's agent ahead of the cursor (phase 7.13). The cursor does not move: it stays at the
     first step a person has not approved."""
+    _reject_stale(session, sess)  # after a Back: the drafts built on what it rejected
     sessions = OnboardingRepository(session)
     sessions.set_step_state(sess.id, step, "agent_working")
     OnboardingJobRepository(session).queue(session_id=sess.id, step=step)
@@ -421,11 +433,69 @@ def _next_draft(sess: OnboardingSession) -> str | None:
         return None
     for step in CHAIN_STEPS:
         state = sess.step_states[step]
-        if state == "waiting":
+        if state in ("waiting", "stale"):
             return step
         if state not in DRAFTED:
             return None
     return None
+
+
+def stale_drafts(session: Session, feed_id: UUID) -> list[Proposal]:
+    """The feed's pending drafts that are stale (plan, decision 3): a draft they were built on was edited (superseded)
+    or rejected, or is itself stale. Derived, never stored."""
+    proposals = ProposalRepository(session)
+    memo: dict[UUID, bool] = {}
+
+    def stale(proposal_id: UUID) -> bool:
+        if proposal_id not in memo:
+            memo[proposal_id] = False  # bases are earlier kinds (0032): no cycle
+            for base in proposals.bases(proposal_id):
+                status = proposals.get(base).status
+                if status in ("superseded", "rejected") or (status == "pending" and stale(base)):
+                    memo[proposal_id] = True
+                    break
+        return memo[proposal_id]
+
+    pending = [p for step in CHAIN_STEPS for kind in STEP_KINDS[step]
+               for p in proposals.list_for_feed(feed_id, kind, "pending")]
+    return [p for p in pending if stale(p.id)]
+
+
+def _reject_stale(session: Session, sess: OnboardingSession) -> list[str]:
+    """`system` rejects each stale draft (a rejection by system is no judgement: T4), so its step can draft the column
+    again; the chain steps that lost a draft, in order."""
+    sessions, proposals = OnboardingRepository(session), ProposalRepository(session)
+    steps = []
+    for p in stale_drafts(session, sess.feed_id):
+        proposals.record_decision(p.id, user=_system(p), decision="rejected", note=STALE_NOTE)
+        step = STEP_OF_KIND[p.kind]
+        sessions.add_event(sess.id, step=step, event="draft_stale", actor="system", proposal_id=p.id,
+                           detail={"note": STALE_NOTE, "based_on": [str(b) for b in proposals.bases(p.id)]})
+        steps.append(step)
+    return [s for s in CHAIN_STEPS if s in steps]
+
+
+def _was_blocked(proposal: Proposal) -> bool:
+    return proposal.kind in ("glossary_element", "mapping") and proposal.payload.get("recommended") is None
+
+
+def refresh_chain(session: Session, *, session_id: UUID, decided: Proposal | None = None, actor: str) -> None:
+    """Chain mode, after an edit or a decision (plan, decision 3): the drafts built on what changed are rejected by
+    `system` and only their steps run again, in step order. A blocked item a person decided (a tie, a conflict) lets
+    the steps after it draft that column. Step mode: nothing."""
+    sessions = OnboardingRepository(session)
+    sess = sessions.get(session_id)
+    if sess.run_mode != "chain":
+        return
+    again = set(_reject_stale(session, sess))
+    if decided is not None and decided.status == "approved" and _was_blocked(decided):
+        after = CHAIN_STEPS[CHAIN_STEPS.index(STEP_OF_KIND[decided.kind]) + 1:]
+        again |= {s for s in after if sess.step_states[s] in ("ready", "needs_decision")}
+    for step in CHAIN_STEPS:
+        if step in again and sess.step_states[step] != "agent_working":
+            sessions.set_step_state(session_id, step, "stale")
+            sessions.add_event(session_id, step=step, event="stale", actor=actor)
+    _go_on_with_the_chain(session, session_id, actor=actor)
 
 
 def _go_on_with_the_chain(session: Session, session_id: UUID, *, actor: str) -> None:
@@ -934,8 +1004,12 @@ def approve_and_next(session: Session, *, session_id: UUID, user: User, ctx: Onb
     sessions.set_step_state(session_id, step, "done")
     sessions.add_event(session_id, step=step, event="done", actor=user.id)
     following = _next_step(step)
-    _enter(session, sessions.get(session_id), following, actor=user.id,
-           rerun=sess.step_states[following] == "stale")
+    state = sess.step_states[following]
+    if sess.run_mode == "chain" and following in CHAIN_STEPS:  # phase 7.13: drafted ahead, so the cursor only moves
+        sessions.move_to(session_id, following)
+        _go_on_with_the_chain(session, session_id, actor=user.id)  # a step still to draft (a failed one: enter it)
+    else:
+        _enter(session, sessions.get(session_id), following, actor=user.id, rerun=state == "stale")
     return StepAdvance(moved=True, current_step=following, approved=approved)
 
 
@@ -1050,14 +1124,12 @@ def edit_item(session: Session, *, session_id: UUID, proposal_id: UUID, payload:
     the editor as actor). The agent's answer in the log stays as it was. ProposalEditRefused, ProposalAlreadyDecided,
     NotAnApprover, StepNotEnterable (not an item of the current step)."""
     sess = _locked(session, session_id)
-    step = sess.current_step
     proposals = ProposalRepository(session)
     old = proposals.get(proposal_id)
-    items = {i.proposal_id for i in _step_items(session, sess, step)}
-    if old.feed_id != sess.feed_id or STEP_OF_KIND.get(old.kind) != step or proposal_id not in items:
-        raise StepNotEnterable(f"Proposal {proposal_id} is not an item of {step}, the step this onboarding is on")
+    step = _item_step(session, sess, old)
     _checked_payload(old.kind, payload)
     new = proposals.edit(proposal_id, payload=payload, user=user)
+    proposals.add_bases(new.id, proposals.bases(proposal_id), feed_id=sess.feed_id)  # 7.13: still built on them
     changed = sorted(k for k in set(old.payload) | set(payload) if old.payload.get(k) != payload.get(k))
     sessions = OnboardingRepository(session)
     sessions.add_event(session_id, step=step, event="edited", actor=user.id, proposal_id=new.id,
@@ -1067,7 +1139,46 @@ def edit_item(session: Session, *, session_id: UUID, proposal_id: UUID, payload:
     state = sess.step_states[step]
     if state in ("ready", "needs_decision"):
         sessions.set_step_state(session_id, step, _settled_state(_step_items(session, sessions.get(session_id), step)))
+    refresh_chain(session, session_id=session_id, actor=user.id)  # phase 7.13: the drafts built on the old one
     return new
+
+
+def _item_step(session: Session, sess: OnboardingSession, proposal: Proposal) -> str:
+    """The step whose item this is: the current step's, or (chain mode, phase 7.13) a drafted chain step's ahead.
+    StepNotEnterable otherwise."""
+    step = STEP_OF_KIND.get(proposal.kind)
+    ahead = (sess.run_mode == "chain" and step in CHAIN_STEPS
+             and sess.step_states.get(step) in ("ready", "needs_decision"))
+    if proposal.feed_id != sess.feed_id or step is None or (step != sess.current_step and not ahead) \
+            or proposal.id not in {i.proposal_id for i in _step_items(session, sess, step)}:
+        raise StepNotEnterable(f"Proposal {proposal.id} is not an item of {sess.current_step}, the step this "
+                               "onboarding is on")
+    return step
+
+
+def reject_item(session: Session, *, session_id: UUID, proposal_id: UUID, user: User, note: str,
+                ctx: OnboardingContext | None = None) -> Proposal:
+    """A person rejects one draft (its step's own decision, with the note), then, in chain mode, the drafts built on it
+    are rejected by `system` and only their steps run again (phase 7.13)."""
+    sess = _locked(session, session_id)
+    proposal = ProposalRepository(session).get(proposal_id)
+    step = _item_step(session, sess, proposal)
+    notifier = get_notifier(ctx.settings, session=session) if ctx else None
+    if proposal.kind == "glossary_element":
+        decide_element(session, proposal_id=proposal_id, user=user, decision="rejected", choice=None, note=note,
+                       notifier=notifier, stewards=[])
+    elif proposal.kind == "mapping":
+        decide_mapping(session, proposal_id=proposal_id, user=user, decision="rejected", choice=None, note=note)
+    elif proposal.kind == "transformation":
+        decide_transformation(session, proposal_id=proposal_id, user=user, decision="rejected", note=note)
+    elif proposal.kind == "rule":
+        decide_rule(session, proposal_id=proposal_id, user=user, decision="rejected", note=note, notifier=notifier)
+    else:
+        raise StepNotEnterable(f"A {proposal.kind} item is rejected from its own step")
+    OnboardingRepository(session).add_event(session_id, step=step, event="rejected", actor=user.id,
+                                            proposal_id=proposal_id, detail={"note": note})
+    refresh_chain(session, session_id=session_id, actor=user.id)
+    return ProposalRepository(session).get(proposal_id)
 
 
 # ---------------------------------------------------------------- add an item by hand (phase 7.12, T7; migration 0028)
@@ -1118,7 +1229,8 @@ def manual_rule_input(session: Session, *, session_id: UUID, item: ManualRule | 
     held, then add_item() (or edit_item()) writes. ItemAlreadyPending, ManualItemRefused, and step 09's own refusals
     of the feed (FeedNotRegistered, NothingToMap)."""
     sess = OnboardingRepository(session).get(session_id)
-    agent_input = rules_input(session, feed_id=sess.feed_id, catalogue=_catalogue(session, ctx.settings))
+    draft = draft_config(session, sess.feed_id) if sess.run_mode == "chain" else None  # 7.13: on the draft mappings
+    agent_input = rules_input(session, feed_id=sess.feed_id, catalogue=_catalogue(session, ctx.settings), draft=draft)
     if edit_of is not None:  # an edit of a pending rule (an agent's or a person's): its new SQL is back-tested too
         old = ProposalRepository(session).get(edit_of)
         _checked_payload("rule", edited or {})

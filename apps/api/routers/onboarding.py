@@ -57,7 +57,9 @@ from core.steps.onboarding import (
     checked_rule_payload,
     edit_item,
     enter_step,
+    STEP_OF_KIND,
     manual_rule_input,
+    refresh_chain,
     run_all,
     timeline,
     workspace,
@@ -209,7 +211,7 @@ def go_back(session_id: UUID, body: BackBody, session: DbSession, user: Operator
 
 @router.post("/{session_id}/items/{proposal_id}/decision", response_model=ItemDecided)
 def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session: DbSession, user: Operator,
-                identity: IdentityPort, notifier: RequestNotifier, settings: AppSettings) -> ItemDecided:
+                identity: IdentityPort, notifier: RequestNotifier, settings: AppSettings, kick: Kick) -> ItemDecided:
     def work():
         sessions = OnboardingRepository(session)
         sess = sessions.lock(session_id)  # OnboardingNotFound: 404
@@ -217,11 +219,15 @@ def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session
             raise ProposalNotFound(f"Proposal {proposal_id} is not an item of onboarding {session_id}")
         result = decide_proposal(session, proposal_id=proposal_id, body=body, user=user, identity=identity,
                                  notifier=notifier, settings=settings)
-        sessions.add_event(session_id, step=sess.current_step, event=body.decision, actor=user.id,
+        decided = ProposalRepository(session).get(proposal_id)
+        step = STEP_OF_KIND.get(decided.kind, sess.current_step) if sess.run_mode == "chain" else sess.current_step
+        sessions.add_event(session_id, step=step, event=body.decision, actor=user.id,
                            proposal_id=proposal_id, detail={"note": body.note} if body.note else {})
+        refresh_chain(session, session_id=session_id, decided=decided, actor=user.id)  # 7.13: stale drafts rerun
         return result
 
     result = in_transaction(session, work)
+    kick()  # a stale draft's step may be queued
     return ItemDecided(result=result, workspace=_view(session, session_id, settings))
 
 
@@ -253,7 +259,7 @@ def _back_tested(agent_input, proposed, own, ctx) -> dict[str, Any]:
              responses={409: {"description": "the item is no longer pending"},
                         422: {"description": "the edited payload is not valid for its kind"}})
 def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession, user: Operator, ctx: Context,
-         settings: AppSettings) -> ItemEdited:
+         settings: AppSettings, kick: Kick) -> ItemEdited:
     payload = body.payload
     kind = read(session, lambda: ProposalRepository(session).get(proposal_id).kind)
     if kind == "rule":  # an edited rule is back-tested again, like a new one (T7)
@@ -262,6 +268,7 @@ def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession
         payload = _back_tested(agent_input, proposed, own, ctx)
     proposal = in_transaction(session, lambda: edit_item(session, session_id=session_id, proposal_id=proposal_id,
                                                          payload=payload, user=user))
+    kick()  # 7.13: a stale draft's step may be queued
     return ItemEdited(proposal=proposal, workspace=_view(session, session_id, settings))
 
 

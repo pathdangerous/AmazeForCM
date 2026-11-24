@@ -65,6 +65,9 @@ class RuleRecommenderInput(BaseModel):
     elements: list[RuleCandidateElement]
     feed_templates: list[RuleTemplateOffer] = Field(max_length=MAX_TEMPLATES)  # rules over several elements
     existing_keys: list[str] = Field(max_length=MAX_KNOWN_KEYS)  # current and pending rules: keys only
+    # Phase 7.13: every current and pending key, for code's own refusal (existing_keys is cut to MAX_KNOWN_KEYS for the
+    # model); left out of what the model is sent and what is stored, as transformations is.
+    known_keys: list[str] = Field(default_factory=list, exclude=True)
     rejected_keys: list[str]  # rules a steward or checker rejected: not proposed again
     mapping_ids: list[UUID]  # the mappings the input was built from
     connector: str | None  # how the feed's source and its history are read

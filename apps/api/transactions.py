@@ -122,6 +122,10 @@ from core.repositories.errors import ColumnAlreadyMapped, ItemAlreadyPending, Ma
 
 CONFLICTS = CONFLICTS + (ItemAlreadyPending, ColumnAlreadyMapped)
 UNPROCESSABLE = (ProposalEditRefused, ManualItemRefused)
+# phase 7.13: a draft approved before a draft it was built on
+from core.repositories.errors import UpstreamNotApproved  # noqa: E402
+
+CONFLICTS = CONFLICTS + (UpstreamNotApproved,)
 
 
 def read(session: Session, work: Callable[[], T]) -> T:

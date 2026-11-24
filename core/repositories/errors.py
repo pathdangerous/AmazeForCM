@@ -363,3 +363,7 @@ class StepJobActive(RepositoryError):
 
 class StepNotReady(RepositoryError):
     """Approve & next needs a step whose agent has answered: it is waiting, working or failed."""
+
+
+class UpstreamNotApproved(RepositoryError):
+    """Phase 7.13: a draft is approved only after every draft it was built on (top to bottom). The API answers 409."""

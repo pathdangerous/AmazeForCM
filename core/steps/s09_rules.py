@@ -152,11 +152,16 @@ class RuleRejected(BaseModel):
 # ---------------------------------------------------------------- the agent's input
 
 
-def _known_keys(session: Session, feed_id: UUID) -> list[str]:
-    """The keys of the feed's current rules and pending rule proposals, sorted, at most MAX_KNOWN_KEYS."""
+def _all_known_keys(session: Session, feed_id: UUID) -> list[str]:
+    """The keys of the feed's current rules and pending rule proposals, sorted."""
     keys = {r.rule_key for r in RuleRepository(session).current_for_feed(feed_id)}
     keys |= {p.payload["rule_key"] for p in ProposalRepository(session).list_for_feed(feed_id, "rule", "pending")}
-    return sorted(keys)[:MAX_KNOWN_KEYS]
+    return sorted(keys)
+
+
+def _known_keys(session: Session, feed_id: UUID) -> list[str]:
+    """At most MAX_KNOWN_KEYS of them: what the model is told."""
+    return _all_known_keys(session, feed_id)[:MAX_KNOWN_KEYS]
 
 
 def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue,
@@ -189,6 +194,7 @@ def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue,
         current_file=LoadHistoryItem(label="current file", file_ref=fetch.blob_ref) if fetch else None,
         feed_id=feed.id, feed_code=feed.code, source_name=feed.name, elements=elements,
         feed_templates=feed_offers([e.key for e in elements]), existing_keys=_known_keys(session, feed_id),
+        known_keys=_all_known_keys(session, feed_id),
         rejected_keys=sorted(RuleRepository(session).rejected_keys(feed_id)), mapping_ids=sorted(m.id for m in mappings),
         connector=feed.connector, history=list(entry.history) if entry else [],
         load_history=[LoadHistoryItem(label=f"load {load.received_at:%Y-%m-%d}", file_ref=load.file_ref)
@@ -216,7 +222,7 @@ def backtest_for(agent_input: RuleRecommenderInput, *, connector_factory: Callab
 def _refusal(agent_input: RuleRecommenderInput, rule: ProposedRule, seen: set[str]) -> str | None:
     if rule.rule_key in seen:
         return TWICE
-    if rule.rule_key in agent_input.existing_keys:
+    if rule.rule_key in agent_input.existing_keys or rule.rule_key in agent_input.known_keys:
         return ALREADY_THERE
     if rule.rule_key in agent_input.rejected_keys:
         return WAS_REJECTED
@@ -366,7 +372,8 @@ def check_manual_rule(agent_input: RuleRecommenderInput, rule: ProposedRule, *, 
     (not a plain SELECT, an element the feed does not map, an error or timeout), or more than half the history flagged."""
     if own_key is not None:
         agent_input = agent_input.model_copy(update={
-            "existing_keys": [k for k in agent_input.existing_keys if k != own_key]})
+            "existing_keys": [k for k in agent_input.existing_keys if k != own_key],
+            "known_keys": [k for k in agent_input.known_keys if k != own_key]})
     checked = _checked(agent_input, RuleRecommenderOutput(rules=[rule]), connector_factory, rule_timeout_seconds,
                        blob_store).rules[0]
     if checked.verdict != "kept":
