@@ -10,6 +10,7 @@ import OnboardingsView from "./views/OnboardingsView";
 import OverviewView from "./views/OverviewView";
 import ReportsView from "./views/ReportsView";
 import RunBanner from "./views/RunBanner";
+import SettingsView from "./views/SettingsView";
 import WorkspaceView from "./views/WorkspaceView";
 import StatusView from "./views/StatusView";
 import UploadView from "./views/UploadView";
@@ -27,6 +28,7 @@ const VIEWS = {
   notifications: "Notifications",
   reports: "Reports",
   audit: "Audit",
+  settings: "Settings",
 } as const;
 type View = keyof typeof VIEWS | "onboard" | "onboarding";
 
@@ -48,6 +50,7 @@ const NAV_OF: Record<View, keyof typeof VIEWS> = {
   overview: "overview",
   onboardings: "onboardings", onboard: "onboardings", onboarding: "onboardings", feeds: "feeds",
   glossary: "glossary", status: "status", notifications: "notifications", reports: "reports", audit: "audit",
+  settings: "settings",
 };
 
 function reportFromHash(): string | null {
@@ -59,7 +62,7 @@ const NAV_GROUPS: { label: string; items: (keyof typeof VIEWS)[] }[] = [
   { label: "Overview", items: ["overview"] },
   { label: "Onboard", items: ["onboardings", "feeds"] },
   { label: "Govern", items: ["glossary"] },
-  { label: "Operate", items: ["status", "notifications"] },
+  { label: "Operate", items: ["status", "notifications", "settings"] },
   { label: "Masters", items: [] },
   { label: "Insights", items: ["reports", "audit"] },
 ];
@@ -193,6 +196,7 @@ function App() {
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "overview" && <OverviewView devUser={me ? selected : ""} />}
         {view === "audit" && <AuditView devUser={me ? selected : ""} />}
+        {view === "settings" && <SettingsView devUser={me ? selected : ""} />}
         {view === "reports" && <ReportsView devUser={me ? selected : ""} roles={me?.roles ?? []} reportId={reportId} />}
         {view === "status" && <StatusView devUser={me ? selected : ""} people={people} />}
         {view === "glossary" && (

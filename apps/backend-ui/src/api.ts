@@ -204,6 +204,11 @@ export type AuditRowT = { at: string; kind: "decision" | "rerun" | "erasure"; fe
   by: "agent" | "manual" | "rule" | "system"; agent: string | null; code_version: number | null; waiver: boolean;
   rerun_of: string | null; note: string | null; proposal_id: string | null; load_id: string | null };
 export type AuditViewT = { month: string; count: number; truncated: boolean; rows: AuditRowT[] };
+
+// Phase 7.18: GET /api/amaze/settings, read only.
+export type AgentSettingT = { name: string; autonomy: string; approver_roles: string[]; provider: string; external: boolean };
+export type AgentSettingsT = { llm_provider: string; external_agent_provider: string; external_agent_for: string;
+  external_agent_set: boolean; external_agent_known: boolean; external_agent_active: boolean; agents: AgentSettingT[] };
 const auditQuery = (month: string, feed: string, person: string) =>
   `month=${month}${feed ? `&feed=${feed}` : ""}${person ? `&person=${encodeURIComponent(person)}` : ""}`;
 export const getAudit = (month: string, feed: string, person: string, devUser: string) =>

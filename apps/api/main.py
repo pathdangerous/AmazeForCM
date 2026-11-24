@@ -25,7 +25,7 @@ from apps.api.jobs import (
     register_daily_fetch,
     register_report_job,
 )
-from apps.api.routers import (amaze, audit, consumer, dev_identity, exceptions, health, notifications, onboarding,
+from apps.api.routers import (agent_settings, amaze, audit, consumer, dev_identity, exceptions, health, notifications, onboarding,
                               overview, reports, uploads)
 from core.repositories.settings import FourEyesRepository
 from ports.config import get_settings
@@ -135,6 +135,7 @@ app.include_router(health.router)
 app.include_router(dev_identity.router)
 app.include_router(amaze.router)
 app.include_router(overview.router)
+app.include_router(agent_settings.router)
 app.include_router(exceptions.router)
 app.include_router(reports.router)
 app.include_router(audit.router)
