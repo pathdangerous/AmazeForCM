@@ -2,7 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import { BACKEND, FEED_CODE, REPO, upload, walk, type StepHooks } from "../operator_flow";
 
-// The 10-minute demo of phase 7.12 (docs/demo-7.12.md), as one story: upload version 1, profile and actions, a rule added
+// The demo (docs/demo.md), as one story. Phase 7.13: version 1 is onboarded with Run all agents (the profile approval is
+// the one click, then the chain review: every step drafted, "based on" links, Approve all confident on the glossary).
+// Phase 7.12, as before: upload version 1, profile and actions, a rule added
 // by hand, one agent rule edited and one rejected (T7), the completion report, code version 1, approve and release; then
 // version 2 (a new column and two columns swapped): drift, its actions, the update, code version 2 and the diff, and the
 // overview. Mock provider, one operator who holds every role (REQUIRE_FOUR_EYES=false), schema e2e_story.
@@ -19,6 +21,21 @@ async function reject(page: Page, card: ReturnType<Page["locator"]>, why: string
 }
 
 const hooks: StepHooks = {
+  // 7.13: after the one profile click every agent has drafted ahead; review the chain, approve the confident glossary
+  "step-glossary": async (page) => {
+    const chain = page.getByTestId("chain-review");
+    await expect(chain).toBeVisible();
+    for (const step of ["mapping", "transformations", "rules"]) {
+      await expect(chain.getByTestId(`chain-step-${step}`)).toContainText(/ready|needs decision/, { timeout: 180_000 });
+    }
+    await expect(chain.getByTestId("chain-step-mapping").getByRole("button", { name: /^Based on Glossary/ }).first())
+      .toBeVisible();
+    const confident = chain.getByTestId("chain-approve-confident-glossary");
+    if (await confident.isEnabled()) {
+      await confident.click();
+      await expect(chain.getByRole("status")).toContainText("Approved", { timeout: 60_000 });
+    }
+  },
   // T1: the facts in plain words, each action says who does it; a person adds one and rejects one
   "step-profile": async (page) => {
     await expect(page.getByTestId("profile-plain")).toBeVisible();
@@ -68,6 +85,10 @@ const hooks: StepHooks = {
 
 test("the demo: version 1 to released, then version 2 with drift, code version 2 and its diff", async ({ page }) => {
   await upload(page);
+  // 7.13: Run all agents, once; the profile approval is then the one click before the chain review
+  await page.getByTestId("workspace-run-all").click();
+  await expect(page.getByTestId("chain-review")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("workspace-run-all")).toBeHidden();
   await walk(page, undefined, hooks);
 
   // the feed page: code version 1 (T3)

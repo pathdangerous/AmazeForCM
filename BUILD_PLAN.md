@@ -138,9 +138,10 @@ Decisions (T0):
 Plan: `docs/plans/phase-7.13.md`. One click on the onboarding ("Run all agents", session `run_mode = chain`) makes the
 worker run glossary, mapping, transformations and rules in turn on **draft** upstream proposals; a person reviews the
 whole chain once and approves top to bottom. Tasks: T0 design (stop for review), T1 chain worker and drafts
-(migration 0032), T2 chain review screen, T3 approval order and stale reruns, T4 demo and finish.
+(migration 0032; T1a, T1b, T1c), T2 chain review screen, T3 approval order and stale reruns, T4 the system-rejection
+defect (Back), T5 demo (`docs/demo.md`) and finish.
 
-Decisions (T0, pending review):
+Decisions (T0, approved 2026-11-24):
 - Rule 1 unchanged: every item is approved by a person, one approval row per item; "Approve all confident" loops the
   existing per-item decisions. Nothing is written to `mappings`, `rules` or `transformations` before its approval.
 - A draft records the drafts it used (`proposal_bases`); "stale" is derived (an upstream draft was edited, rejected or

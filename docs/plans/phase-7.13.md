@@ -190,6 +190,24 @@ state). Never worked around: if a draft is refused by any of these, the code is 
 - **T5** finish: `pytest -q -n 6`, both UI suites, all Playwright stories; extend `demo_story.spec.ts`; rename
   `docs/demo-7.12.md` to `docs/demo.md` and add this phase; `graphify update .`; push `phase-7.13`; do not merge.
 
+## Outcome and deviations (T1-T5)
+
+- Order of commits: T4 first (stale reruns rely on it), then T1a, T1b, T1c, T3, T2, T5.
+- Files outside the plan: `apps/ui-shared/Stepper.tsx` (`canOpen` also opens a `ready` or `needs_decision` step, so a
+  step drafted ahead can be opened; in step mode only the current step has those states); `core/domain/rules.py`
+  (`known_keys`, below); `e2e/tests/demo_story.spec.ts` and `docs/ui-polish.md`, as the phase header asks.
+- Root cause found in T3: a rules rerun re-proposed a key that was still pending and the one-pending-rule index refused it.
+  `existing_keys` is cut to `MAX_KNOWN_KEYS` (20) for the model and the refusal checked only that list; the security
+  master has 26 rules. Fixed with `known_keys` (every key, not sent to the model). The same would have hit any "Propose
+  again" on a feed with more than 20 rules.
+- An edit copies the edited draft's bases to the new version (else it could be approved before its upstream).
+- A rule edit back-tests on the draft mappings in chain mode (`manual_rule_input`).
+- Not built (not needed): `only_elements` for the rules rerun. The rerun asks the agent once; keys still pending are
+  refused by code, so only the stale ones come back.
+- Add (T7 manual items) stays at the cursor step only: a person's item is built on approved configuration (assumption 10).
+- Migration 0032 changed one thing from the T0 table: `proposal_bases` has its own `feed_id`, so `amaze_may_delete()` needed
+  no new version (row 2).
+
 ## Out of scope
 
 Approval in advance (option B of the request); any change to steps 12-15; drafting the go-live summary; manual items that
