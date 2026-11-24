@@ -1,6 +1,7 @@
 import { Anchor, NativeSelect, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { apiGet, describeError, type Person, type User } from "./api";
+import AuditView from "./views/AuditView";
 import FeedRegistryView from "./views/FeedRegistryView";
 import FeedView from "./views/FeedView";
 import GlossaryView from "./views/GlossaryView";
@@ -25,6 +26,7 @@ const VIEWS = {
   status: "Status",
   notifications: "Notifications",
   reports: "Reports",
+  audit: "Audit",
 } as const;
 type View = keyof typeof VIEWS | "onboard" | "onboarding";
 
@@ -45,7 +47,7 @@ function onboardingFromHash(): string | null {
 const NAV_OF: Record<View, keyof typeof VIEWS> = {
   overview: "overview",
   onboardings: "onboardings", onboard: "onboardings", onboarding: "onboardings", feeds: "feeds",
-  glossary: "glossary", status: "status", notifications: "notifications", reports: "reports",
+  glossary: "glossary", status: "status", notifications: "notifications", reports: "reports", audit: "audit",
 };
 
 function reportFromHash(): string | null {
@@ -59,7 +61,7 @@ const NAV_GROUPS: { label: string; items: (keyof typeof VIEWS)[] }[] = [
   { label: "Govern", items: ["glossary"] },
   { label: "Operate", items: ["status", "notifications"] },
   { label: "Masters", items: [] },
-  { label: "Insights", items: ["reports"] },
+  { label: "Insights", items: ["reports", "audit"] },
 ];
 
 function feedFromHash(): string | null {
@@ -190,6 +192,7 @@ function App() {
         <RunBanner devUser={me ? selected : ""} refresh={`${view}/${feedId}/${changed}`} onChange={onChange}
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "overview" && <OverviewView devUser={me ? selected : ""} />}
+        {view === "audit" && <AuditView devUser={me ? selected : ""} />}
         {view === "reports" && <ReportsView devUser={me ? selected : ""} roles={me?.roles ?? []} reportId={reportId} />}
         {view === "status" && <StatusView devUser={me ? selected : ""} people={people} />}
         {view === "glossary" && (

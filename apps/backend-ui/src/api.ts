@@ -182,6 +182,21 @@ export const makeReport = (body: { kind: string; period_start: string; role: str
   apiPost<{ result: { outcome: string; report_id: string; version: number; reason?: string; figure?: string | null } }>(
     "/api/amaze/reports", body, devUser);
 
+export type AuditRowT = { at: string; kind: "decision" | "rerun"; feed_id: string | null; feed_code: string | null;
+  who: string | null; role: string | null; decision: "approved" | "rejected" | "started"; item: string; summary: string;
+  by: "agent" | "manual" | "rule" | "system"; agent: string | null; code_version: number | null; waiver: boolean;
+  rerun_of: string | null; note: string | null; proposal_id: string | null; load_id: string | null };
+export type AuditViewT = { month: string; count: number; truncated: boolean; rows: AuditRowT[] };
+const auditQuery = (month: string, feed: string, person: string) =>
+  `month=${month}${feed ? `&feed=${feed}` : ""}${person ? `&person=${encodeURIComponent(person)}` : ""}`;
+export const getAudit = (month: string, feed: string, person: string, devUser: string) =>
+  apiGet<AuditViewT>(`/api/amaze/audit?${auditQuery(month, feed, person)}`, devUser);
+export async function getAuditCsv(month: string, feed: string, person: string, devUser: string): Promise<string> {
+  const response = await fetch(`/api/amaze/audit.csv?${auditQuery(month, feed, person)}`,
+    { headers: { Accept: "text/csv", "X-Dev-User": devUser } });
+  if (!response.ok) throw new ApiError(response.status, `The CSV returned HTTP ${response.status}`);
+  return response.text();
+}
 export type RerunResult = { outcome: string; load_id: string; reason?: string; detail?: string | null; status?: string;
   trust_score?: string; previous_score?: string | null; waived_rows?: number; open_groups?: number };
 export const decideExceptionGroups = (loadId: string, body: { group_keys: string[]; decision: "approved" | "rejected";
