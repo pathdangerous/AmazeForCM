@@ -65,6 +65,7 @@ from core.repositories.standard_records import StandardRecordRepository
 from core.steps.errors import ChoiceNotOffered, CodeNotConfirmed
 from core.steps.exceptions import ExceptionFixDecided
 from core.steps.feed_lifecycle import FeedDeleted, FeedPaused, FeedResumed, delete_feed, pause_feed, resume_feed
+from core.steps.profile_erase import ProfileErasureResult, erase_profiles
 from core.steps.feed_page import (
     FeedPage,
     LoadOnPage,
@@ -474,6 +475,24 @@ def remove_feed(feed_id: UUID, body: DeleteBody, session: DbSession, user: Backe
                            dropzone_root=settings.dropzone_root, notifier=notifier)
 
     return in_transaction(session, work)
+
+
+class EraseProfilesBody(ReasonBody):
+    before_version: Annotated[int, Field(ge=1)]  # erase the feed's profiles older than this one (kept ones stay)
+
+
+class EraseProfilesResponse(BaseModel):
+    result: ProfileErasureResult
+    feed: FeedPage
+
+
+@router.post("/feeds/{feed_id}/profiles/erase", response_model=EraseProfilesResponse)
+def erase_feed_profiles(feed_id: UUID, body: EraseProfilesBody, session: DbSession, user: BackendUser,
+                        catalogue: Catalogue) -> EraseProfilesResponse:
+    """Phase 7.16: the recorded erase of profiling history (amaze_erase_profiles(), the only path). The owner or operations."""
+    result = in_transaction(session, lambda: erase_profiles(session, feed_id=feed_id, user=user,
+                                                            before_version=body.before_version, reason=body.reason))
+    return EraseProfilesResponse(result=result, feed=_page(session, feed_id, catalogue))
 
 
 @router.get("/feed-deletions", response_model=list[FeedDeletion])

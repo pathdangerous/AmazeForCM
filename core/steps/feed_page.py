@@ -47,6 +47,7 @@ from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
 from core.steps.candidates import candidate_list, covered_by, new_columns
+from core.steps.profile_erase import ProfileErasure, erasures_of, keep_reasons
 from core.steps.s02_profile import ProfileSummary, _key_part, summary_of, todo_actions
 from core.steps.s10_transform import EffectiveKeyPolicy, effective_key_policy
 from ports.connectors.catalogue import SourceCatalogue, SourceConditions, UnknownSource
@@ -73,6 +74,8 @@ class ProfileOnPage(BaseModel):
     version: int
     outcome: str
     at: datetime
+    id: UUID | None = None  # phase 7.16
+    keep_reason: str | None = None  # phase 7.16: why the profile may not be erased now (None: it may)
 
 
 WhyNone = Literal["with_glossary_builder", "rejected_by_glossary_owner", "type_does_not_fit"]
@@ -175,6 +178,7 @@ class FeedPage(BaseModel):
     # phase 7.8, task 4.3: step 10 (set by feed_page(); the default keeps a hand-built page valid)
     transformations: TransformationsOnPage | None = None
     todo_actions: list[TodoAction] = []  # phase 7.12, T1: the manual profile actions still to be done by a person
+    erasures: list[ProfileErasure] = []  # phase 7.16: the erases of profiling history, oldest first
 
 
 class RuleOnPage(BaseModel):
@@ -376,6 +380,7 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
                                     basis=choice.basis,
                                     accepted_conditions=choice.accepted_conditions))
     profiles = FeedProfileRepository(session).history(feed.id)
+    keep = keep_reasons(session, feed.id)
     latest = profiles[-1] if profiles else None
     undeclared = missing = []
     if latest is not None:
@@ -404,7 +409,9 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
     return FeedPage(
         feed=feed, source=source, requirements=rows, last_file=last_file, profile=latest,
         undeclared_columns=undeclared, missing_columns=missing,
-        profiles=[ProfileOnPage(version=p.version, outcome=p.outcome, at=p.created_at) for p in profiles],
+        profiles=[ProfileOnPage(version=p.version, outcome=p.outcome, at=p.created_at, id=p.id, keep_reason=keep[p.id])
+                  for p in profiles],
+        erasures=erasures_of(session, feed.id),
         summary=summary, summary_status=proposal.status if proposal else None, signoffs=signoffs,
         registration=FeedRegistrationRepository(session).current(feed.id), next_action=next_action,
         glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest),

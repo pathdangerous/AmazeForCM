@@ -17,6 +17,16 @@ const row = (over = {}) => ({ at: `${MONTH}-02T10:00:00Z`, kind: "decision", fee
 const view = (rows: unknown[], over = {}) => ({ month: MONTH, count: rows.length, truncated: false, rows, ...over });
 const FEEDS = "GET /api/amaze/feeds";
 
+test("an erase of profiling history is a row: who erased, which versions, and why", async () => {
+  stubFetch({ [FEEDS]: [], [AUDIT]: view([row({ kind: "erasure", decision: "erased", item: "profiles", who: "dev-data-owner",
+    role: null, summary: "Erased profile versions 2, 3", by: "manual", agent: null, note: "Old files nobody uses.", proposal_id: null })]) });
+  renderWithTheme(<AuditView devUser="dev-operator" />);
+  const [erased] = await screen.findAllByTestId("audit-row");
+  expect(erased.textContent).toContain("erased profiles");
+  expect(erased.textContent).toContain("dev-data-owner");
+  expect(erased.textContent).toContain("Old files nobody uses.");
+});
+
 test("every decision shows who, what, who made the item, the code version, and a waiver or a rerun", async () => {
   stubFetch({ [FEEDS]: [], [AUDIT]: view([
     row(), row({ kind: "decision", decision: "approved", who: "dev-data-owner", role: "data_owner", summary: "Credits are real.",

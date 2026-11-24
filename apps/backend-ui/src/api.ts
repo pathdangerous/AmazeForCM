@@ -185,8 +185,8 @@ export const makeReport = (body: { kind: string; period_start: string; role: str
   apiPost<{ result: { outcome: string; report_id: string; version: number; reason?: string; figure?: string | null } }>(
     "/api/amaze/reports", body, devUser);
 
-export type AuditRowT = { at: string; kind: "decision" | "rerun"; feed_id: string | null; feed_code: string | null;
-  who: string | null; role: string | null; decision: "approved" | "rejected" | "started"; item: string; summary: string;
+export type AuditRowT = { at: string; kind: "decision" | "rerun" | "erasure"; feed_id: string | null; feed_code: string | null;
+  who: string | null; role: string | null; decision: "approved" | "rejected" | "started" | "erased"; item: string; summary: string;
   by: "agent" | "manual" | "rule" | "system"; agent: string | null; code_version: number | null; waiver: boolean;
   rerun_of: string | null; note: string | null; proposal_id: string | null; load_id: string | null };
 export type AuditViewT = { month: string; count: number; truncated: boolean; rows: AuditRowT[] };
@@ -234,6 +234,8 @@ export type FeedSignoff = {
   gaps: string[]; reasons: string[]; signed_off_by: string;
 };
 export type SignoffOutcome = "meets" | "meets_with_gaps" | "rejected";
+export type ProfileErasureT = { id: string; at: string; by: string; reason: string; erased_versions: number[];
+  erased_count: number; kept_count: number };
 export type FeedPage = {
   feed: Feed & { source_code: string | null };
   source: { code: string; name: string; provider: string; conditions: Conditions } | null;
@@ -243,7 +245,8 @@ export type FeedPage = {
   profile: FeedProfile | null;
   undeclared_columns: string[];
   missing_columns: string[];
-  profiles: { version: number; outcome: string; at: string }[];
+  profiles: { version: number; outcome: string; at: string; id?: string | null; keep_reason?: string | null }[]; // 7.16: keep_reason
+  erasures?: ProfileErasureT[]; // phase 7.16: the recorded erases of profiling history, oldest first
   summary: { proposal_id: string; summary: string; recommended_outcome: SignoffOutcome; gaps: string[];
              reasons: string[] } | null;
   summary_status: string | null;
@@ -394,6 +397,14 @@ export async function apiPost<T>(path: string, body: unknown, devUser: string): 
   if (!response.ok) throw await failure(path, response);
   return (await response.json()) as T;
 }
+
+// ---- phase 7.16: the recorded erase of a feed's old profiles (amaze_erase_profiles(), the only path)
+export type ProfileErased = { outcome: "profiles_erased"; erasure_id: string; feed_id: string; erased_versions: number[];
+  kept: { id: string; version: number; reason: string }[] };
+export type NothingToErase = { outcome: "nothing_to_erase"; kept: { id: string; version: number; reason: string }[]; detail: string };
+export const eraseProfiles = (feedId: string, beforeVersion: number, reason: string, devUser: string) =>
+  apiPost<{ result: ProfileErased | NothingToErase; feed: FeedPage }>(
+    `/api/amaze/feeds/${feedId}/profiles/erase`, { before_version: beforeVersion, reason }, devUser);
 
 // ---- phase 7.9: pause, resume and delete of a feed
 export const pauseFeed = (feedId: string, reason: string, devUser: string) =>

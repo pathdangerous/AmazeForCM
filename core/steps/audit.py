@@ -3,7 +3,8 @@
 One row per decision of the month (an approvals row: who, role, decision, note) with its item, its feed, who made the item
 (an agent; a person; rules) and, for a decision by `system`, system; the code version of the feed in force at that moment
 (the latest code_versions row at or before the decision); whether it is a waiver. And one row per rerun of a held load: who
-started it (None before 0035 recorded it), why, the load it reruns, the code version its go-live pinned. Filters: feed and
+started it (None before 0035 recorded it), why, the load it reruns, the code version its go-live pinned. And, from phase 7.16,
+one row per erase of profiling history (who, why, the versions erased). Filters: feed and
 person. The CSV is the same rows; a cell that starts like a formula (= + - @) is prefixed with a quote so a spreadsheet
 never runs it. Months are UTC calendar months.
 """
@@ -31,13 +32,13 @@ class AuditRow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     at: datetime
-    kind: Literal["decision", "rerun"]
+    kind: Literal["decision", "rerun", "erasure"]
     feed_id: UUID | None
     feed_code: str | None
     who: str | None  # None: a rerun made before 0035 recorded who
     role: str | None
-    decision: Literal["approved", "rejected", "started"]
-    item: str  # the proposal's kind, or "load" for a rerun
+    decision: Literal["approved", "rejected", "started", "erased"]
+    item: str  # the proposal's kind, "load" for a rerun, "profiles" for an erase (phase 7.16)
     summary: str
     by: Literal["agent", "manual", "rule", "system"]  # who made the item; `system` when system decided
     agent: str | None
@@ -74,6 +75,18 @@ SELECT l.received_at AS at, l.id AS load_id, l.feed_id, f.code AS feed_code, l.r
 """)
 
 
+ERASURES = text("""
+SELECT e.at, e.feed_id, e.feed_code, e."by", e.reason, e.erased_versions,
+       (SELECT c.version FROM code_versions c WHERE c.feed_id = e.feed_id AND c.created_at <= e.at
+         ORDER BY c.version DESC LIMIT 1) AS code_version
+  FROM profile_erasures e
+ WHERE e.at >= :start AND e.at < :end
+   AND (CAST(:feed AS uuid) IS NULL OR e.feed_id = CAST(:feed AS uuid))
+   AND (CAST(:person AS text) IS NULL OR e."by" = CAST(:person AS text))
+ ORDER BY e.at, e.id
+""")
+
+
 def month_bounds(month: str) -> tuple[datetime, datetime]:
     """ValueError for anything but YYYY-MM."""
     found = MONTH.fullmatch(month)
@@ -106,6 +119,11 @@ def audit_rows(session: Session, *, month: str, feed_id: UUID | None = None, per
             at=r.at, kind="rerun", feed_id=r.feed_id, feed_code=r.feed_code, who=r.rerun_by, role=None, decision="started",
             item="load", summary="Rerun of a held load's file", by="manual", agent=None, code_version=r.code_version,
             waiver=False, rerun_of=r.rerun_of_load_id, note=r.rerun_reason, load_id=r.load_id))
+    for r in session.execute(ERASURES, params):  # phase 7.16: an erase of profiling history is a decision too
+        rows.append(AuditRow(
+            at=r.at, kind="erasure", feed_id=r.feed_id, feed_code=r.feed_code, who=r.by, role=None, decision="erased",
+            item="profiles", summary="Erased profile versions " + ", ".join(map(str, r.erased_versions)), by="manual",
+            agent=None, code_version=r.code_version, waiver=False, rerun_of=None, note=r.reason))
     return sorted(rows, key=lambda row: row.at)  # stable: decisions keep their query order within a time
 
 

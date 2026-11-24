@@ -10,6 +10,7 @@ import CodeView from "./CodeView";
 import DriftSection from "./DriftSection";
 import ExceptionsSection from "./ExceptionsSection";
 import FeedLifecycle from "./FeedLifecycle";
+import ProfileHistory from "./ProfileHistory";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
 import RulesSection from "./RulesSection";
@@ -592,19 +593,10 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
         </>
       )}
 
-      {(page.profiles.length > 0 || page.signoffs.length > 0) && (
+      {(page.profiles.length > 0 || page.signoffs.length > 0 || (page.erasures ?? []).length > 0) && (
         <Section name="history" title="History" result={result}>
-          <ul data-testid="history">
-            {page.profiles.map((p) => (
-              <li key={`p${p.version}`}>Profile {p.version}: {p.outcome.replaceAll("_", " ")} <span className="muted">{formatWhen(p.at)}</span></li>
-            ))}
-            {page.signoffs.map((s) => (
-              <li key={`s${s.version}`}>
-                Sign-off {s.version}: {s.outcome.replaceAll("_", " ")} by {name(s.signed_off_by)}
-                {[...s.gaps, ...s.reasons].length > 0 && <> — {[...s.gaps, ...s.reasons].join("; ")}</>}
-              </li>
-            ))}
-          </ul>
+          <ProfileHistory page={page} devUser={devUser} people={people} onChange={onChange}
+                          canErase={!!me && (me.roles.includes("operations") || (feed.owner_id !== null && feed.owner_id === me.id))} />
         </Section>
       )}
     </section>
