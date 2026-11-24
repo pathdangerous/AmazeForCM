@@ -22,6 +22,7 @@ AGENT_PROMPTS: dict[str, str] = {
     "TableExtractorAgent": "table_extractor",  # direct file intake, scanned PDFs (phase 7.8)
     "TransformationAgent": "transformation",  # step 10, safe cleaning steps for the mapped columns (phase 7.8)
     "ExceptionFixAgent": "exception_fix",  # one fix per exception group of a held load (phase 7.14)
+    "ReportSummariserAgent": "report_summariser",  # the narrative of a report; read only (phase 7.15)
 }
 
 PROMPT_VERSIONS: dict[str, str] = {
@@ -36,6 +37,7 @@ PROMPT_VERSIONS: dict[str, str] = {
     "table_extractor": "v1",
     "transformation": "v2",  # v2 (7.12): profile_actions; v1 stays on disk
     "exception_fix": "v1",  # phase 7.14
+    "report_summariser": "v1",  # phase 7.15
 }
 
 PROMPT_FILE_HASHES: dict[str, str] = {
@@ -58,4 +60,5 @@ PROMPT_FILE_HASHES: dict[str, str] = {
     "table_extractor.v1.yaml": "5594c4ae2926d8a97afbf4c9688b159fe3ac2ec8fadbd45394770ec0927a8d39",
     "transformation.v1.yaml": "237793a0e219afe0b914c5e509477392ca44ffecb6b6c1028e9557b760d84c1e",
     "exception_fix.v1.yaml": "a1d963e6de239ab662f185cdf702f27d10603270b52d4103bd09475db3bcdbec",
+    "report_summariser.v1.yaml": "06b54209fb4d43a9729f5c49b049055199362c25af1f5b8ff7c315a32dc2c99e",
 }

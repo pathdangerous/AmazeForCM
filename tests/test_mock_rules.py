@@ -29,7 +29,8 @@ def test_rules_are_named_by_prompt_id():
     assert set(RULES) == {"intent", "source_discovery", "discovery_assistant", "profiler", "glossary_builder",
                           "mapping", "rule_recommender", "review_summariser",
                           "transformation",  # phase 7.8, task 4.3 (old: without "transformation")
-                          "exception_fix"}  # phase 7.14, T2
+                          "exception_fix",  # phase 7.14, T2
+                          "report_summariser"}  # phase 7.15, T2
 
 
 def test_the_rule_recommender_rule_makes_one_rule_per_offer_and_leaves_the_checks_to_code():

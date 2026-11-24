@@ -7,6 +7,7 @@ import GlossaryView from "./views/GlossaryView";
 import NotificationsView, { useInbox } from "./views/NotificationsView";
 import OnboardingsView from "./views/OnboardingsView";
 import OverviewView from "./views/OverviewView";
+import ReportsView from "./views/ReportsView";
 import RunBanner from "./views/RunBanner";
 import WorkspaceView from "./views/WorkspaceView";
 import StatusView from "./views/StatusView";
@@ -23,6 +24,7 @@ const VIEWS = {
   glossary: "Glossary",
   status: "Status",
   notifications: "Notifications",
+  reports: "Reports",
 } as const;
 type View = keyof typeof VIEWS | "onboard" | "onboarding";
 
@@ -30,6 +32,7 @@ function viewFromHash(): View {
   const name = window.location.hash.replace(/^#\/?/, "");
   if (name.startsWith("feed/")) return "feeds"; // one feed's page belongs to the registry tab
   if (name.startsWith("onboarding/")) return "onboarding";
+  if (name.startsWith("reports/")) return "reports"; // one report (phase 7.15)
   if (name === "onboard" || name === "upload") return "onboard";
   return name in VIEWS ? (name as View) : "overview";
 }
@@ -42,8 +45,13 @@ function onboardingFromHash(): string | null {
 const NAV_OF: Record<View, keyof typeof VIEWS> = {
   overview: "overview",
   onboardings: "onboardings", onboard: "onboardings", onboarding: "onboardings", feeds: "feeds",
-  glossary: "glossary", status: "status", notifications: "notifications",
+  glossary: "glossary", status: "status", notifications: "notifications", reports: "reports",
 };
+
+function reportFromHash(): string | null {
+  const match = window.location.hash.match(/^#\/reports\/([0-9a-f-]{36})$/);
+  return match ? match[1] : null;
+}
 
 const NAV_GROUPS: { label: string; items: (keyof typeof VIEWS)[] }[] = [
   { label: "Overview", items: ["overview"] },
@@ -51,7 +59,7 @@ const NAV_GROUPS: { label: string; items: (keyof typeof VIEWS)[] }[] = [
   { label: "Govern", items: ["glossary"] },
   { label: "Operate", items: ["status", "notifications"] },
   { label: "Masters", items: [] },
-  { label: "Insights", items: [] },
+  { label: "Insights", items: ["reports"] },
 ];
 
 function feedFromHash(): string | null {
@@ -63,6 +71,7 @@ function App() {
   const [view, setView] = useState<View>(viewFromHash);
   const [feedId, setFeedId] = useState<string | null>(feedFromHash);
   const [onboardingId, setOnboardingId] = useState<string | null>(onboardingFromHash);
+  const [reportId, setReportId] = useState<string | null>(reportFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [fourEyes, setFourEyes] = useState(true);
   const [selected, setSelected] = useState<string>("");
@@ -82,6 +91,7 @@ function App() {
       setView(viewFromHash());
       setFeedId(feedFromHash());
       setOnboardingId(onboardingFromHash());
+      setReportId(reportFromHash());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -180,6 +190,7 @@ function App() {
         <RunBanner devUser={me ? selected : ""} refresh={`${view}/${feedId}/${changed}`} onChange={onChange}
                    canRun={!!me && (me.roles.includes("glossary_owner") || me.roles.includes("backend_team"))} />
         {view === "overview" && <OverviewView devUser={me ? selected : ""} />}
+        {view === "reports" && <ReportsView devUser={me ? selected : ""} roles={me?.roles ?? []} reportId={reportId} />}
         {view === "status" && <StatusView devUser={me ? selected : ""} people={people} />}
         {view === "glossary" && (
           <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")} people={people}

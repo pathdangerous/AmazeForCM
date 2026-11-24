@@ -13,7 +13,7 @@ import pytest
 from core.steps.patterns import find_patterns, referred_groups
 from tests.configured import VOLUME_RULE, loadable_feed
 from tests.reporting import loaded_on
-from tests.test_exception_rerun import STEWARD, group_of, template  # noqa: F401 (template is a fixture)
+from tests.test_exception_rerun import STEWARD, group_of
 from tests.test_exceptions_view import deliver, world  # noqa: F401 (world is a fixture)
 
 AS_OF = datetime(2026, 11, 30, 12, tzinfo=UTC)

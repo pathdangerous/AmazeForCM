@@ -152,6 +152,36 @@ export const getFeedExceptions = (feedId: string, devUser: string) =>
   apiGet<LoadExceptionCounts[]>(`/api/amaze/feeds/${feedId}/exceptions`, devUser);
 export const getLoadExceptions = (loadId: string, devUser: string, offset = 0) =>
   apiGet<LoadExceptions>(`/api/amaze/loads/${loadId}/exceptions?offset=${offset}`, devUser);
+// ---- phase 7.15: reports (numbers counted by code; the narrative is separate) and the audit view
+export type ReportRowT = { id: string; created_at: string; kind: "daily" | "monthly"; subject_id: string;
+  subject_role: "data_owner" | "data_steward"; period_start: string; period_end: string; version: number;
+  narrative_status: "written" | "refused" | "none"; generated_by: string };
+export type PatternEvidence = { load_id: string; received_on: string; provider_date: string | null; flagged_rows: number };
+export type ReportPattern = { feed_id: string; feed_code: string; rule_key: string; dimension: "weekday" | "day_of_month" | "provider_date";
+  value: string; failing_loads: number; loads_in_window: number; evidence: PatternEvidence[] };
+export type ReportFeed = { feed_id: string; feed_code: string; loads: number; released: number; held: number; failed: number;
+  quarantined: number; rows: number; flagged_rows: number; waived_rows: number; average_trust_score: string | null; open_now: number;
+  waiting_for_owner: number; resolved_by_agent: number; resolved_by_hand: number; waivers: number; referred_groups: number;
+  reruns_released: number; reruns_still_held: number; drift_events: number; patterns: number };
+export type ReportNumbers = {
+  subject_id: string; subject_role: string; period: { kind: string; start: string; end: string };
+  totals: { feeds: number; loads: number; released: number; held: number; failed: number; quarantined: number; rows: number;
+    flagged_rows: number; waived_rows: number; average_trust_score: string | null };
+  feeds: ReportFeed[];
+  exceptions: { open_now: number; waiting_for_owner: number; resolved_by_agent: number; resolved_by_hand: number };
+  waivers: number; reruns: { released: number; still_held: number }; drift_events: number; patterns: ReportPattern[];
+  referred_groups: { feed_id: string; feed_code: string; rule_key: string; pattern: string; load_id: string; reason: string;
+    decided_by: string; referred_at: string }[];
+  decisions: { approved: number; rejected: number; by_kind: Record<string, number> } | null;
+};
+export type ReportT = ReportRowT & { numbers: ReportNumbers; numbers_sha256: string; narrative: string | null;
+  narrative_note: string | null; narrative_log_id: string | null };
+export const getReports = (devUser: string) => apiGet<ReportRowT[]>("/api/amaze/reports", devUser);
+export const getReport = (id: string, devUser: string) => apiGet<ReportT>(`/api/amaze/reports/${id}`, devUser);
+export const makeReport = (body: { kind: string; period_start: string; role: string; subject_id?: string }, devUser: string) =>
+  apiPost<{ result: { outcome: string; report_id: string; version: number; reason?: string; figure?: string | null } }>(
+    "/api/amaze/reports", body, devUser);
+
 export type RerunResult = { outcome: string; load_id: string; reason?: string; detail?: string | null; status?: string;
   trust_score?: string; previous_score?: string | null; waived_rows?: number; open_groups?: number };
 export const decideExceptionGroups = (loadId: string, body: { group_keys: string[]; decision: "approved" | "rejected";

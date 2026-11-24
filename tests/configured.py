@@ -246,7 +246,10 @@ def go_live(session, feed_id: UUID, *, owner: str = "dev-data-owner", hypercare_
         kind="review_summary", autonomy="A1", required_approver_roles=["data_owner"], feed_id=feed_id,
         payload={"mapping_ids": [str(i) for i in mappings], "rule_ids": [str(i) for i in rules],
                  "transformation_ids": [str(i) for i in transformations], "test_load_id": str(test_load.id), "summary": "Synthetic.", "highlights": [], "risks": []})
-    repo.record_decision(proposal.id, user=dev_user_for("data_owner"), decision="approved")
+    from ports.identity.dev import DevIdentity
+
+    decider = dev_user_for("data_owner") if owner == "dev-data-owner" else DevIdentity().get_user(owner)  # 7.15
+    repo.record_decision(proposal.id, user=decider, decision="approved")
     from core.steps.codegen import store_code_version  # T3: every go-live pins the code generated from its configuration
 
     code = store_code_version(session, feed_id=feed_id, approved_by=owner, test_load_id=test_load.id)

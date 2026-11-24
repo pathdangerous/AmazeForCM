@@ -41,8 +41,7 @@ from tests.test_exceptions_view import deliver, world  # noqa: F401 (world is a 
 STEWARD, OWNER = dev_user_for("data_steward"), dev_user_for("data_owner")
 
 
-@pytest.fixture(autouse=True)
-def template(world):
+def volume_template(world):
     """Step 12 compares a delivery with the feed's latest profile: the one the volume file matches."""
     from core.domain.profiling import FileColumn
     from tests.onboarded import profiled
@@ -50,6 +49,11 @@ def template(world):
     profiled(world.session, world.feed, columns=[
         FileColumn(name=n, type=t, null_count=0, null_rate=0.0, distinct_count=1)
         for n, t in (("instr_id", "VARCHAR"), ("trade_date", "DATE"), ("traded_qty", "BIGINT"))])
+
+
+@pytest.fixture(autouse=True)
+def template(world):
+    volume_template(world)
 
 
 def group_of(world, load_id, rule):

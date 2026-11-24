@@ -13,57 +13,18 @@ import calendar
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
-from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.domain.pattern import Dimension, Evidence, ReferredGroup, RulePattern
 from core.repositories.configuration import MappingRepository
 from core.repositories.exception_resolutions import ExceptionResolutionRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 
-Dimension = Literal["weekday", "day_of_month", "provider_date"]
-DIMENSIONS: tuple[Dimension, ...] = ("weekday", "day_of_month", "provider_date")
 MIN_LOADS, WINDOW_DAYS = 3, 90  # the defaults of PATTERN_MIN_LOADS and PATTERN_WINDOW_DAYS
-
-
-class Evidence(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    load_id: UUID
-    received_on: date
-    provider_date: date | None
-    flagged_rows: int
-
-
-class RulePattern(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    feed_id: UUID
-    feed_code: str
-    rule_key: str
-    dimension: Dimension
-    value: str
-    failing_loads: int
-    loads_in_window: int  # the feed's loads (reruns left out) that had this value, failing or not
-    evidence: list[Evidence]
-
-
-class ReferredGroup(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    feed_id: UUID
-    feed_code: str
-    rule_key: str
-    pattern: str
-    load_id: UUID
-    reason: str
-    decided_by: str
-    referred_at: datetime
-
 
 LOADS = text("""
 SELECT id, received_at FROM loads

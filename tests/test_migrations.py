@@ -12,7 +12,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0034"  # old: "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0035"  # old: "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -259,6 +259,10 @@ REVIEWED_NULLABLE_CHECKS = {
     # 0034 (phase 7.14). Their NULL cases are in tests/test_db_exception_guards.py.
     "proposals.ck_proposals_exception_fix":
         "kind is NOT NULL; feed_id IS NOT NULL spelt out; each JSON test wrapped in COALESCE(..., false)",
+    # 0035 (phase 7.15). Their NULL cases are in tests/test_db_report_guards.py.
+    "reports.ck_reports_narrative_fits_status":
+        "narrative_status is NOT NULL; IS NOT NULL spelt out on every branch: never NULL",
+    "loads.ck_loads_rerun_by_names_a_person": "rerun_by IS NULL OR ...: never NULL",
     "loads.ck_loads_rerun_has_reason":
         "IS NULL on both sides of the first branch; COALESCE(length(btrim(rerun_reason)) > 0, false): never NULL",
 }
@@ -1375,3 +1379,44 @@ def test_0034_downgrade_refuses_while_an_exception_fix_exists(scratch_schema):
                                     '"group_key": "g", "action": "refer", "reason": "Ask the provider."}'})
     with pytest.raises(DBAPIError, match="migration 0034"):
         command.downgrade(config, "0033")
+
+
+def _0035_state(engine):
+    with engine.connect() as connection:
+        guard = connection.execute(text(
+            "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = 'amaze_guard_load_rerun' "
+            "AND p.pronamespace = current_schema()::regnamespace")).scalar_one()
+        return {"tables": set(inspect(connection).get_table_names()),
+                "load_columns": sorted(c["name"] for c in inspect(connection).get_columns("loads")), "guard": guard,
+                "report_guard": connection.execute(text(
+                    "SELECT count(*) FROM pg_proc p WHERE p.proname = 'amaze_guard_report' "
+                    "AND p.pronamespace = current_schema()::regnamespace")).scalar_one()}
+
+
+def test_0035_adds_reports_and_downgrade_restores_0034(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0034")
+    before = _0035_state(engine)
+    command.upgrade(config, "0035")
+    up = _0035_state(engine)
+    assert "reports" in up["tables"] and "reports" not in before["tables"]
+    assert "rerun_by" in up["load_columns"] and "rerun_by" not in before["load_columns"]
+    assert "rerun_by" in up["guard"] and "rerun_by" not in before["guard"] and up["report_guard"] == 1
+    command.downgrade(config, "0034")
+    assert _0035_state(engine) == before
+    command.upgrade(config, "0035")
+    assert _0035_state(engine) == up
+
+
+def test_0035_downgrade_refuses_while_a_report_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0035")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO reports (kind, subject_id, subject_role, period_start, period_end, version, numbers, "
+            "numbers_sha256, narrative_status, generated_by) VALUES ('daily', 'dev-data-owner', 'data_owner', "
+            "'2026-11-02', '2026-11-03', 1, '{}', 'x', 'none', 'job')"))
+    with pytest.raises(DBAPIError, match="migration 0035"):
+        command.downgrade(config, "0034")

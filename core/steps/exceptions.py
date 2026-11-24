@@ -734,5 +734,5 @@ def start_rerun(session: Session, *, load_id: UUID, reason: str, user: User) -> 
                                 "approves a new go-live (step 11) before the file is loaded again.")
     new = LoadRepository(session).create(feed_id=held.feed_id, file_ref=held.file_ref, purpose="scheduled",
                                          go_live_id=live.id, fetch_id=held.fetch_id, rerun_of_load_id=held.id,
-                                         rerun_reason=reason.strip())
+                                         rerun_reason=reason.strip(), rerun_by=user.id)
     return RerunStarted(load_id=new.id, rerun_of=held.id)

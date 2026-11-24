@@ -48,6 +48,7 @@ class LoadDraft(BaseModel):
     received_at: datetime | None = None  # defaults to the moment of insert
     rerun_of_load_id: UUID | None = None  # phase 7.14: a rerun of this held load's own file, with its reason
     rerun_reason: NonBlank | None = None
+    rerun_by: NonBlank | None = None  # phase 7.15: who started the rerun
 
     @model_validator(mode="after")
     def _purpose_fits_the_go_live(self) -> LoadDraft:
@@ -79,6 +80,7 @@ class Load(BaseModel):
     arrival_profile_id: UUID | None  # additive_parked: the feed_profiles row of the load's own file
     rerun_of_load_id: UUID | None = None  # phase 7.14: a rerun of this held load's own file (migration 0034)
     rerun_reason: str | None = None
+    rerun_by: str | None = None  # 0035: None for a rerun made before it was recorded
 
 
 class LoadCertificationDraft(BaseModel):

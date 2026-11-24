@@ -710,6 +710,7 @@ class LoadRow(Base):
     # 0034 (phase 7.14): a rerun of a held load's own file, with its reason; set once, at insert (trg_loads_c_rerun)
     rerun_of_load_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("loads.id"))
     rerun_reason: Mapped[str | None] = mapped_column(Text)
+    rerun_by: Mapped[str | None] = mapped_column(Text)  # 0035 (phase 7.15): who started it; None for a rerun of 0034
 
 
 class LoadCertificationRow(Base):
@@ -739,6 +740,50 @@ class LoadCertificationRow(Base):
     # 0034 (phase 7.14): rows with no flag and a waived exception (recounted by the database), and per rule
     waived_rows: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     waived_counts: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
+
+
+class ReportRow(Base):
+    """Phase 7.15: one report of one data owner or data steward for one day or month, as a version. Append-only
+    (migration 0035; trigger: the database sets numbers_sha256 from numbers and takes only the next version)."""
+
+    __tablename__ = "reports"
+    __table_args__ = (
+        UniqueConstraint("kind", "subject_id", "subject_role", "period_start", "version"),
+        CheckConstraint("kind IN ('daily', 'monthly')", name="kind"),
+        CheckConstraint("subject_role IN ('data_owner', 'data_steward')", name="subject_role"),
+        CheckConstraint("length(btrim(subject_id)) > 0 AND length(btrim(generated_by)) > 0", name="named"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("jsonb_typeof(numbers) = 'object'", name="numbers"),
+        CheckConstraint(
+            "(kind = 'daily' AND period_end = period_start + 1) "
+            "OR (kind = 'monthly' AND period_start = date_trunc('month', period_start)::date "
+            "AND period_end = (period_start + interval '1 month')::date)", name="period_fits_kind"),
+        CheckConstraint("narrative_status IN ('written', 'refused', 'none')", name="narrative_status"),
+        CheckConstraint(
+            "(narrative_status = 'written' AND narrative IS NOT NULL AND length(btrim(narrative)) > 0 "
+            "AND narrative_log_id IS NOT NULL) "
+            "OR (narrative_status = 'refused' AND narrative IS NULL AND narrative_log_id IS NOT NULL "
+            "AND narrative_note IS NOT NULL AND length(btrim(narrative_note)) > 0) "
+            "OR (narrative_status = 'none' AND narrative IS NULL AND narrative_log_id IS NULL)",
+            name="narrative_fits_status"),
+        Index("ix_reports_subject", "subject_id", "kind", "period_start"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    kind: Mapped[str] = mapped_column(Text)
+    subject_id: Mapped[str] = mapped_column(Text)
+    subject_role: Mapped[str] = mapped_column(Text)
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    version: Mapped[int] = mapped_column(Integer)
+    numbers: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    numbers_sha256: Mapped[str] = mapped_column(Text, default="")  # the database overwrites it (amaze_guard_report)
+    narrative: Mapped[str | None] = mapped_column(Text)
+    narrative_status: Mapped[str] = mapped_column(Text, default="none")
+    narrative_note: Mapped[str | None] = mapped_column(Text)
+    narrative_log_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("proposal_log.id"))
+    generated_by: Mapped[str] = mapped_column(Text)
 
 
 class ExceptionResolutionRow(Base):

@@ -453,6 +453,30 @@ def exception_fix(data: dict[str, Any]) -> dict[str, Any]:
     return {"fixes": fixes}
 
 
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def report_summariser(data: dict[str, Any]) -> dict[str, Any]:
+    """Phase 7.15: a few sentences built only from the numbers the input holds (so the figure check always passes):
+    the loads and how they ended, the trust score, what needs attention."""
+    n = data["numbers"]
+    t, e = n["totals"], n["exceptions"]
+    parts = [f"Between {n['period']['start']} and {n['period']['end']}: {_count(t['loads'], 'load')}, "
+             f"{t['released']} released, {t['held']} held, {t['failed']} failed."]
+    if t.get("average_trust_score") is not None:
+        parts.append(f"The average trust score was {t['average_trust_score']}.")
+    if e["open_now"] or e["waiting_for_owner"]:
+        parts.append(f"{_count(e['open_now'], 'exception group')} are open and {e['waiting_for_owner']} wait for the data owner.")
+    if n["patterns"]:
+        parts.append(f"{_count(len(n['patterns']), 'recurring pattern')} need a look.")
+    if n["referred_groups"]:
+        parts.append(f"{_count(len(n['referred_groups']), 'group')} referred to the provider.")
+    if n.get("decisions"):
+        parts.append(f"You approved {n['decisions']['approved']} and rejected {n['decisions']['rejected']}.")
+    return {"narrative": " ".join(parts)}
+
+
 RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "intent": intent,
     "source_discovery": source_discovery,
@@ -464,4 +488,5 @@ RULES: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "review_summariser": review_summariser,
     "transformation": transformation,
     "exception_fix": exception_fix,
+    "report_summariser": report_summariser,
 }

@@ -21,14 +21,14 @@ from core.repositories.standard_records import StandardRecordRepository
 
 def loaded_on(session, feed_id: UUID, go_live_id: UUID, received: datetime, *, flags: dict[str, int] | None = None,
               provider_date: date | None = None, rows: int = 10, file_ref: str | None = None,
-              rerun_of: UUID | None = None, threshold: int = 90) -> Load:
+              rerun_of: UUID | None = None, threshold: int = 90, detail: dict | None = None) -> Load:
     """A certified scheduled load received at `received` (UTC). Each rule in `flags` flags that many rows from row 1."""
     flags = flags or {}
     repo = LoadRepository(session)
-    extra = {"rerun_of_load_id": rerun_of, "rerun_reason": "Again."} if rerun_of else {}
+    extra = {"rerun_of_load_id": rerun_of, "rerun_reason": "Again.", "rerun_by": "dev-data-steward"} if rerun_of else {}
     load = repo.create(feed_id=feed_id, file_ref=file_ref or f"raw/syn/{received:%Y%m%d%H%M%S}/{len(flags)}.csv",
                        purpose="scheduled", go_live_id=go_live_id, received_at=received.astimezone(UTC), **extra)
-    repo.record_arrival(load.id, outcome="on_time_complete", detail={},
+    repo.record_arrival(load.id, outcome="on_time_complete", detail=detail or {},
                         content_sha256=hashlib.sha256(load.id.bytes).hexdigest())
     drafts, flagged = [], 0
     for number in range(1, rows + 1):

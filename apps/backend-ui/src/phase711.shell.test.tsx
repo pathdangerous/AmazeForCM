@@ -42,7 +42,7 @@ test("grouped links target only implemented views; unsupported mockup destinatio
   shell();
   const nav = await screen.findByRole("navigation", { name: "Main" });
   const links = within(nav).getAllByRole("link");
-  const allowed = new Set(["#/overview", "#/onboardings", "#/feeds", "#/glossary", "#/status", "#/notifications", "#/onboard"]);
+  const allowed = new Set(["#/overview", "#/onboardings", "#/feeds", "#/glossary", "#/status", "#/notifications", "#/onboard", "#/reports"]);
   for (const link of links) expect(allowed.has(link.getAttribute("href") ?? ""), link.textContent ?? "").toBe(true);
   for (const unsupported of ["Sources", "Rules library", "Approvals", "Loads", "Exceptions", "Schedules", "Security master", "Reference data", "DQ dashboard", "Lineage", "Usage"]) {
     expect(within(nav).queryByRole("link", { name: unsupported })).toBeNull();

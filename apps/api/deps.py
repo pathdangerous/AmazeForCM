@@ -183,6 +183,13 @@ def get_transformation_agent(provider: Annotated[LLMProvider, Depends(get_llm_pr
     return TransformationAgent(provider=provider, blob_store=blob_store)  # phase 7.8, task 4.3 (step 10)
 
 
+def get_report_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
+                     blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]):
+    from agents.report_summariser import ReportSummariserAgent
+
+    return ReportSummariserAgent(provider=provider, blob_store=blob_store)  # phase 7.15
+
+
 def get_exception_fix_agent(provider: Annotated[LLMProvider, Depends(get_llm_provider_port)],
                             blob_store: Annotated[BlobStore, Depends(get_blob_store_port)]):
     from agents.exception_fix import ExceptionFixAgent
