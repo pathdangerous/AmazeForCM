@@ -149,11 +149,34 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(diff).toContainText("curated.sql");
   await expect(diff).toContainText("best_fcf");
 
+  // 7.14: version 2 was held (negative BEST_SALES). Exceptions: groups of flagged rows by rule and value pattern; the
+  // agent proposes one fix per group; the operator (steward and registered owner) approves the selected ones in bulk;
+  // the held file is rerun under the current configuration, as a new, recorded load (the held one stays held)
+  await page.goto(`${BACKEND}#/feed/${feedId}`);
+  const exceptions = page.getByTestId("section-exceptions");
+  await expect(exceptions).toBeVisible({ timeout: 30_000 });
+  await expect(exceptions.getByTestId("exceptions-summary")).toContainText("The load is held");
+  await exceptions.getByRole("button", { name: "Propose fixes" }).click();
+  await expect(exceptions.getByTestId("exceptions-message")).toContainText("Nothing changes until people decide them", { timeout: 60_000 });
+  await expect(exceptions.getByTestId("exception-fix").first()).toBeVisible();
+  const boxes = exceptions.locator('input[type="checkbox"]');
+  for (let i = 0, n = await boxes.count(); i < n; i++) await boxes.nth(i).check();
+  await exceptions.getByRole("button", { name: "Approve selected" }).click();
+  await expect(exceptions.getByTestId("exceptions-message")).toContainText("Approved for", { timeout: 60_000 });
+  await exceptions.getByLabel("Reason for the rerun").fill("The fixes are approved.");
+  await exceptions.getByRole("button", { name: "Rerun this load" }).click();
+  await expect(exceptions.getByTestId("rerun-result")).toBeVisible({ timeout: 120_000 });
+  await expect(exceptions.getByTestId("rerun-result")).toContainText("Rerun released: trust 97.1 (it was 88.6); 6 rows waived");
+  await page.reload();
+  await expect(page.getByTestId("section-loads").getByTestId("rerun-of").first()).toContainText("Rerun of load", { timeout: 30_000 });
+
   // T5: the overview, Daily and Monthly
   await page.goto(`${BACKEND}#/overview`);
   await page.getByRole("button", { name: "Monthly" }).click();
   await expect(page.getByTestId("overview-drift")).toContainText(FEED_CODE, { timeout: 30_000 });
   await expect(page.getByTestId("overview-actions")).toContainText("applied by agents");
+  await expect(page.getByTestId("overview-exceptions")).toContainText("resolved by agent proposals"); // 7.14
+  await expect(page.getByTestId("overview-exceptions")).toContainText("Reruns:");
   await page.getByRole("button", { name: "Daily" }).click();
   await expect(page.getByTestId("overview-drift")).toContainText(FEED_CODE);
 });

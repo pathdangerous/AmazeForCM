@@ -257,6 +257,24 @@ and **0034** (T2: everything else in 2.4 and 2.7). If you prefer one, T1 compute
   rule draft shows "tested on transformation version N" for each transformed column it was back-tested on, so a reviewer
   sees it; the go-live test load runs the real configuration before anything is live.
 
+## 10. Outcome and deviations (T1 to T4)
+
+- Commits: T0 `ece9269`, `d67935f`, `dfad363`; T1 `f597a8e`; T2 `3d54201`; T3 `df3d75c`; T4 `51ff317`, `a00d891`.
+- Files outside the plan: `core/repositories/exception_resolutions.py`, `core/domain/exception_fix.py`,
+  `core/engine/pattern.py`, `apps/api/routers/exceptions.py` (a router of its own: `amaze.py` is 740 lines),
+  `tests/test_jobs.py` (the pinned digest of step 15's held notice follows its new text), `tests/test_feed_delete.py`
+  (the new table is in DIRECT: that test exists to force it).
+- `ExceptionGroup.state` has more values than the plan named: `fix_pending`, `waiting_for_owner`, `waived`, `referred`,
+  `transformation_approved`. The rerun's arrival detail is a nested `rerun` object (of, reason, sha256_matches), not three
+  top-level keys, so the arrival's own `reason` is not overwritten.
+- The rerun result adds `rerun_not_loaded` (step 12 held or quarantined it, or the engine failed it): an expected case
+  needs a typed outcome (rule 3).
+- Root causes found on the way: a PL/pgSQL variable named like a new column (`waived`) made the certification guard
+  ambiguous (renamed `n_waived`); a column-valued `unnest` in SQLAlchemy needed its table in FROM (plain SQL now).
+- Demo: version 2 scores 88.6 (held); the rerun releases at 97.1 with 6 rows waived (docs/demo.md).
+- Known gap G1 is shown, not fixed: "tested on transformation version N (now version M)" on rule drafts in the chain review.
+- Shortcut: the fix agent sees at most the 20 largest open groups; the rest wait for the next call.
+
 ## 9. Deferred
 
 Owner reports and recurring-failure patterns (7.15); rule-change and remap fixes; exceptions of a failed load; editing a
