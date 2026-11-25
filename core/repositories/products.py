@@ -37,6 +37,16 @@ class ProductRepository:
         self._session.flush()
         return Product.model_validate(row)
 
+    def add_elements(self, product_id: UUID, element_keys: list[str]) -> None:
+        """Phase 7.19: elements the feed's mappings gained since the first release join the product. product_elements is
+        append-only, so this only adds rows; a key the product already holds is skipped, and a key that is not a glossary
+        element raises UnknownGlossaryElement."""
+        held = set(self.elements_of(product_id))
+        new = [k for k in dict.fromkeys(element_keys) if k not in held]
+        GlossaryRepository(self._session).require_keys(new)
+        self._session.add_all(ProductElementRow(product_id=product_id, element_key=key) for key in new)
+        self._session.flush()
+
     def get(self, product_id: UUID) -> Product:
         row = self._session.get(Row, product_id)
         if row is None:

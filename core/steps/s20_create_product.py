@@ -48,6 +48,7 @@ from core.repositories.source_choices import SourceChoiceRepository
 from core.steps.candidates import phrases
 from core.steps.drift import record_rule_rate_drift
 from core.steps.matching import words
+from core.steps.product_columns import gain_elements
 from core.steps.result import StepResult
 from core.steps.s15_certify import HeldConsumersWarned, Released, certify
 from ports.notify.base import Notifier
@@ -140,6 +141,8 @@ def _create_product(session: Session, load: Load, context: FinishContext) -> tup
     product, new = products.for_feed(feed_id), False
     if product is None:
         product, new = _new_product(session, feed_id, waiting[0].id if waiting else None), True
+    else:
+        gain_elements(session, product, context.notifier)  # phase 7.19: a column added since the first release
     held = products.elements_of(product.id)
     results: list[Step20Result] = []
     for requirement in waiting:

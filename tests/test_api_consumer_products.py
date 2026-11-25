@@ -220,7 +220,9 @@ async def test_a_product_without_a_feed_keeps_its_stored_order(world, client, ma
     assert page["columns"] == ["close_price", "instrument_id", "volume"]
 
 
-async def test_an_element_with_no_mapped_column_goes_last_alphabetically(world, client):
+async def test_an_element_no_mapping_names_is_left_out_of_the_page(world, client):
+    """Phase 7.19 (was: goes last alphabetically): an element of a feed's product that the feed's current mappings no
+    longer name stays in product_elements but is not shown."""
     from core.repositories.tables import ProductElementRow
 
     feed = ordered_feed(world)
@@ -229,7 +231,126 @@ async def test_an_element_with_no_mapped_column_goes_last_alphabetically(world, 
     world.session.add(ProductElementRow(product_id=product.id, element_key="close_price"))  # no column maps to it
     world.session.commit()
     page = (await client.get(f"{BASE}/products/syn_ordered", headers=RILEY)).json()
-    assert page["columns"] == ["volume", "instrument_id", "price_date", "close_price"]
+    assert page["columns"] == ["volume", "instrument_id", "price_date"]
+    assert "close_price" in ProductRepository(world.session).elements_of(product.id)
+
+
+# ---------------------------------------------------------------- phase 7.19: a column added after the first release
+
+NEW_COLUMN_ORDER = ["traded_qty", "px_close", "instr_id", "trade_date"]  # the new file: volume, close_price, ...
+
+
+def new_csv(rows: int = 3, *, volume: int = 1000, column: str = "px_close") -> str:
+    return (f"traded_qty,{column},instr_id,trade_date\n"
+            + "".join(f"{volume},12.5,syn-{n:04d},2026-11-02\n" for n in range(1, rows + 1)))
+
+
+def add_column(world, feed, element="close_price", column="px_close"):
+    """Version 2 of the feed's code: the new column mapped, the new file's profile, a go-live pinning it."""
+    from tests.configured import approved_mapping
+    from tests.onboarded import profiled
+
+    approved_mapping(world.session, feed.id, column, element)
+    names = ["traded_qty", column, "instr_id", "trade_date"]
+    profiled(world.session, feed.id, columns=[_column(n) for n in names])
+    feed.live = go_live(world.session, feed.id)
+
+
+def notices(world, recipient="dev-requester", like="%gained column%"):
+    from sqlalchemy import text
+
+    return [r for r in world.session.execute(text(
+        "SELECT subject, body, link FROM notifications WHERE recipient = :r AND subject LIKE :l ORDER BY created_at"),
+        {"r": recipient, "l": like})]
+
+
+async def test_after_version_2_releases_every_view_has_the_new_column_in_the_files_position(world, client):
+    feed = ordered_feed(world)
+    assert deliver(world, ordered_csv(), feed).run.load.status == "released"
+    add_column(world, feed)
+    finished = deliver(world, new_csv(), feed)
+    assert finished.run.load.status == "released"
+    world.session.commit()
+    product = ProductRepository(world.session).get_by_code("syn_ordered")
+    assert ProductRepository(world.session).elements_of(product.id) == [
+        "close_price", "instrument_id", "price_date", "volume"]  # added; nothing deleted
+    page = (await client.get(f"{BASE}/products/syn_ordered", headers=RILEY)).json()
+    assert page["columns"] == ["volume", "close_price", "instrument_id", "price_date"]
+    assert [d["element_key"] for d in page["dictionary"]] == page["columns"]
+    labels = ["Volume", "Close price", "Instrument ID", "Price date"]
+    preview = (await client.get(f"{BASE}/products/syn_ordered/preview", headers=RILEY)).json()
+    assert preview["columns"] == labels
+    assert [preview["rows"][0][0], float(preview["rows"][0][1]), preview["rows"][0][2]] == [1000, 12.5, "syn-0001"]
+    csv_rows = rows_of(await client.get(f"{BASE}/products/syn_ordered/download.csv", headers=RILEY))
+    assert csv_rows[0] == labels and csv_rows[1][2:] == ["syn-0001", "2026-11-02"] and float(csv_rows[1][1]) == 12.5
+    xlsx = await client.get(f"{BASE}/products/syn_ordered/download.xlsx", headers=RILEY)
+    header = [c.value for c in next(load_workbook(io.BytesIO(xlsx.content)).active.iter_rows(min_row=1, max_row=1))]
+    assert header == labels
+
+
+def test_older_loads_show_the_new_column_empty(world):
+    from core.repositories.standard_records import StandardRecordRepository
+
+    feed = ordered_feed(world)
+    first = deliver(world, ordered_csv(), feed)
+    add_column(world, feed)
+    deliver(world, new_csv(), feed)
+    old = list(StandardRecordRepository(world.session).iter_for_load(first.run.load.id, None))
+    assert old and all(r.values.get("close_price") is None for r in old)
+
+
+def test_consumers_are_told_once_per_new_column_and_a_later_release_says_nothing(world):
+    from tests.configured import onboarding_requirement
+
+    feed = ordered_feed(world)
+    onboarding_requirement(world.session, feed.id, title="Daily volume", elements=["volume"])
+    onboarding_requirement(world.session, feed.id, title="Second request by Riley", elements=["volume"])
+    onboarding_requirement(world.session, feed.id, title="Someone else", elements=["volume"], requester="dev-operator")
+    deliver(world, ordered_csv(), feed)
+    assert notices(world) == []  # the first release creates the product: nothing is "gained"
+    add_column(world, feed)
+    deliver(world, new_csv(), feed)
+    [(subject, body, link)] = notices(world)
+    assert subject == "Syn ordered gained column Close price" and "Syn ordered" in body
+    assert link == "#/product/syn_ordered"
+    assert len(notices(world, "dev-operator")) == 1
+    deliver(world, new_csv(4), feed)  # the next release has the same columns
+    assert len(notices(world)) == 1 and len(notices(world, "dev-operator")) == 1
+
+
+def test_a_held_load_adds_nothing_and_tells_nobody(world):
+    from tests.configured import onboarding_requirement
+
+    feed = ordered_feed(world)
+    onboarding_requirement(world.session, feed.id, elements=["volume"])
+    deliver(world, ordered_csv(), feed)
+    add_column(world, feed)
+    held = deliver(world, new_csv(4, volume=200000), feed)  # every row breaks the volume rule: held
+    assert held.run.load.status == "held"
+    product = ProductRepository(world.session).get_by_code("syn_ordered")
+    assert ProductRepository(world.session).elements_of(product.id) == ["instrument_id", "price_date", "volume"]
+    assert notices(world) == []
+
+
+async def test_an_element_no_longer_mapped_stays_on_the_product_and_leaves_every_view(world, client):
+    feed = ordered_feed(world)
+    deliver(world, ordered_csv(), feed)
+    add_column(world, feed)
+    deliver(world, new_csv(), feed)
+    add_column(world, feed, element="open_price")  # the same column now names another element: close_price is unmapped
+    assert deliver(world, new_csv(), feed).run.load.status == "released"
+    world.session.commit()
+    product = ProductRepository(world.session).get_by_code("syn_ordered")
+    assert ProductRepository(world.session).elements_of(product.id) == [
+        "close_price", "instrument_id", "open_price", "price_date", "volume"]  # close_price is not deleted
+    page = (await client.get(f"{BASE}/products/syn_ordered", headers=RILEY)).json()
+    assert page["columns"] == ["volume", "open_price", "instrument_id", "price_date"]
+    assert [d["element_key"] for d in page["dictionary"]] == page["columns"]
+    labels = ["Volume", "Open price", "Instrument ID", "Price date"]
+    assert (await client.get(f"{BASE}/products/syn_ordered/preview", headers=RILEY)).json()["columns"] == labels
+    assert rows_of(await client.get(f"{BASE}/products/syn_ordered/download.csv", headers=RILEY))[0] == labels
+    xlsx = await client.get(f"{BASE}/products/syn_ordered/download.xlsx", headers=RILEY)
+    assert [c.value for c in next(load_workbook(io.BytesIO(xlsx.content)).active.iter_rows(min_row=1, max_row=1))] == labels
 
 
 async def test_a_restricted_product_is_visible_but_refused_without_a_grant(world, client):

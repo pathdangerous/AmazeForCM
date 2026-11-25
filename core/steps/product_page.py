@@ -215,17 +215,21 @@ def _columns(session: Session, product: ProductWithElements) -> list[str]:
     """The product's element keys in the source file's column order: the place of each element's mapped column in the
     feed's latest profile (the earliest, if several columns map to it); elements with no such column go last,
     alphabetically. Read every time, so a product made before this rule and a later profile follow it too. A product
-    with no feed keeps its stored order."""
+    with no feed keeps its stored order. Phase 7.19: a feed's product shows only the elements its feed's current mappings
+    name; one no longer mapped stays in product_elements (it is append-only) but is left out here, and so out of the
+    dictionary, the preview and both downloads, which all read this."""
     if product.feed_id is None:
         return list(product.element_keys)
     profile = FeedProfileRepository(session).latest(product.feed_id)
     place = {c.name: i for i, c in enumerate(profile.columns)} if profile is not None else {}
     first: dict[str, int] = {}
+    mapped: set[str] = set()
     for mapping in MappingRepository(session).current_for_feed(product.feed_id):
+        mapped.add(mapping.element_key)
         if mapping.source_field in place:
             first[mapping.element_key] = min(first.get(mapping.element_key, place[mapping.source_field]),
                                              place[mapping.source_field])
-    return sorted(product.element_keys, key=lambda k: (k not in first, first.get(k, 0), k))
+    return sorted((k for k in product.element_keys if k in mapped), key=lambda k: (k not in first, first.get(k, 0), k))
 
 
 def _labels(session: Session, load_id) -> dict[str, str]:
