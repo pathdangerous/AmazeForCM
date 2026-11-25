@@ -245,6 +245,20 @@ an in-app notice.
 - **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.19.
   Push `phase-7.19`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0038).
 
+## Phase 7.20 — Click a rule, see its rows (green passes, red fails)
+
+Plan: `docs/plans/phase-7.20.md`. T1 `GET /api/amaze/rules/{proposal_or_rule_id}/rows?failing_only=&page=&size=`: a rule proposal
+runs its SQL in the sandbox on the feed's latest file with the draft configuration (no connection held); an approved rule reads
+the newest load's `standard_records` flags (waived is its own state). Typed outcomes `rows_shown`, `rule_not_found`, `no_file`,
+`sql_refused`. T2 shared `RuleRowsPanel` opened from the rule card in the Rules step, the chain review and the feed page:
+affected headers marked, cells green / red / amber as fills with words, "N of M rows fail", a failing-only toggle, paging, Esc.
+T3 docs.
+
+- Rules: read only, no model call, no write, no migration.
+- Out of scope: editing a rule here, a rule's history across loads, downloads.
+- **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.20.
+  Push `phase-7.20`; do not merge.
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
