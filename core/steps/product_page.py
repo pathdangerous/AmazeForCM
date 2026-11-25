@@ -23,6 +23,7 @@ from core.domain.product import ProductWithElements
 from core.entitlement.decide import decide, route_to_access
 from core.repositories.configuration import MappingRepository
 from core.repositories.certifications import LoadCertificationRepository
+from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.grants import ProductGrantRepository
 from core.repositories.loads import LoadRepository
@@ -211,14 +212,20 @@ def _by_code(session: Session, code: str) -> ProductWithElements | None:
 
 
 def _columns(session: Session, product: ProductWithElements) -> list[str]:
-    """The product's element keys in the feed's current mapping order (by source field), then any not mapped."""
-    held = set(product.element_keys)
-    ordered: list[str] = []
-    if product.feed_id is not None:
-        for mapping in MappingRepository(session).current_for_feed(product.feed_id):
-            if mapping.element_key in held and mapping.element_key not in ordered:
-                ordered.append(mapping.element_key)
-    return ordered + [k for k in product.element_keys if k not in ordered]
+    """The product's element keys in the source file's column order: the place of each element's mapped column in the
+    feed's latest profile (the earliest, if several columns map to it); elements with no such column go last,
+    alphabetically. Read every time, so a product made before this rule and a later profile follow it too. A product
+    with no feed keeps its stored order."""
+    if product.feed_id is None:
+        return list(product.element_keys)
+    profile = FeedProfileRepository(session).latest(product.feed_id)
+    place = {c.name: i for i, c in enumerate(profile.columns)} if profile is not None else {}
+    first: dict[str, int] = {}
+    for mapping in MappingRepository(session).current_for_feed(product.feed_id):
+        if mapping.source_field in place:
+            first[mapping.element_key] = min(first.get(mapping.element_key, place[mapping.source_field]),
+                                             place[mapping.source_field])
+    return sorted(product.element_keys, key=lambda k: (k not in first, first.get(k, 0), k))
 
 
 def _labels(session: Session, load_id) -> dict[str, str]:

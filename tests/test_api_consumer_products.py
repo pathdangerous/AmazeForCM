@@ -150,6 +150,88 @@ async def test_the_xlsx_download_has_a_bold_header_and_typed_cells(released, cli
     assert sheet.max_row == 151
 
 
+# ---------------------------------------------------------------- column order (fix-column-order)
+
+ORDERED_HEADER = "traded_qty,instr_id,trade_date\n"  # the file: volume, instrument_id, price_date (alphabetically not)
+FILE_ORDER = ["Volume", "Instrument ID", "Price date"]
+
+
+def _column(name: str):
+    from core.domain.profiling import FileColumn
+
+    return FileColumn(name=name, type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=1)
+
+
+def ordered_feed(world, code="syn_ordered"):
+    """A feed like loadable_feed, but whose profile (the template) lists the file's own column order."""
+    from core.repositories.feeds import FeedRepository
+    from tests.configured import VOLUME_RULE, approved_mapping, approved_rule
+    from tests.onboarded import registered_feed
+
+    feed = FeedRepository(world.session).create_candidate(code=code, name="Syn ordered", source_code=code,
+                                                          connector="local_file", source_ref=f"files/{code}.csv")
+    registered_feed(world.session, feed.id, columns=[_column(n) for n in ("traded_qty", "instr_id", "trade_date")])
+    for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"), ("traded_qty", "volume")):
+        approved_mapping(world.session, feed.id, field, key)
+    approved_rule(world.session, feed.id, VOLUME_RULE, sql="SELECT _row FROM curated WHERE volume > 100000",
+                  description="Volume is at most 100000.")
+    return SimpleNamespace(id=feed.id, live=go_live(world.session, feed.id), code=code)
+
+
+def ordered_csv(rows: int = 5) -> str:
+    return ORDERED_HEADER + "".join(f"1000,syn-{n:04d},2026-11-02\n" for n in range(1, rows + 1))
+
+
+async def test_every_view_follows_the_files_column_order(world, client):
+    feed = ordered_feed(world)
+    assert deliver(world, ordered_csv(), feed).run.load.status == "released"
+    page = (await client.get(f"{BASE}/products/syn_ordered", headers=RILEY)).json()
+    assert page["columns"] == ["volume", "instrument_id", "price_date"]
+    assert [d["element_key"] for d in page["dictionary"]] == page["columns"]
+    preview = (await client.get(f"{BASE}/products/syn_ordered/preview", headers=RILEY)).json()
+    assert preview["columns"] == FILE_ORDER and preview["rows"][0] == [1000, "syn-0001", "2026-11-02"]
+    csv_rows = rows_of(await client.get(f"{BASE}/products/syn_ordered/download.csv", headers=RILEY))
+    assert csv_rows[0] == FILE_ORDER and csv_rows[1] == ["1000", "syn-0001", "2026-11-02"]
+    xlsx = await client.get(f"{BASE}/products/syn_ordered/download.xlsx", headers=RILEY)
+    first = [c.value for c in next(load_workbook(io.BytesIO(xlsx.content)).active.iter_rows(min_row=1, max_row=1))]
+    assert first == FILE_ORDER
+
+
+async def test_a_column_added_later_appears_where_the_new_profile_puts_it(world, client):
+    from core.repositories.tables import ProductElementRow
+    from tests.configured import approved_mapping
+    from tests.onboarded import profiled
+
+    feed = ordered_feed(world)
+    assert deliver(world, ordered_csv(), feed).run.load.status == "released"
+    product = ProductRepository(world.session).get_by_code("syn_ordered")
+    world.session.add(ProductElementRow(product_id=product.id, element_key="close_price"))
+    approved_mapping(world.session, feed.id, "px_close", "close_price")
+    profiled(world.session, feed.id, columns=[_column(n) for n in ("traded_qty", "px_close", "instr_id", "trade_date")])
+    world.session.commit()
+    page = (await client.get(f"{BASE}/products/syn_ordered", headers=RILEY)).json()
+    assert page["columns"] == ["volume", "close_price", "instrument_id", "price_date"]
+
+
+async def test_a_product_without_a_feed_keeps_its_stored_order(world, client, make_product):
+    make_product(code="syn_nofeed", element_keys=("volume", "close_price", "instrument_id"))
+    world.session.commit()
+    page = (await client.get(f"{BASE}/products/syn_nofeed", headers=RILEY)).json()
+    assert page["columns"] == ["close_price", "instrument_id", "volume"]
+
+
+async def test_an_element_with_no_mapped_column_goes_last_alphabetically(world, client):
+    from core.repositories.tables import ProductElementRow
+
+    feed = ordered_feed(world)
+    deliver(world, ordered_csv(), feed)
+    product = ProductRepository(world.session).get_by_code("syn_ordered")
+    world.session.add(ProductElementRow(product_id=product.id, element_key="close_price"))  # no column maps to it
+    world.session.commit()
+    page = (await client.get(f"{BASE}/products/syn_ordered", headers=RILEY)).json()
+    assert page["columns"] == ["volume", "instrument_id", "price_date", "close_price"]
+
+
 async def test_a_restricted_product_is_visible_but_refused_without_a_grant(world, client):
     other = make_feed(world, "syn_secret", visibility="restricted")
     deliver(world, volume_csv(5, 0), other)
