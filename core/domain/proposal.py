@@ -26,6 +26,7 @@ ProposalKind = Literal[
     "extracted_table",   # 00 TableExtractorAgent (phase 7.8): no feed yet; the feed is made when it is confirmed
     "transformation",    # 10 TransformationAgent (phase 7.8): safe steps for one mapped column of a feed
     "exception_fix",     # ExceptionFixAgent (phase 7.14) or a person: waive or refer one exception group of a held load
+    "glossary_import",   # a person (phase 7.19): one element row of an uploaded glossary file; no feed, no model
 ]
 PROPOSAL_KINDS: tuple[str, ...] = get_args(ProposalKind)
 

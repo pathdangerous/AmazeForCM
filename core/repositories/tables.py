@@ -144,6 +144,9 @@ class ProposalRow(Base):
         Index("uq_proposals_one_pending_exception_fix", "feed_id", text("(payload ->> 'load_id')"),
               text("(payload ->> 'group_key')"), unique=True,
               postgresql_where=text("status = 'pending' AND kind = 'exception_fix'")),
+        # 0038 (phase 7.19): one pending glossary_import row per element key
+        Index("uq_proposals_one_pending_glossary_import_per_key", text("(payload ->> 'key')"), unique=True,
+              postgresql_where=text("status = 'pending' AND kind = 'glossary_import'")),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -333,6 +336,27 @@ class FeedDeletionRow(Base):
     by: Mapped[str] = mapped_column("by", Text)
     reason: Mapped[str] = mapped_column(Text)
     rows_deleted: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class GlossaryUploadRow(Base):
+    """One upload of a glossary file (migration 0038): who, when, the file, and every row of it with its label. Append-only;
+    the proposals made from its new and update rows name it in their payload."""
+
+    __tablename__ = "glossary_uploads"
+    __table_args__ = (
+        CheckConstraint("length(btrim(uploaded_by)) > 0", name="uploaded_by"),
+        CheckConstraint("length(btrim(file_name)) > 0", name="file_name"),
+        CheckConstraint("file_sha256 ~ '^[0-9a-f]{64}$'", name="file_sha256"),
+        CheckConstraint("jsonb_typeof(counts) = 'object' AND jsonb_typeof(rows) = 'array'", name="counts_and_rows"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    uploaded_by: Mapped[str] = mapped_column(Text)
+    file_name: Mapped[str] = mapped_column(Text)
+    file_sha256: Mapped[str] = mapped_column(Text)
+    counts: Mapped[dict[str, int]] = mapped_column(JSONB)
+    rows: Mapped[list[Any]] = mapped_column(JSONB)
 
 
 class ProfileErasureRow(Base):

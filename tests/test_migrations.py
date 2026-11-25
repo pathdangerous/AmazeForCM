@@ -13,7 +13,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0037"  # old: "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0038"  # old: "0037" (phase 7.19 T1: glossary_import), "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -265,6 +265,10 @@ REVIEWED_NULLABLE_CHECKS = {
     # 0035 (phase 7.15). Their NULL cases are in tests/test_db_report_guards.py.
     "reports.ck_reports_narrative_fits_status":
         "narrative_status is NOT NULL; IS NOT NULL spelt out on every branch: never NULL",
+    # 0038 (phase 7.19). Its NULL cases are in tests/test_db_glossary_import.py.
+    "proposals.ck_proposals_glossary_import_shape":
+        "kind and origin are NOT NULL; feed_id and requirement_id IS NULL spelt out; each JSON test wrapped in "
+        "COALESCE(..., false)",
     "loads.ck_loads_rerun_by_names_a_person": "rerun_by IS NULL OR ...: never NULL",
     "loads.ck_loads_rerun_has_reason":
         "IS NULL on both sides of the first branch; COALESCE(length(btrim(rerun_reason)) > 0, false): never NULL",

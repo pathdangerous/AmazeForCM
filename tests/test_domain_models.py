@@ -18,6 +18,7 @@ def test_proposal_kinds_are_the_eight_agent_outputs_with_an_approver():
         "transformation",  # phase 7.8, task 4.1
         "profile_action",  # phase 7.12, T1
         "exception_fix",  # phase 7.14, T2
+        "glossary_import",  # phase 7.19, T1: a person's row of an uploaded glossary file
     }
 
 
