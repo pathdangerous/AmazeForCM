@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 
 from agents.discovery_assistant import DiscoveryAssistant
+from agents.exception_fix import ExceptionFixAgent
+from agents.report_summariser import ReportSummariserAgent
 from agents.glossary_builder import GlossaryBuilderAgent
 from agents.intent import IntentAgent
 from agents.mapping import MappingAgent
@@ -26,6 +28,8 @@ from agents.rule_recommender import RuleRecommenderAgent
 from agents.source_discovery import SourceDiscoveryAgent
 from agents.table_extractor import TableExtractorAgent
 from agents.transformation import TransformationAgent
+from core.domain.exception_fix import ExceptionFixInput, GroupToFix
+from core.domain.report import ReportSummaryInput
 from core.domain.transformation import ColumnToTransform, TransformationInput
 from core.domain.glossary import GlossaryElementDraft
 from core.domain.go_live import ReviewSummaryInput
@@ -175,6 +179,21 @@ def test_the_call_count_stays_within_the_guard(provider):
 
 def test_table_extractor(provider, blobs):
     ask(provider, blobs, TableExtractorAgent, extraction_input())
+
+
+def test_exception_fix(provider, blobs):
+    group = GroupToFix(
+        group_key="volume_at_most_100000:volume>100000", rule_key="volume_at_most_100000",
+        description="Volume is at most 100000.", sql="SELECT _row FROM curated WHERE volume > 100000",
+        elements=["volume"], pattern="volume above 100000", exceptions=3, source_fields={"volume": "traded_qty"})
+    ask(provider, blobs, ExceptionFixAgent, ExceptionFixInput(
+        feed_id=FEED, feed_code="syn_live", load_id=uuid.uuid4(), groups=[group]))
+
+
+def test_report_summariser(provider, blobs):
+    ask(provider, blobs, ReportSummariserAgent, ReportSummaryInput(
+        subject_role="data_steward", kind="daily",
+        numbers={"loads": 2, "released": 1, "held": 1, "exceptions": 3, "feeds": [{"feed": "syn_live", "rows": 150}]}))
 
 
 def test_transformation(provider, blobs):
