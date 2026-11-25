@@ -20,6 +20,7 @@ schema takes the strict path; none needed the fallback when this was written.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import threading
 import time
@@ -37,19 +38,32 @@ from ports.config import ConfigError, DEFAULT_ENV_FILE, Settings, get_settings, 
 from ports.llm.base import LLMRefused, LLMResult, LLMUnavailable, Message, TextPart
 from ports.storage.base import BlobStore
 
+log = logging.getLogger(__name__)
+
 SMALL_DEPLOYMENT_PROMPTS = frozenset({"intent", "discovery_assistant"})
 TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"
 RATE_LIMIT_RETRIES = 2  # waits on a 429 with an acceptable Retry-After
 MALFORMED_RETRIES = 1  # one more full call for an answer that is not valid JSON or not the schema
 
 
+# Keywords Azure strict structured outputs do not take (a value check, not a shape): dropped from the request. The answer
+# is still validated against the real Pydantic model, so a value outside them is a malformed answer, retried once.
+UNSUPPORTED_KEYWORDS = frozenset({
+    "default", "minLength", "maxLength", "pattern", "format", "minimum", "maximum", "exclusiveMinimum",
+    "exclusiveMaximum", "multipleOf", "minItems", "maxItems", "uniqueItems"})
+_NAME_MAPS = ("properties", "$defs")  # their keys are field or definition names, not keywords
+
+
 def _for_azure_strict(node: Any) -> Any:
     """Azure strict structured outputs accept anyOf, not oneOf, and no discriminator keyword (a Pydantic discriminated
-    union emits both; the first live TransformationAgent call got HTTP 400). Rewritten everywhere, $defs included.
+    union emits both; the first live TransformationAgent call got HTTP 400), and none of UNSUPPORTED_KEYWORDS (the
+    live ProfilerAgent call got HTTP 400). Rewritten everywhere, $defs included.
     Only the request changes: the answer is still validated against the real Pydantic model in _read_answer()."""
     if isinstance(node, dict):
-        return {("anyOf" if key == "oneOf" else key): _for_azure_strict(value)
-                for key, value in node.items() if key != "discriminator"}
+        return {("anyOf" if key == "oneOf" else key):
+                {name: _for_azure_strict(child) for name, child in value.items()} if key in _NAME_MAPS
+                else _for_azure_strict(value)
+                for key, value in node.items() if key != "discriminator" and key not in UNSUPPORTED_KEYWORDS}
     if isinstance(node, list):
         return [_for_azure_strict(value) for value in node]
     return node
@@ -235,7 +249,11 @@ class AzureOpenAIProvider:
                         _TEMPERATURE_REFUSED.add(refused_key)
                     del request["temperature"]
                     continue
-                raise LLMUnavailable("provider_error", str(exc.status_code)) from None
+                detail = str(exc.status_code)
+                if exc.status_code == 400:  # a refused request: Azure says why (the schema, a parameter), so the log can
+                    detail += f": {self._error_message(exc)}"
+                    log.warning("Azure OpenAI refused the %s request: %s", prompt_id, detail)
+                raise LLMUnavailable("provider_error", detail) from None
             except openai.APIError as exc:
                 raise LLMUnavailable("provider_error", type(exc).__name__) from None
 
@@ -279,6 +297,19 @@ class AzureOpenAIProvider:
         key = f"llm-raw/{prompt_id}/{uuid.uuid4()}.json"
         self._blob_store.put(key, completion.model_dump_json().encode("utf-8"))
         return key
+
+    def _error_message(self, exc: openai.APIStatusError) -> str:
+        """Azure's own error text (code, param, message) of a 400, at most 400 characters, with the key and the endpoint
+        taken out. Azure does not echo the prompt in a refused request; the answer body is not read."""
+        body = exc.body if isinstance(exc.body, dict) else {}
+        inner = body.get("error") if isinstance(body.get("error"), dict) else body
+        parts = [str(inner[k]) for k in ("code", "param", "message") if inner.get(k)]
+        text = " | ".join(parts) or "no message"
+        for secret in (self.config["AZURE_OPENAI_API_KEY"].strip(), self.config["AZURE_OPENAI_ENDPOINT"].strip(),
+                       urlsplit(self.config["AZURE_OPENAI_ENDPOINT"].strip()).netloc):
+            if secret:
+                text = text.replace(secret, "[removed]")
+        return text[:400]
 
     @staticmethod
     def _refuses_temperature(exc: openai.APIStatusError) -> bool:

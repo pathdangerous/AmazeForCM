@@ -7,10 +7,10 @@ coverage against each requirement, and the stored profile.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, get_args
+from typing import Annotated, Literal, get_args
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, WithJsonSchema, computed_field, model_validator
 
 from core.domain.common import NonBlank
 
@@ -166,6 +166,27 @@ class GlossaryFit(BaseModel):
     unmatched: list[str] = []
 
 
+def _pairs_to_map(value: object) -> object:
+    """The model answers params as a list of {key, value} pairs (see ActionParams); a dict is taken as it is."""
+    if isinstance(value, list) and all(isinstance(p, dict) and set(p) == {"key", "value"} for p in value):
+        return {p["key"]: p["value"] for p in value}
+    return value
+
+
+# Azure strict structured outputs take no free-form object (additionalProperties must be false), so the request asks for a
+# list of key/value pairs; the stored value, and everything else in the code, stays a dict[str, str] (phase fix-azure-schemas).
+ActionParams = Annotated[
+    dict[str, str],
+    BeforeValidator(_pairs_to_map),
+    WithJsonSchema({
+        "type": "array",
+        "description": "Extra settings for the action as key/value pairs; an empty list when it needs none.",
+        "items": {"type": "object", "additionalProperties": False, "required": ["key", "value"],
+                  "properties": {"key": {"type": "string"}, "value": {"type": "string"}}},
+    }, mode="validation"),
+]
+
+
 class ProposedAction(BaseModel):
     """What the ProfilerAgent proposes to do about something found in the file. A proposal (rule 1): a person selects it
     (approves) or rejects it. `applied_by` says who carries it out once selected."""
@@ -174,7 +195,7 @@ class ProposedAction(BaseModel):
 
     action: ActionKind
     columns: list[str] = Field(default_factory=list)
-    params: dict[str, str] = Field(default_factory=dict)
+    params: ActionParams = Field(default_factory=dict)
     applied_by: AppliedBy
     reason: NonBlank
 
