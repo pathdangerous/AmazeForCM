@@ -676,6 +676,24 @@ def test_a_live_feed_whose_daily_fetch_is_down_gives_a_late_alert(db_session, da
     assert [load.purpose for load in loads_of(db_session, feed)] == ["go_live_test"]  # no load row for a late feed
 
 
+def test_the_daily_run_tells_the_owner_once_of_each_missing_delivery(db_session, daily, live):
+    """Phase 7.21, T3: the feed expects a delivery every day (the helper's schedule); the last one came 4 days ago."""
+    import dataclasses
+    from datetime import UTC, datetime, timedelta
+
+    from tests.configured import certified_load
+
+    feed, _ = live()
+    certified_load(db_session, feed.id, "released", received_at=datetime.now(UTC) - timedelta(days=4))
+    db_session.commit()  # the job ends its read transactions, which would roll the load back
+    job = dataclasses.replace(daily(lambda name: Down()), operations=lambda: ["dev-operations"])
+    job.run()
+    missing = [s for s in subjects(db_session, "dev-data-owner") if s.startswith("Delivery missing")]
+    assert len(missing) >= 3 and set(missing) == {"Delivery missing: syn_exchange_volumes"}
+    job.run()  # the next run finds the same missing deliveries: nobody is told twice
+    assert [s for s in subjects(db_session, "dev-data-owner") if s.startswith("Delivery missing")] == missing
+
+
 def test_a_feed_with_no_go_live_whose_fetch_is_down_gives_no_late_alert(db_session, daily, live):
     live(mapped=False)
     daily(lambda name: Down()).run()

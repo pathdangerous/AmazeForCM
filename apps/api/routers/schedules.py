@@ -18,6 +18,8 @@ from apps.api.transactions import in_transaction, read
 from core.domain.schedule import FeedSchedule, ScheduleInput
 from core.repositories.feeds import FeedRepository
 from core.repositories.schedules import FeedScheduleRepository
+from core.steps.deliveries import (DeliveriesOverview, DeliveriesResult, Window, deliveries_for_feed,
+                                   deliveries_overview)
 from core.steps.schedule import ScheduleResult, set_schedule
 from ports.identity.base import User
 
@@ -38,6 +40,18 @@ def get_schedule(feed_id: UUID, session: DbSession) -> ScheduleView:
         return ScheduleView(current=versions[-1] if versions else None, versions=versions)
 
     return read(session, work)
+
+
+@router.get("/feeds/{feed_id}/deliveries", response_model=DeliveriesResult)
+def get_deliveries(feed_id: UUID, session: DbSession, window: Window = "30"):
+    """Expected against actual deliveries (typed: deliveries_shown, one_time_shown or schedule_not_set). Read only."""
+    return read(session, lambda: deliveries_for_feed(session, feed_id, window=window))
+
+
+@router.get("/deliveries/overview", response_model=DeliveriesOverview)
+def get_overview(session: DbSession):
+    """The recurring feeds by on-time share over 30 days, worst first. Read only."""
+    return read(session, lambda: deliveries_overview(session))
 
 
 @router.post("/feeds/{feed_id}/schedule", response_model=ScheduleResult)

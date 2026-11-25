@@ -48,6 +48,7 @@ from core.steps.s12_arrival import (
     record_arrival,
     record_late_alert,
 )
+from core.steps.deliveries import record_missing_alerts
 from core.steps.s20_create_product import FinishContext, finish_scheduled_load
 from core.steps.s05_glossary import builder_input, claim_run, fail_run, record_run
 from ports.config import Settings
@@ -169,6 +170,10 @@ class DailyFetch:
                     self._late_alert(feed_id)
                 except Exception:
                     log.exception("late alert for feed %s failed", code)
+            try:  # phase 7.21: whatever the fetch said, an expected delivery that has not come is told once
+                self._missing_alerts(feed_id)
+            except Exception:
+                log.exception("missing-delivery alert for feed %s failed", code)
         if catalogue is not None:
             self._close_lists_with_nothing_to_pick(catalogue)
         return results
@@ -346,6 +351,17 @@ class DailyFetch:
                     return
                 record_late_alert(session, feed_id=feed_id, notifier=notifier, operations=self.operations(),
                                   detail="The source did not answer the daily fetch.")
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+
+    def _missing_alerts(self, feed_id: UUID) -> None:
+        """Phase 7.21: a delivery that did not arrive tells the feed's owner, once for each (core/steps/deliveries.py)."""
+        with self.session_factory() as session:
+            notifier = get_notifier(self.settings, session=session) if self.settings else InAppNotifier(session)
+            try:
+                record_missing_alerts(session, feed_id=feed_id, notifier=notifier)
                 session.commit()
             except Exception:
                 session.rollback()
