@@ -125,6 +125,26 @@ refused), the 0016 mapping guard, `amaze_guard_proposal_change`, the edit guard 
 editable kind: a wrong row is rejected and uploaded again), `proposal_audit` (it already LEFT JOINs the log). No guard is loosened
 for anything but the new kind; if one had to be, work stops and is reported.
 
+## 4a. As built (deviations from the plan above, found while building)
+
+- T1: `GlossaryRepository.add_import()` is in T2's commit, not T1's: T1's tests write the element row by SQL, so the guards are
+  tested without the repository, and the repository is tested with the step that uses it.
+- T1: the import branch of `amaze_require_glossary_option()` has its own message ("does not match the row of import proposal")
+  because `tests/test_db_onboarding_guards.py` counts the old message once per function body.
+- T1: five existing tests that pin the old state were updated (the head revision, the list of proposal kinds, the reviewed
+  nullable checks, the ORM's index list through `tables.py`); no assertion was weakened.
+- T4: the audit view's rows are sorted by time. In production a decision and an upload are separate transactions, so the order is
+  true; in a test that runs in one transaction an approval (stamped `now()`) sorts before the upload (`clock_timestamp()`), so the
+  tests of T4 do not assert the order between an upload and a decision.
+- T5: the new logic is in `core/steps/product_columns.py`, called by step 20, not inside step 20: `tests/test_jobs.py` pins step
+  20's `notify` calls to the phase 7.5 set, and a new kind of notice belongs to a new module, not to that pin.
+- T5: `test_an_element_with_no_mapped_column_goes_last_alphabetically` (7.8 fix-column-order) now says the opposite on purpose
+  and is renamed `test_an_element_no_mapping_names_is_left_out_of_the_page`: the phase asks that an element no longer mapped is
+  left out. The elements stay in `product_elements`, which the same test checks.
+- T6: the sample file's new row is `dividend_yield`, not `best_fcf`: `best_fcf` is the column the demo's version 2 brings, and
+  the glossary builder's proposal for it (approved on the Glossary tab) must stay the story's own path.
+- Not run: `e2e/playwright.screens.config.ts` and `e2e/playwright.workspace.config.ts` (as instructed).
+
 ## 5. Checks
 
 - RED/GREEN per task. `pytest -q -n 6`, both UI suites (`npm --prefix apps\backend-ui test`, `npm --prefix apps\consumer-ui test`)

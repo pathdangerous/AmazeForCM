@@ -200,6 +200,16 @@ def test_a_key_with_a_pending_row_from_an_earlier_upload_is_invalid(s, owner):
     assert label == "invalid" and "pending" in detail
 
 
+def test_the_sample_file_has_one_row_of_each_label(s, owner):
+    from pathlib import Path
+
+    data = (Path(__file__).resolve().parents[1] / "fixtures" / "glossary" / "sample_upload.csv").read_bytes()
+    result = upload(s, data, owner, name="sample_upload.csv")
+    assert [r.label for r in result.rows] == ["new", "update", "unchanged", "invalid", "alias_conflict", "duplicate_in_file"]
+    assert result.rows[4].detail == "close_price" and result.rows[1].changes == ["definition"]
+    assert result.proposals == 2
+
+
 # ---------------------------------------------------------------- what is written
 
 

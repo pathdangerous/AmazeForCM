@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { BACKEND, FEED_CODE, REPO, upload, walk, type StepHooks } from "../operator_flow";
+import { BACKEND, CONSUMER, FEED_CODE, REPO, RILEY, signIn, upload, walk, type StepHooks } from "../operator_flow";
 
 // The demo (docs/demo.md), as one story. Phase 7.13: version 1 is onboarded with Run all agents (the profile approval is
 // the one click, then the chain review: every step drafted, "based on" links, Approve all confident on the glossary).
@@ -85,7 +85,7 @@ const hooks: StepHooks = {
   },
 };
 
-test("the demo: version 1 to released, then version 2 with drift, code version 2 and its diff", async ({ page }) => {
+test("the demo: version 1 to released, then version 2 with drift, code version 2 and its diff", async ({ page, browser }) => {
   await upload(page);
   // 7.13: Run all agents, once; the profile approval is then the one click before the chain review
   await page.getByTestId("workspace-run-all").click();
@@ -211,6 +211,53 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await page.reload();
   await expect(page.getByTestId("section-loads").getByTestId("rerun-of").first()).toContainText("Rerun of load", { timeout: 30_000 });
 
+  // 7.19, part B: the rerun released version 2, so BEST_FCF joined the feed's product. Riley, a consumer, finds it in the
+  // data dictionary and as a column of the preview (the file's own place: after the columns that precede it in the file).
+  const riley = await (await browser.newContext()).newPage();
+  await riley.goto(`${CONSUMER}#/catalogue`);
+  await signIn(riley, RILEY);
+  await riley.getByTestId(`catalogue-product-${FEED_CODE}`).click();
+  await expect(riley.getByTestId("product-dictionary")).toContainText(/best[ _]?fcf/i, { timeout: 60_000 });
+  await expect(riley.getByTestId("product-preview")).toContainText(/best[ _]?fcf/i);
+  const header = (await riley.getByTestId("product-preview").getByRole("columnheader").allTextContents()).map((t) => t.toLowerCase());
+  expect(header.findIndex((t) => /best[ _]?fcf/.test(t))).toBeGreaterThan(0);
+
+  // 7.19, part A: the glossary owner uploads a file of elements (fixtures/glossary/sample_upload.csv). Every row is labelled,
+  // a proposal is written for the new and the update rows only (the other four have no checkbox), the owner approves the
+  // two with one click, and the element is in the glossary: the base for the next feed's auto-mapping.
+  await page.goto(`${BACKEND}#/glossary`);
+  await page.getByTestId("glossary-file").setInputFiles(`${REPO}fixtures/glossary/sample_upload.csv`);
+  await page.getByTestId("upload-glossary").click();
+  await expect(page.getByTestId("glossary-upload-row")).toHaveCount(6, { timeout: 30_000 });
+  for (const label of ["new", "update", "unchanged", "invalid", "alias_conflict", "duplicate_in_file"]) {
+    await expect(page.locator(`[data-testid="glossary-upload-row"][data-label="${label}"]`)).toHaveCount(1);
+  }
+  const conflict = page.locator('[data-testid="glossary-upload-row"][data-label="alias_conflict"]');
+  await expect(conflict).toContainText("alias_conflict (close_price)"); // refused: another element owns closing_price
+  await expect(page.locator('[data-testid="glossary-upload-row"][data-label="update"]')).toContainText("changes definition");
+  await expect(page.getByRole("checkbox", { name: /^Select row/ })).toHaveCount(2); // only the new and the update row
+  await page.getByLabel("Filter by label").selectOption("alias_conflict");
+  await expect(page.getByTestId("glossary-upload-row")).toHaveCount(1);
+  await page.getByLabel("Filter by label").selectOption("");
+  await page.getByLabel("Select all pending rows").check();
+  await page.getByTestId("approve-selected").click();
+  await expect(page.getByTestId("glossary-import-result")).toContainText("Approved 2 · Rejected 0 · Refused 0", { timeout: 30_000 });
+  await expect(page.locator('[data-testid="glossary-upload-row"][data-label="new"]')).toContainText("Approved by");
+  await page.getByTestId("glossary-search").fill("dividend_yield");
+  await expect(page.getByTestId("glossary-table")).toContainText("dividend_yield", { timeout: 30_000 });
+  // "Add element" is the same path with one row
+  await page.getByRole("button", { name: "Add element" }).click();
+  const add = page.getByTestId("add-element-form");
+  await add.getByLabel("Key").fill("best_roe");
+  await add.getByLabel("Name").fill("Best ROE");
+  await add.getByLabel("Definition").fill("Consensus return on equity.");
+  await add.getByRole("button", { name: "Propose this element" }).click();
+  await expect(page.getByTestId("add-element-result")).toContainText("waits for the glossary owner", { timeout: 30_000 });
+  await expect(page.getByTestId("glossary-upload-row")).toHaveCount(1, { timeout: 30_000 });
+  await page.getByLabel("Select all pending rows").check();
+  await page.getByTestId("approve-selected").click();
+  await expect(page.getByTestId("glossary-import-result")).toContainText("Approved 1 · Rejected 0 · Refused 0", { timeout: 30_000 });
+
   // T5: the overview, Daily and Monthly
   await page.goto(`${BACKEND}#/overview`);
   await page.getByRole("button", { name: "Monthly" }).click();
@@ -238,6 +285,10 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   const [download] = await Promise.all([page.waitForEvent("download"), audit.getByRole("button", { name: "Download CSV" }).click()]);
   expect(download.suggestedFilename()).toMatch(/^audit-\d{4}-\d{2}\.csv$/);
   await expect(audit.getByTestId("audit-row").filter({ hasText: "erased profiles" })).toHaveCount(1); // 7.16: the erase
+  // 7.19: the two uploads (the sample file, the one-row Add element) and the three decisions on their rows
+  await expect(audit.getByTestId("audit-row").filter({ hasText: "uploaded glossary upload" })).toHaveCount(2);
+  await expect(audit.getByTestId("audit-row").filter({ hasText: "approved glossary import" })).toHaveCount(3);
+  await expect(audit.getByTestId("audit-row").filter({ hasText: "sample_upload.csv: 1 new, 1 update, 1 unchanged" })).toHaveCount(1);
 
   // 7.16: Reports on the history seeded after code version 1 (above): the same rule failed on every Monday, so Reports shows
   // one weekday pattern and a report of yesterday has numbers. "Preview today so far" counts today like a report and stores

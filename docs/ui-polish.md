@@ -65,3 +65,8 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Pipeline panel (phase 7.17) | Every run keeps its full stage logs open, so a feed with many runs makes a long list | Show the latest run open and fold older ones | open |
 | backend-ui, Pipeline panel (phase 7.17) | A run shows "Latest result" per code, but not which stage's log line explains a failure | Open the failed stage and mark its line | open |
 | backend-ui, Go-live (phase 7.17) | The owner (not backend team) sees "Run pipeline" absent and must ask the backend team in person | A "Ask the backend team to run it" notice | open |
+| backend-ui, Glossary upload (phase 7.19) | The upload section sits between Proposals and Elements, so a long list of rows pushes the Elements table far down | Put the upload on its own tab of the Glossary page | open |
+| backend-ui, Glossary upload (phase 7.19) | The labels are plain words (`alias_conflict (close_price)`), with no colour or icon; an owner scanning 200 rows must read each | A small badge per label, with the label still written out | open |
+| backend-ui, Glossary upload (phase 7.19) | A decision after an upload shows its result only until the next click; the refused rows are not marked in the table | Mark the refused rows and keep the reason beside them | open |
+| backend-ui, Glossary upload (phase 7.19) | Add element offers only the domains the glossary already has and no way to see what a data type means | A short hint under each data type | open |
+| consumer-ui, Product (phase 7.19) | "<product> gained column <name>" arrives as a notice only; the product page does not say which column is new | Mark a column "new" for a week on the page | open |

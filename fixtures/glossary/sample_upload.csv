@@ -1,0 +1,7 @@
+key,name,domain,data_type,definition,aliases
+dividend_yield,Dividend yield,pricing,decimal,Annual dividend per share divided by the close price.,div_yield;yield_dividend
+close_price,Close price,pricing,decimal,The official closing price of the instrument for the trading day.,closing_price;close
+open_price,Open price,pricing,decimal,First traded price of the instrument at the start of the trading day.,opening_price;open
+Bad Key,Bad key,pricing,decimal,A key holds no spaces or capitals.,
+my_close,My close,pricing,decimal,A second name for the close price.,closing_price
+dividend_yield,Dividend yield again,pricing,decimal,The same key twice in one file.,

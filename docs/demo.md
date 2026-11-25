@@ -1,6 +1,6 @@
 # Demo: from a file to released data, a second delivery that drifts, its exceptions fixed, and the audit (15 minutes)
 
-Covers phases 7.12 to 7.18 (7.18 adds a read-only **Settings** page and a seam for in-house data agents: see row "17-18"). Phase 7.17 adds the **code pipeline**: before the owner can approve a go-live, the generated code of
+Covers phases 7.12 to 7.19 (7.19 adds a **glossary upload** and **Add element**, and a column added after the first release that joins the product: see rows "18-19" and "19-20"; 7.18 adds a read-only **Settings** page and a seam for in-house data agents: see row "17-18"). Phase 7.17 adds the **code pipeline**: before the owner can approve a go-live, the generated code of
 the configuration goes through commit, SQL parse, sandbox rule check and a test load, and the go-live needs a **passed** run
 (see the rows "7-8" and "9-10", and the section "What the code pipeline does and does not do"). Phase 7.16 adds **demo history** (`python -m core.seed --demo-history`: 21 past days through the
 real pipeline, the same rule failing every Monday, so Reports has numbers and one weekday pattern), **Preview today so far**
@@ -40,6 +40,23 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 | 16-17 | "Old profiles go through one function, and it leaves a record." | Feed page, **History**. | Each profile says why it stays ("kept: its registration", "kept: it is the latest", a sign-off, a glossary run, a load's arrival, a code version, a report). When older profiles nobody points to exist, the panel offers: **Erase profiles older than** (a select), **Why it is erased**, **Erase**, **Confirm erase**. The erased entries stay in the list as "Profile 2: erased by Olive Operator, date: reason", and **Audit** lists the erase with who, why and which versions. In the demo, press **Profile again** twice (profiles 2 and 3), then erase the profiles older than profile 3: profile 2 goes, profile 1 (registration) and profile 3 (latest) stay. |
 
 | 17-18 | "A seam for the in-house data agents: nothing is called yet." | **Operate, Settings**. | A read-only table of every agent: its autonomy, who approves it, and its provider (here `mock`). The line above it says `EXTERNAL_AGENT_FOR is not set`. No key, URL or button is shown. With `EXTERNAL_AGENT_PROVIDER=hexaware` and `EXTERNAL_AGENT_FOR=MappingAgent`, that one row reads `external`; the Hexaware adapter is still a stub, so asking that agent for a proposal answers 503 `external_agent_unavailable` and writes nothing. |
+
+| 18-19 | "The glossary is the base for auto-mapping, so it is easy to fill: a file of elements, and every row is a proposal." | **Glossary** tab: **Download template** (the six columns), then **Upload glossary file** with `fixtures/glossary/sample_upload.csv`. Filter by label. Tick all pending rows, **Approve selected**. Then **Add element**: key `best_roe`, a name, a definition, **Propose this element**, and approve its row. Insights, **Audit**. | Six rows, one of each label: **new** (`dividend_yield`), **update** (`close_price`: the definition differs; it says "used by N mappings" when mappings use it), **unchanged** (`open_price`), **invalid** (a key with a space), **alias_conflict (close_price)** (`closing_price` already belongs to `close_price`: it has no checkbox and cannot be approved) and **duplicate_in_file**. Only the new and the update row got a proposal. After the approval the glossary has `dividend_yield` at version 1 and `close_price` at version 2 (version 1 is kept); nothing was edited in place. **Audit** lists both uploads (who, the file, the counts) and the three decisions. No model was called. |
+| 19-20 | "A column the source added later joins the product." | After version 2 is released (the rerun in minute 10-12), open the consumer app as Riley Requester: **Catalogue**, the security master product. | The data dictionary and the preview have **BEST_FCF**, in the place the file has it. Older releases show it empty. People who asked for this feed are told "<product> gained column <name>" once; an element a mapping no longer names stays on the product (nothing is deleted) but is left out of the page, dictionary, preview and downloads. |
+
+## What the glossary upload does and does not do (7.19)
+
+- Rule 1: each `new` or `update` row is a **proposal** (kind `glossary_import`, made by a person, no model, no feed) that only
+  the glossary owner approves, one approval row per item, by the person who clicks (**Approve selected** / **Reject selected**;
+  a rejection needs a note). Rule 7: an approved row is version 1 of a new key or the next version of the key, never an edit in
+  place; mappings keep naming the element by key and are left as they are.
+- A file is a CSV or an XLSX (first sheet) with the columns `key, name, domain, data_type, definition, aliases` (aliases
+  separated by `;`), at most `UPLOAD_MAX_MB` and 2000 rows. A file with a missing column, too many rows or the wrong type is
+  refused in words and nothing is written. The domain must be one the glossary already has.
+- A row that cannot be approved at decision time (an alias another element took meanwhile, an element that changed since the
+  upload) is refused for that row only; the others of the same request are decided. The database refuses the same things.
+- Not built: deleting an element or an alias, a new domain through a file, a model reading the file.
+- Run `alembic upgrade head` (0038) on dev and on Replit before showing it.
 
 ## What the code pipeline does and does not do (7.17)
 
