@@ -228,6 +228,23 @@ read-only Settings page in backend-ui (each agent, its provider, whether `EXTERN
 - **Done when:** `pytest -q -n 6`, both UI suites and all Playwright stories pass; `docs/demo.md` covers 7.18.
   Push `phase-7.18`; do not merge. No migration expected (plan, assumption 9).
 
+## Phase 7.19 — Glossary upload and Add element; a column added after the first release joins the product
+
+Plan: `docs/plans/phase-7.19.md`. Part A (the glossary is the base for auto-mapping): T1 migration 0038 (proposal kind
+`glossary_import`, no feed, approver `glossary_owner`; new versions of the glossary guards for that kind only; append-only
+`glossary_uploads`), T2 upload of a CSV or XLSX (`key, name, domain, data_type, definition, aliases`), each row labelled `new |
+update | unchanged | invalid(reason) | alias_conflict(element) | duplicate_in_file`, proposals only for new and update rows,
+T3 Glossary page (upload, template, labelled rows with a filter, Approve/Reject selected, "Add element" = a one-row upload),
+T4 the 7.15 audit view and CSV list uploads and decisions. Part B: T5 step 20 adds elements the feed's mappings gained to the
+product (nothing deleted), an element no longer mapped is left out of the page, dictionary, preview and downloads, consumers get
+an in-app notice.
+
+- Rule 1: every row is a proposal a glossary owner approves. Rule 7: an approved row is a new element or a new version, never an
+  edit in place. No model call (nothing is added to `proposal_log`).
+- Out of scope: deleting an element, a new domain through a file, a model reading the file.
+- **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.19.
+  Push `phase-7.19`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0038).
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
