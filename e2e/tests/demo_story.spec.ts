@@ -121,7 +121,26 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   // story's database, committed while the API runs). After the first load, before version 2: waivers approved later apply
   // to every later scheduled load, so the Monday failures must be there first.
   const seeded = execFileSync(PYTHON, ["-m", "e2e.demo_history"], { cwd: REPO, encoding: "utf-8" });
-  expect(seeded).toContain("demo history: 21 days loaded");
+  expect(seeded).toContain("demo history: 20 days loaded"); // 7.21: one weekday the source did not answer
+  expect(seeded).toContain("2 came late, 1 day with no delivery");
+
+  // 7.21: the Deliveries tab of the feed, answered at Create the feed as "Recurring, business days, 07:00, 60 min grace".
+  // The files came at 07:20 (on time), one weekday nothing came (missing), two came at 10:30 (late), and the weekend files
+  // are "unexpected": nothing is due on a weekend.
+  await page.getByTestId("feed-tab-deliveries").click();
+  const deliveries = page.getByTestId("deliveries-tab");
+  await expect(deliveries.getByTestId("dlv-schedule")).toHaveText("Recurring, on business days at 07:00 UTC, 60 min grace",
+                                                                  { timeout: 30_000 });
+  // Today's own first load (made when the story runs) may also be late or unexpected, so the seeded days are found by their words.
+  await expect(deliveries.getByTestId("dlv-missing")).toContainText("1");
+  await expect(deliveries.locator('[data-testid="dlv-cell"][data-status="missing"]')).toHaveCount(1);
+  await expect(deliveries.locator('[data-testid="dlv-cell"][data-status="late"]').filter({ hasText: "Late 150 min" })).toHaveCount(2);
+  await expect(deliveries.locator('[data-testid="dlv-cell"][data-status="missing"]')).toContainText("Missing"); // words, not colour
+  await expect(deliveries.getByTestId("dlv-unexpected")).toBeVisible();
+  await expect(deliveries.getByTestId("dlv-arrival-chart")).toBeVisible();
+  await expect(deliveries.getByTestId("dlv-rows-chart")).toBeVisible();
+  await page.getByTestId("feed-tab-overview").click();
+  await expect(page.getByTestId("deliveries-tab")).toHaveCount(0);
 
   // 7.16: a profile nothing points to. "Profile again" runs step 02 on the latest file as a new version and writes no sign-off
   // (only a file with the feed's current columns is taken); twice makes profile 2 and 3. Profile 1 is the registered one and
@@ -275,6 +294,8 @@ test("the demo: version 1 to released, then version 2 with drift, code version 2
   await expect(page.getByTestId("overview-actions")).toContainText("applied by agents");
   await expect(page.getByTestId("overview-exceptions")).toContainText("resolved by agent proposals"); // 7.14
   await expect(page.getByTestId("overview-exceptions")).toContainText("Reruns:");
+  // 7.21: the recurring feeds by on-time share, worst first (here one feed)
+  await expect(page.getByTestId("overview-deliveries-row").filter({ hasText: FEED_CODE })).toContainText("%", { timeout: 30_000 });
   await page.getByRole("button", { name: "Daily" }).click();
   await expect(page.getByTestId("overview-drift")).toContainText(FEED_CODE);
 

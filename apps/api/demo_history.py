@@ -29,7 +29,7 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.go_lives import GoLiveRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.source_fetches import SourceFetchRepository
-from ports.connectors.base import FetchedFile
+from ports.connectors.base import FetchedFile, SourceUnavailable
 
 Reason = Literal["feed_missing", "not_live", "no_file", "column_missing", "too_few_rows"]
 
@@ -48,6 +48,13 @@ class HistorySpec(BaseModel):
     date_format: str = "%d-%m-%Y"  # as the file writes it (the security master: 31-12-2019)
     days: int = 21
     hour: int = 9  # UTC, when each day's load is received
+    minute: int = 0
+    # Phase 7.21: days (counted back from today) on which the source did not answer, so no load was made (a missing delivery),
+    # and days on which the file came late (at late_hour:late_minute instead of hour:minute). Both through the same pipeline.
+    missing_days_ago: tuple[int, ...] = ()
+    late_days_ago: tuple[int, ...] = ()
+    late_hour: int = 10
+    late_minute: int = 30
 
 
 class HistorySeeded(BaseModel):
@@ -57,6 +64,8 @@ class HistorySeeded(BaseModel):
     held: int  # of the loaded ones: below the trust threshold
     rule_found: bool  # False: the feed has no rule of that key, so nothing flags and there is no pattern
     problems: list[str]  # a day whose fetch or load did not end loaded, with what happened
+    missing: int = 0  # phase 7.21: days the source did not answer (no load: a missing delivery)
+    late: int = 0  # phase 7.21: days the file came late
 
 
 class HistoryRefused(BaseModel):
@@ -84,6 +93,37 @@ class _DayFile:
 
     def __exit__(self, *exc_info: object) -> None:
         pass
+
+
+class _SourceDown:
+    """The connector of a day the source did not answer."""
+
+    name = "demo_history_down"
+
+    def fetch(self, source_ref: str) -> FetchedFile:
+        raise SourceUnavailable(source_ref)
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> _SourceDown:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        pass
+
+
+def demo_spec(today: date | None = None) -> HistorySpec:
+    """The demo's history (docs/demo.md): files come at 07:20 (the demo schedule is business days, 07:00, 60 minutes grace),
+    one weekday from Tuesday to Thursday nothing comes, and two other weekdays the file comes at 10:30. Yesterday is never one
+    of them, so yesterday's report still has its load; a Monday is never the missing one (the failing Mondays are the weekday
+    pattern), nor a Friday (a Saturday file would then be taken for Friday's). Weekend files are "unexpected" deliveries."""
+    today = today or date.today()
+    weekdays = [n for n in range(2, 22) if (today - timedelta(days=n)).weekday() < 5]
+    missing = next(n for n in weekdays[4:] if (today - timedelta(days=n)).weekday() in (1, 2, 3))
+    candidates = [n for n in weekdays if n != missing and (today - timedelta(days=n)).weekday() != 0]  # a late Monday is "held"
+    late = (candidates[1], candidates[7])
+    return HistorySpec(hour=7, minute=20, missing_days_ago=(missing,), late_days_ago=late)
 
 
 def _number(cell: str) -> int | float | None:
@@ -151,22 +191,34 @@ def seed_demo_history(daily: DailyFetch, *, today: date | None = None, spec: His
     if len(rows) <= spec.bad_rows or not any(_number(r[header.index(spec.column)]) is not None for r in rows[spec.bad_rows:]):
         return HistoryRefused(reason="too_few_rows", detail=f"The file needs more than {spec.bad_rows} rows, and a number in "
                                                             f"{spec.column} after them.")
-    loaded = skipped = held = 0
+    loaded = skipped = held = missing = late = 0
     problems: list[str] = []
     for number, day in enumerate((today - timedelta(days=n) for n in range(spec.days, 0, -1)), start=1):
         if day in have:
             skipped += 1
             continue
+        ago = (today - day).days
+        if ago in spec.missing_days_ago:  # the source does not answer: the fetch says so, and no load is made
+            down = _SourceDown()
+            done = replace(daily, connector_factory=lambda name, down=down: down).fetch_and_load(feed_id, today=day)
+            if done["fetch"] == "source_down":
+                missing += 1
+            else:
+                problems.append(f"{day}: fetch {done['fetch']}, load {done['load']}")
+            continue
+        at = time(spec.late_hour, spec.late_minute) if ago in spec.late_days_ago else time(spec.hour, spec.minute)
         file = _DayFile(f"history_{day.isoformat()}.csv", _day_file(header, rows, spec, day, number))
         job = replace(daily, connector_factory=lambda name, file=file: file,
-                      clock=lambda day=day: datetime.combine(day, time(spec.hour), tzinfo=UTC))
+                      clock=lambda day=day, at=at: datetime.combine(day, at, tzinfo=UTC))
         done = job.fetch_and_load(feed_id, today=day)
         if done["load"] in ("released", "held"):
             loaded += 1
+            late += ago in spec.late_days_ago
             held += done["load"] == "held"
         else:
             problems.append(f"{day}: fetch {done['fetch']}, load {done['load']}")
-    return HistorySeeded(loaded=loaded, skipped=skipped, held=held, rule_found=rule_found, problems=problems)
+    return HistorySeeded(loaded=loaded, skipped=skipped, held=held, rule_found=rule_found, problems=problems,
+                         missing=missing, late=late)
 
 
 def run() -> HistorySeeded | HistoryRefused:
@@ -175,4 +227,4 @@ def run() -> HistorySeeded | HistoryRefused:
     from ports.identity import get_identity
 
     settings = Settings()
-    return seed_demo_history(DailyFetch.from_settings(settings, get_identity(settings)))
+    return seed_demo_history(DailyFetch.from_settings(settings, get_identity(settings)), spec=demo_spec())

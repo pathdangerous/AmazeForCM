@@ -23,7 +23,7 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 
 | Min | Say | Do | Show |
 |---|---|---|---|
-| 0-1 | "Agents propose, people decide, rules execute." | Onboard a file: upload version 1, confirm. Press **Run all agents** (once). | The nine steps and the empty **Chain review**. Nothing is loaded yet. |
+| 0-1 | "Agents propose, people decide, rules execute." | Onboard a file: upload version 1. At **Create the feed** answer **Recurring feed or one-time load?** (7.21: there is no default and the button waits): choose **Recurring**, **Business days**, **07:00**, **60** minutes grace, then confirm. Press **Run all agents** (once). | The nine steps and the empty **Chain review**. Nothing is loaded yet. |
 | 1-2.5 | "The profile in a business user's words." | Profile step. | Records that are incomplete, how many columns already match the glossary. **Actions**: each marked "agent applies" or "I'll do it". Select (approve) or reject each; add one of your own ("Add action"). The "I'll do it" ones become a to-do list on the feed. Approve: **the one click**. The profile registers the feed (owner, licence, visibility), so it stays a person's decision before the agents go on. |
 | 2.5-3.5 | "One click ran every agent ahead; you review the chain once." | Wait a few seconds; nothing else is clicked. | **Chain review**: glossary, mapping, transformations and rules are all drafted. Blocked items (a tie, a conflict: the chain did not draft past that column) come first, then low-confidence ones. A mapping says "based on" the glossary draft it used; click it to open that step. Nothing is configuration yet: no mapping or rule exists until it is approved. |
 | 3.5-4.5 | "Approve top to bottom; an edit re-runs only what it touches." | **Approve all confident** on the glossary (one approval per item, by you). Edit one glossary draft: the mapping drafts built on it go stale, are rejected by the system and re-drafted; nothing else runs again. Approve and next through glossary and mapping: the cursor moves, no agent runs again. A draft approved before what it is based on is refused ("approve top to bottom"). | Cleaning steps appear only for columns whose action was selected; a column left out is not asked about. |
@@ -73,6 +73,33 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
   notice). The go-live's own recorded test load (step 11) is unchanged.
 - No model is called anywhere in the pipeline. Only the backend team runs it; the owner approves.
 
+## What the schedule and the Deliveries tab do and do not do (7.21)
+
+- **The question.** "Create the feed" asks **Recurring feed or one-time load?** and a recurring feed also how often (every
+  day, business days, weekly on a weekday, monthly on a day 1 to 28 or the last day), the expected time, the minutes of grace,
+  the time zone and whether the owner is told when a delivery is missing. It is written with the feed, in the same
+  transaction, as version 1. A feed made before 7.21 shows **Schedule not set** with a **Set schedule** button. The feed
+  page's **Schedule** section has **Change schedule**: a new version, never an edit; who and when are kept and the
+  **Audit** view lists each change. Run `alembic upgrade head` (0039) on dev and on Replit first.
+- **What "late" means.** Expected time plus the grace is the deadline; a delivery after it is **late** by the minutes after the
+  deadline, and none by the end of the grace is **missing** (before it, **awaited**). The time compared is when Amaze received
+  the load, not when the source sent it: the daily job runs once at 06:00 UTC, so a feed expected earlier than that shows late by
+  construction. A change of schedule applies from the moment it is made; earlier deliveries are still judged by the schedule
+  in force when they were due.
+- **Statuses.** Each cell of the calendar is one expected delivery: **On time**, **Late N min**, **Missing**, **Held** (the
+  load was held), **Resent, quarantined** (the same file again) or **Awaited**; each is a fill and the words. A file that
+  arrives when nothing is due (a weekend file of a business-days feed, or a second file for one delivery) is listed under
+  **Unexpected deliveries**, never as late or missing. A one-time feed shows its loads and **One-time load**, nothing late or
+  missing.
+- **The history.** The demo history makes files at 07:20 (on time), one Tuesday to Thursday on which the source does not answer
+  (**Missing**), and two weekdays at 10:30 (**Late 150 min**), so the tab shows 2 late and 1 missing; the weekend files of the
+  business-days schedule are the unexpected ones. `python -m core.seed --demo-history` now prints "20 days loaded ... 2 came
+  late, 1 day with no delivery". The story opens the tab right after the seed, and the operations overview ranks the feed.
+- **The alert.** The daily job tells the feed's owner once for each missing delivery of the last 7 days
+  (`delivery_alerts`: one row per feed and due time). No model is called anywhere in this phase.
+- **The marketplace** says **Updated daily**, **Updated on business days**, **Updated weekly**, **Updated monthly** or **One-time
+  load** on the product page, from the feed's schedule.
+
 ## What the demo history and the profile erase do and do not do (7.16)
 
 - **Run order.** Onboard the security master and release its first load (minutes 0-8), then run the seed, **before** you
@@ -82,8 +109,9 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
   refuses in words when the feed, its go-live or its file is missing. Run it again and it changes nothing (a day that has a
   scheduled load is skipped). Run `alembic upgrade head` (0036) on dev and on Replit first.
 - **What it writes.** Only what a delivery writes: one fetch, one load with its arrival, stages, records and certification
-  for each of the 21 days, and the notices a load in hypercare sends (21 of them). The loads' `received_at` is the injected
-  day (09:00 UTC); every other time column is the database's own, so a certification of a past load says it was made today.
+  for each of the 21 days, and the notices a load in hypercare sends (one for each load). The loads' `received_at` is the injected
+  day (09:00 UTC; from 7.21 the command uses 07:20, and one day has no load and two come at 10:30, see 7.21 above); every other
+  time column is the database's own, so a certification of a past load says it was made today.
 - **Why a Monday.** Any 21 consecutive days hold three Mondays, which is the pattern threshold (3). The Monday files carry
   eight negative `BEST_SALES` values (8 of 70 rows: trust 88.6, held); every other day is clean for that rule, and each
   day's `RECORD_DATE` is that day (otherwise the provider date would repeat). The file's own duplicate tickers make

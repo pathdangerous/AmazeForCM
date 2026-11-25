@@ -35,16 +35,24 @@ DAYS = [TODAY - timedelta(days=n) for n in range(21, 0, -1)]
 @pytest.fixture
 def world(db_session, glossary, tmp_path):
     """A registered feed with a go-live, and a file fetched once (no load of today), as after the demo's first load."""
+    return build_world(db_session, tmp_path)
+
+
+def build_world(db_session, tmp_path, schedule=None):
+    """schedule (phase 7.21): the feed's version 1, as the upload screen's question gives it; None is the helper's daily one."""
     from core.domain.profiling import FileColumn
     from core.repositories.feeds import FeedRepository
+    from core.repositories.schedules import FeedScheduleRepository
     from tests.configured import approved_mapping, approved_rule, go_live
     from tests.onboarded import registered_feed
 
     feed = FeedRepository(db_session).create_candidate(code="syn_history", name="History", source_code="syn_history",
                                                        connector="local_file", source_ref="files/syn_history.csv")
-    registered_feed(db_session, feed.id, columns=[  # the template step 12 compares each delivery with
+    registered_feed(db_session, feed.id, scheduled=schedule is None, columns=[  # the template step 12 compares each delivery with
         FileColumn(name=n, type="VARCHAR", null_count=0, null_rate=0.0, distinct_count=1)
         for n in ("instr_id", "trade_date", "traded_qty")])
+    if schedule is not None:
+        FeedScheduleRepository(db_session).add_version(feed_id=feed.id, schedule=schedule, decided_by="dev-backend-team")
     for field, key in (("instr_id", "instrument_id"), ("trade_date", "price_date"), ("traded_qty", "volume")):
         approved_mapping(db_session, feed.id, field, key)
     approved_rule(db_session, feed.id, VOLUME_RULE, sql="SELECT _row FROM curated WHERE volume > 100000",
@@ -75,6 +83,40 @@ def test_the_history_is_21_days_through_the_real_pipeline_with_mondays_held(db_s
     assert {load.arrival_outcome for load in loads} == {"on_time_complete"}  # step 12 ran on every one
     assert [load.status for load in loads] == ["held" if day.weekday() == 0 else "released" for day in DAYS]
     assert all([s.outcome for s in LoadRepository(db_session).stages(load.id)] == ["stage_completed"] * 4 for load in loads)
+
+
+def test_the_demo_history_has_one_missing_day_and_two_late_arrivals_on_the_deliveries_dashboard(db_session, glossary, tmp_path):
+    """Phase 7.21, T5: the demo answers "Recurring, business days, 07:00, 60 min grace"; the files come at 07:20, one weekday
+    nothing comes (the source does not answer), two others the file comes at 10:30. Every row is made by the pipeline."""
+    from datetime import time
+
+    from core.domain.schedule import ScheduleInput
+    from core.steps.deliveries import deliveries_for_feed
+
+    feed_id, daily = build_world(db_session, tmp_path, ScheduleInput(
+        kind="recurring", frequency="business_days", expected_time=time(7, 0), grace_minutes=60))
+    spec = demo_history.demo_spec(TODAY).model_copy(update={
+        "feed_code": "syn_history", "column": "traded_qty", "rule_key": VOLUME_RULE, "bad_value": "200000", "bad_rows": 4,
+        "date_column": "trade_date", "date_format": "%Y-%m-%d"})
+    (missing_ago,), late_ago = spec.missing_days_ago, spec.late_days_ago
+    assert len(late_ago) == 2 and 1 not in (missing_ago, *late_ago)  # yesterday keeps its load
+    assert (TODAY - timedelta(days=missing_ago)).weekday() in (1, 2, 3)  # not a Monday (the weekday pattern) or a Friday
+    result = seed_demo_history(daily, today=TODAY, spec=spec)
+    assert isinstance(result, HistorySeeded) and (result.loaded, result.missing, result.late, result.problems) == (20, 1, 2, [])
+
+    midnight = datetime.combine(TODAY, datetime.min.time(), tzinfo=UTC)  # today's own 07:00 is not yet a row
+    shown = deliveries_for_feed(db_session, feed_id, window="30", now=midnight)
+    by_day = {r.due_at.date(): r for r in shown.rows}
+    assert by_day[TODAY - timedelta(days=missing_ago)].status == "missing"
+    assert [by_day[TODAY - timedelta(days=n)].late_minutes for n in late_ago] == [150] * 2  # 10:30 against 08:00
+    weekdays = [d for d in DAYS if d.weekday() < 5]
+    assert sorted(by_day) == weekdays and shown.figures.late == 2 and shown.figures.missing == 1
+    assert shown.figures.expected == len(weekdays) and shown.figures.on_time == len(weekdays) - 3
+    weekends = [d for d in DAYS if d.weekday() >= 5]
+    # a file on a day nothing is due is "unexpected", never late or missing (a Saturday just before the window's first
+    # delivery belongs to a Friday that is not in the window, so it may not be listed)
+    assert len(shown.unexpected) in (len(weekends) - 1, len(weekends))
+    assert shown.figures.streak >= 1  # yesterday is on time
 
 
 def test_the_same_rule_failing_on_every_monday_makes_one_weekday_pattern(db_session, world):

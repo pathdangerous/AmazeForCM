@@ -73,3 +73,8 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Show rows (phase 7.20) | The rule's column headers (amber marker) and the waived cells (pale amber) are close in hue; only the cell's word and mark tell them apart | Give the header a bottom border instead of a fill, or a different waived hue | open |
 | backend-ui, Show rows (phase 7.20) | The panel pages by 50 rows with Previous and Next only; a reviewer cannot jump to row 400 | A "Go to row" box | open |
 | backend-ui, Show rows (phase 7.20) | A very long text value stretches its column; the drawer scrolls sideways | Cut a value at 60 characters with the whole text in a tooltip | open |
+| backend-ui, Create the feed (phase 7.21) | The time zone is a free-text box; a typo is refused only after Create the feed is pressed | A list of zone names, or a check as you type | open |
+| backend-ui, Deliveries (phase 7.21) | The calendar shows UTC dates and times; a feed expected at 07:00 London time shows 06:00 or 07:00 UTC with the season | Show times in the schedule's own time zone | open |
+| backend-ui, Deliveries (phase 7.21) | The calendar of "Since the feed began loading" is one long grid; a year is 52 rows | Group by month with a heading | open |
+| backend-ui, Deliveries (phase 7.21) | The arrival chart has no x axis dates, only the table below | Label the first and last delivery on the axis | open |
+| consumer-ui, Product (phase 7.21) | "Updated daily" sits beside the release date as one more line of small text | Put it in a chip next to the access chip | open |

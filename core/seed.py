@@ -88,7 +88,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if done.outcome == "history_refused":
             print(done.detail, file=sys.stderr)
             raise SystemExit(1)
-        print(f"demo history: {done.loaded} days loaded, {done.skipped} already there, {done.held} held")
+        print(f"demo history: {done.loaded} days loaded, {done.skipped} already there, {done.held} held"
+              + (f"; {done.late} came late, {done.missing} day with no delivery" if done.late or done.missing else ""))
         if not done.rule_found:
             print("The feed has no rule best_sales_not_negative: nothing is flagged, so there is no pattern.", file=sys.stderr)
         for problem in done.problems:

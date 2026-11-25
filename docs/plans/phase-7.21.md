@@ -42,17 +42,19 @@ per source, changing a schedule through a proposal (it is a person's setting, li
    in force from its `created_at`. The expected deliveries of a window are built per version: each version contributes the due
    instants that fall in `[its start, the next version's start)`. A late or missing check therefore uses the schedule in force
    when the delivery was due, and a schedule changed mid-window shows the old rule before the change and the new one after it.
-6. **Live since.** Expected deliveries start at the earlier of the feed's first go-live and its first scheduled load (the demo
-   history is received before the go-live row is made; a feed expects nothing before it can load). A window is 30 or 90 days
-   back from now, or `all` ("since the feed began loading"), always cut at live-since. No go-live and no scheduled load: no
-   expected deliveries.
+6. **Live since.** The feed became live at the earlier of its first go-live and its first scheduled load (the demo history is
+   received before the go-live row is made). Deliveries are expected from the go-live, or, when a scheduled load shows the
+   feed loaded earlier, from 12 hours before that load (so the delivery it was for is not left out); nothing is expected from
+   before a feed could load. A window is 30 or 90 days back from now, or `all` ("since the feed began loading"), always cut
+   there. No go-live and no scheduled load: no expected deliveries.
 7. **Due instant**: the local calendar date in the schedule's timezone at `expected_time`, converted to UTC. Daily: every date.
    business_days: Monday to Friday. weekly: the weekday. monthly: the day (`last` = the month's last day; days 1 to 28 exist in
    every month).
 8. **Matching** (`core/steps/deliveries.py`, pure code). Each scheduled load goes to the one slot whose span contains its
-   `received_at`; a slot's span runs from the midpoint to the previous due instant (at most 12 hours before this due) to the
-   midpoint to the next (the feed's last slot runs to its due + 1 day, the first slot's start is due - 12 hours). A load outside
-   every span, or a second load in a slot, is `unexpected`. The first load in a slot is the slot's delivery.
+   `received_at`. A slot's span starts 12 hours before its due instant (or at the midpoint to the previous due, if that is
+   later) and ends at the midpoint to the next due, but no later than 24 hours after its grace ends. A load in no span is
+   `unexpected` (`no_delivery_was_due`), and so is a second load in a slot (`second_delivery_for_one_due`); the first load in a
+   slot is the slot's delivery. A load received before the window starts is not looked at.
 9. **Timing**: `on_time` when `received_at <= due + grace`; `late` otherwise, with `late_minutes = received_at - (due + grace)`
    rounded down. A slot with no load whose `due + grace` is in the past is `missing`; one still to come is `upcoming` and is
    not a figure (only "next expected delivery" uses it).
@@ -69,7 +71,8 @@ per source, changing a schedule through a proposal (it is a person's setting, li
 12. **Typed results** (rule 3): `deliveries_shown` (recurring), `one_time_shown` (the feed's loads and the label),
     `schedule_not_set`. Wrong feed is the usual 404 `FeedNotFound`. Not a bare error for an expected case.
 13. **Missing alert.** `delivery_alerts` (append-only, `feed_id`, `due_at`, `schedule_version`, `created_at`, unique
-    `(feed_id, due_at)`): `record_missing_alerts()` finds the missing deliveries in the last 30 days of a feed whose schedule in
+    `(feed_id, due_at)`): `record_missing_alerts()` finds the missing deliveries whose grace ended in the last 7 days (older ones
+    are shown on the dashboard, but a person is not told about last month today) of a feed whose schedule in
     force has `notify_owner`, inserts one row for each not yet alerted (so once per expected delivery, tested by running it twice),
     and tells the feed's owner (and operations) through the Notifier with a `late_alert` result, like `record_late_alert`. The
     daily job calls it for each registered feed after its fetch and load. No alert before live-since or for a one-time feed. It is
@@ -88,20 +91,29 @@ per source, changing a schedule through a proposal (it is a person's setting, li
     byte-identical in both apps (`tests/test_ui_shared_look.py`).
 18. Marketplace product page: "Updated daily / on business days / weekly / monthly" from the feed's schedule in force, or
     "One-time load"; nothing when not set. It reads the schedule through the product's feed; no model, and no entitlement change.
-19. Demo history (`HistorySpec`): new `missing_days`, `late_days` (day numbers from the oldest), `skip_weekends`, `late_hour`,
-    defaults leave today's behaviour so the 7.16 tests stand; the command line's `run()` uses the demo values (one missing day,
-    two late arrivals, weekends skipped, normal hour 07:20). Rows still come only from the pipeline's steps.
-20. One new function (`amaze_delete_feed`, 0039 version), three new triggers on `feed_schedules`, three on `delivery_alerts`,
-    two new functions (`amaze_guard_feed_schedule`, nothing else). No existing guard is loosened. If one would have to be, stop.
+19. Demo history (`HistorySpec`): new `minute`, `missing_days_ago`, `late_days_ago`, `late_hour`, `late_minute`; defaults leave
+    today's behaviour so the 7.16 tests stand; the command line's `run()` uses `demo_spec()` (files at 07:20, one missing day
+    from Tuesday to Thursday, two late arrivals at 10:30, yesterday never one of them). Weekends are not skipped (the 7.16
+    story reads yesterday's load, whatever day it is), so the demo's business-days schedule shows their files as `unexpected`
+    deliveries. Rows still come only from the pipeline's steps (a missing day is a fetch whose source did not answer).
+20. Added or given a new version in 0039: tables `feed_schedules` (14 checks, a unique `(feed_id, version)`) and `delivery_alerts`;
+    function `amaze_guard_feed_schedule()` with `trg_feed_schedules_a_guard`; the existing `amaze_refuse_update_delete()` and
+    `amaze_refuse_truncate()` on both tables (`trg_feed_schedules_append_only`, `trg_feed_schedules_no_truncate`,
+    `trg_delivery_alerts_append_only`, `trg_delivery_alerts_no_truncate`); `amaze_delete_feed()` in a new version. No existing
+    guard is loosened. If one would have to be, stop.
+21. Built as: the question is also required by the API only (`confirm_upload()` accepts `schedule=None`); the Deliveries tab is a
+    second tab on the feed page whose Overview tab stays mounted (hidden); `GET /deliveries/overview` is in the same router.
 
 ## 3. Triggers and functions added or given a new version in 0039
 
-- Table `feed_schedules` + `ck_feed_schedules_*` checks (assumption 3).
-- `amaze_guard_feed_schedule()` + `trg_feed_schedules_a_guard` BEFORE INSERT (version and shape; locks nothing, the step locks the
-  feed row first, a unique `(feed_id, version)` stops a race).
+- Table `feed_schedules` + `ck_feed_schedules_*` checks (assumption 3): version, kind, frequency, weekday, day_of_month,
+  grace_minutes, timezone, decided_by, one_time_has_no_schedule, recurring_has_frequency_and_time, weekly_has_weekday,
+  weekday_only_weekly, monthly_has_day, day_only_monthly.
+- `amaze_guard_feed_schedule()` + `trg_feed_schedules_a_guard` BEFORE INSERT (the version is the previous plus 1; the step locks
+  the feed row first, a unique `(feed_id, version)` stops a race).
 - `trg_feed_schedules_append_only` (existing `amaze_refuse_update_delete()`), `trg_feed_schedules_no_truncate`
   (`amaze_refuse_truncate()`).
-- Table `delivery_alerts`, `trg_delivery_alerts_append_only`, `trg_delivery_alerts_no_truncate`.
+- Table `delivery_alerts` (unique `(feed_id, due_at)`), `trg_delivery_alerts_append_only`, `trg_delivery_alerts_no_truncate`.
 - `amaze_delete_feed()`: new version (from 0037's text; deletes `delivery_alerts` then `feed_schedules`).
 - Downgrade: stops, naming 0039, while a schedule or an alert exists.
 

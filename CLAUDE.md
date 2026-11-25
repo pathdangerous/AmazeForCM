@@ -243,6 +243,15 @@ Order of precedence when they disagree:
   fetched file through `draft_config()`, in `draft_rows()`, which takes no session (read, end the transaction, then run); an
   approved rule or a `rules` id reads the newest load's `standard_records` flags, with no SQL run. The answer is a typed result:
   `rows_shown`, `rule_not_found`, `no_file`, `sql_refused`. Page size is cut to `RULE_ROWS_MAX_SIZE`.
+- From `0039` (phase 7.21, `docs/plans/phase-7.21.md`): a feed's schedule (`feed_schedules`: one-time or recurring; daily, business
+  days, weekly or monthly; expected time, grace, time zone, notify owner) is a person's setting, not a proposal: no model call.
+  It is append-only and versioned (the guard needs the previous version plus 1; a change is a new version, never an edit); the
+  question "Recurring feed or one-time load?" is required by `POST /api/amaze/uploads/{id}/confirm` and written with the feed.
+  `core/steps/deliveries.py` (no model, no clock of its own) matches each expected delivery to its scheduled load, by the schedule
+  version in force when it was due, with typed results `deliveries_shown`, `one_time_shown`, `schedule_not_set`; a missing delivery
+  tells the owner once (`delivery_alerts`, one row per feed and due time) through the daily job. Deliveries are judged on the load's
+  `received_at` (when Amaze took the file in), not on when the source sent it. `amaze_delete_feed()` also deletes the schedules and
+  alerts. Never work around these checks.
 - From `0028` (phase 7.12, T7, `docs/plans/phase-7.12.md`): a proposal is made by an agent (`origin = 'agent'`, a `proposal_log_id`, no `author`) or by a person (`origin = 'manual'`, an `author`, no `proposal_log_id`). Never write a made-up `proposal_log` row for a manual item: no model was called (rule 4 logs model calls). A person adds only glossary, mapping, transformation and rule items (`add_item()` in `core/steps/onboarding.py`, `POST /api/amaze/onboardings/{id}/items`); a go-live note is an edit of the review summary's `notes`. A manual mapping may name any existing glossary element, and a column may be left out (`excluded`: an approved proposal and no mappings row, so it is not loaded). A manual or edited rule is back-tested by `check_manual_rule()` (the agent's own back-test code) before it is written, with no connection held; a failure is `ManualRuleRefused`, 422. Never work around these checks.
 - A glossary builder run is a `glossary_runs` row (one active run per feed), queued in the same transaction as the registration or the steward's request, and run by the worker in `apps/api/jobs.py` with a lease (`GLOSSARY_RUN_LEASE_SECONDS`); an answer that arrives after its lease was taken again is discarded (logged, not used). No agent input holds the whole glossary: each column or term gets at most 10 candidate elements (`core/steps/candidates.py`); a test enforces this.
 - Step 02 reads the file only through `BlobStore.get()` and runs DuckDB with no database connection held, like a model call: read, end the transaction, profile, lock, check again, write.
