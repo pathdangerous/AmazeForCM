@@ -70,3 +70,6 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Glossary upload (phase 7.19) | A decision after an upload shows its result only until the next click; the refused rows are not marked in the table | Mark the refused rows and keep the reason beside them | open |
 | backend-ui, Glossary upload (phase 7.19) | Add element offers only the domains the glossary already has and no way to see what a data type means | A short hint under each data type | open |
 | consumer-ui, Product (phase 7.19) | "<product> gained column <name>" arrives as a notice only; the product page does not say which column is new | Mark a column "new" for a week on the page | open |
+| backend-ui, Show rows (phase 7.20) | The rule's column headers (amber marker) and the waived cells (pale amber) are close in hue; only the cell's word and mark tell them apart | Give the header a bottom border instead of a fill, or a different waived hue | open |
+| backend-ui, Show rows (phase 7.20) | The panel pages by 50 rows with Previous and Next only; a reviewer cannot jump to row 400 | A "Go to row" box | open |
+| backend-ui, Show rows (phase 7.20) | A very long text value stretches its column; the drawer scrolls sideways | Cut a value at 60 characters with the whole text in a tooltip | open |
