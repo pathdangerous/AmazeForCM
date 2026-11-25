@@ -278,6 +278,13 @@ def glossary_run_user(user: Annotated[User, Depends(backend_user)]) -> User:
     return user
 
 
+def glossary_owner_user(user: Annotated[User, Depends(backend_user)]) -> User:
+    """Upload a glossary file and decide its rows (phase 7.19): the glossary owner only; the other backend roles read."""
+    if "glossary_owner" not in user.roles:
+        raise HTTPException(status_code=403, detail="Glossary owner role required")
+    return user
+
+
 def data_steward_user(user: Annotated[User, Depends(backend_user)]) -> User:
     """Propose mappings (step 06): the data steward only."""
     if "data_steward" not in user.roles:

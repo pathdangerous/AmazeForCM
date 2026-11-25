@@ -85,6 +85,14 @@ class MappingRepository:
         )
         return [Mapping.model_validate(r) for r in self._session.scalars(query)]
 
+    def uses_by_element(self) -> dict[str, int]:
+        """How many columns (the latest mapping of each feed column) name each glossary element (phase 7.19: "used by N
+        mappings" on an upload's update row)."""
+        latest = (select(MappingRow.element_key).ext(distinct_on(MappingRow.feed_id, MappingRow.source_field))
+                  .order_by(MappingRow.feed_id, MappingRow.source_field, MappingRow.version.desc()).subquery())
+        return {key: count for key, count in self._session.execute(
+            select(latest.c.element_key, func.count()).group_by(latest.c.element_key))}
+
     def history(self, feed_id: UUID, source_field: str) -> list[Mapping]:
         query = (
             select(MappingRow)

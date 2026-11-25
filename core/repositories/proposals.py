@@ -79,6 +79,18 @@ class ProposalRepository:
         self._session.flush()
         return Proposal.model_validate(row)
 
+    def create_glossary_import(self, *, proposal_id: UUID, payload: dict[str, Any], author: str) -> Proposal:
+        """One row of an uploaded glossary file (migration 0038): a person's proposal with no feed and no logged call
+        (no model was called), decided by the glossary owner alone. The id is given so the upload record, written first,
+        can name it. The database checks the upload exists, the author is its uploader and the row's label fits."""
+        draft = ProposalDraft(kind="glossary_import", payload=payload, autonomy="A1",
+                              required_approver_roles=["glossary_owner"])
+        row = ProposalRow(id=proposal_id, proposal_log_id=None, origin="manual", author=author, status="pending",
+                          **draft.model_dump())
+        self._session.add(row)
+        self._session.flush()
+        return Proposal.model_validate(row)
+
     def create_by_rule(self, *, kind: ProposalKind, payload: dict[str, Any], required_approver_roles: list[str],
                        feed_id: UUID) -> Proposal:
         """A proposal made by code (migration 0031): origin `rule`, no logged call (no model was called) and no author.

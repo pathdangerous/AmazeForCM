@@ -903,3 +903,37 @@ async def test_delete_commits_the_removal_the_record_the_requirement_and_the_not
     assert _status(own_schema, f.id) == [("no_source_found",)]
     assert committed(own_schema, "SELECT recipient FROM notifications WHERE subject = :s",
                      s=f"Feed deleted: {VOLUMES}") == [("dev-requester",)]
+
+
+# ---------------------------------------------------------------- phase 7.19: glossary upload
+
+GLOSSARY_OWNER = {"X-Dev-User": "dev-glossary-owner", "Content-Type": "application/octet-stream"}
+GLOSSARY_FILE = (b"key,name,domain,data_type,definition,aliases\n"
+                 b"best_fcf,Best free cash flow,pricing,decimal,Consensus free cash flow.,fcf_consensus\n")
+
+
+@pytest.mark.anyio
+async def test_a_glossary_upload_commits_the_record_and_the_proposals(own_schema):
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None)) as client:
+        made = await client.post("/api/amaze/glossary/uploads", params={"filename": "g.csv"}, content=GLOSSARY_FILE,
+                                 headers=GLOSSARY_OWNER)
+        assert made.status_code == 200, made.text
+    assert committed(own_schema, "SELECT uploaded_by, file_name, counts FROM glossary_uploads") == [
+        ("dev-glossary-owner", "g.csv", {"new": 1})]
+    assert committed(own_schema, "SELECT status, origin, feed_id FROM proposals WHERE kind = 'glossary_import'") == [
+        ("pending", "manual", None)]
+
+
+@pytest.mark.anyio
+async def test_a_glossary_decision_commits_the_approval_and_the_element(own_schema):
+    async with running_app(engine=own_schema, settings=Settings(_env_file=None)) as client:
+        made = await client.post("/api/amaze/glossary/uploads", params={"filename": "g.csv"}, content=GLOSSARY_FILE,
+                                 headers=GLOSSARY_OWNER)
+        decided = await client.post("/api/amaze/glossary/imports/decision", headers={"X-Dev-User": "dev-glossary-owner"},
+                                    json={"proposal_ids": [made.json()["rows"][0]["proposal_id"]],
+                                          "decision": "approved"})
+        assert decided.status_code == 200, decided.text
+    assert committed(own_schema, "SELECT decided_by, role, decision FROM approvals") == [
+        ("dev-glossary-owner", "glossary_owner", "approved")]
+    assert committed(own_schema, "SELECT key, version, created_by FROM glossary_elements WHERE key = 'best_fcf'") == [
+        ("best_fcf", 1, "dev-glossary-owner")]

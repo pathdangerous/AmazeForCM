@@ -132,6 +132,21 @@ class GlossaryRepository:
                                      definition=last.definition, aliases=[*last.aliases, option.alias], unit=last.unit)
         return self._insert(draft, version=last.version + 1, created_by=created_by, proposal_id=proposal_id)
 
+    def add_import(self, *, proposal_id: UUID, created_by: str) -> GlossaryElement:
+        """Write the element of an approved glossary_import proposal (phase 7.19): version 1 of a new key, or the key's
+        next version (rule 7: never an edit in place). The caller holds lock(), has checked the key and phrases_taken()
+        and records the approval first; the database checks the row against the proposal again."""
+        if not created_by.strip() or created_by == SEED:
+            raise ValueError("created_by must name the person, and cannot be 'seed'")
+        proposal = ProposalRepository(self._session).require_approved(proposal_id, kind="glossary_import")
+        draft = GlossaryElementDraft(**proposal.payload["element"])
+        if proposal.payload["label"] == "new":
+            if self.exists(draft.key):
+                raise PhraseTaken(f"The key {draft.key!r} is already a glossary element")
+            return self._insert(draft, version=1, created_by=created_by, proposal_id=proposal_id)
+        return self._insert(draft, version=self.get_current(draft.key).version + 1, created_by=created_by,
+                            proposal_id=proposal_id)
+
     # ---- helpers
 
     def _insert(self, draft: GlossaryElementDraft, *, version: int, created_by: str,

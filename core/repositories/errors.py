@@ -385,6 +385,10 @@ class GroupDecisionRefused(RepositoryError):
     is refused and the message names the group. The API answers 409."""
 
 
+class GlossaryUploadNotFound(RepositoryError, LookupError):
+    """Phase 7.19: no glossary upload has this id. The API answers 404."""
+
+
 class ExceptionGroupChangedMeanwhile(RepositoryError):
     """While the agent answered, a group of the input got a fix, lost one, or its load stopped being held: the answer
     is discarded (a discard row, nothing written). The API answers 409."""

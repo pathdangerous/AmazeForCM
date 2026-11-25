@@ -132,6 +132,10 @@ CONFLICTS = CONFLICTS + (UpstreamNotApproved,)
 from core.repositories.errors import ExceptionGroupChangedMeanwhile, GroupDecisionRefused, LoadNotHeld  # noqa: E402
 
 CONFLICTS = CONFLICTS + (LoadNotHeld, ExceptionGroupChangedMeanwhile, GroupDecisionRefused)
+# phase 7.19: a glossary upload that does not exist
+from core.repositories.errors import GlossaryUploadNotFound  # noqa: E402
+
+NOT_FOUND = NOT_FOUND + (GlossaryUploadNotFound,)
 
 
 def read(session: Session, work: Callable[[], T]) -> T:
