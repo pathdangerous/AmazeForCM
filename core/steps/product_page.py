@@ -28,6 +28,7 @@ from core.repositories.glossary import GlossaryRepository
 from core.repositories.grants import ProductGrantRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.products import ProductRepository
+from core.repositories.schedules import FeedScheduleRepository
 from core.repositories.standard_records import StandardRecordRepository
 from core.repositories.tables import FeedRow, FeedStatusEventRow as StatusEvent
 from core.steps.result import StepResult
@@ -121,6 +122,7 @@ class ProductPage(StepResult):
     dictionary: list[DictionaryRow]
     certification: ProductCertification | None = None
     lineage: list[LineageStage] = Field(default_factory=list)
+    update_frequency: str | None = None  # phase 7.21: "Updated daily", ... or "One-time load"; None: no schedule set
 
 
 class ProductNotFound(StepResult):
@@ -270,7 +272,15 @@ def product_page(session: Session, *, code: str, user: UserLike, identity: Ident
         visibility=product.visibility, access="entitled" if entitled else "not_entitled_visible", route=route,
         freshness=freshness, paused_since=_paused_since(session, product), columns=keys,
         dictionary=[_dictionary_row(elements[k], labels.get(k)) for k in keys],
-        certification=certification, lineage=lineage)
+        certification=certification, lineage=lineage, update_frequency=_update_frequency(session, product))
+
+
+def _update_frequency(session: Session, product: ProductWithElements) -> str | None:
+    """From the schedule in force of the product's feed (phase 7.21); nothing for a product with no feed or no schedule."""
+    if product.feed_id is None:
+        return None
+    current = FeedScheduleRepository(session).current(product.feed_id)
+    return None if current is None else current.update_label()
 
 
 def _dictionary_row(element: GlossaryElement, label: str | None) -> DictionaryRow:

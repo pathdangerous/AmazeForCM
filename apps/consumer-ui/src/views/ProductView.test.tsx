@@ -45,6 +45,23 @@ test("phase 7.9: a product that is not paused shows no paused note", async () =>
   expect(screen.queryByTestId("product-paused")).toBeNull();
 });
 
+test("phase 7.21: the page says how often the product is updated, or that it is a one-time load", async () => {
+  for (const [label, shown] of [["Updated daily", "Updated daily"], ["Updated on business days", "Updated on business days"],
+                                ["One-time load", "One-time load"]]) {
+    stubFetch({ [PAGE]: productPage({ update_frequency: label }), [PREVIEW]: previewRows(2) });
+    show();
+    expect((await screen.findByTestId("product-update-frequency")).textContent).toBe(shown);
+    cleanup();
+  }
+});
+
+test("phase 7.21: a product whose feed has no schedule says nothing about how often it is updated", async () => {
+  stubFetch({ [PAGE]: productPage({ update_frequency: null }), [PREVIEW]: previewRows(2) });
+  show();
+  await screen.findByRole("heading", { name: "Bond terms" });
+  expect(screen.queryByTestId("product-update-frequency")).toBeNull();
+});
+
 test("header, dictionary and preview rows", async () => {
   stubFetch({ [PAGE]: productPage(), [PREVIEW]: previewRows(3) });
   show();

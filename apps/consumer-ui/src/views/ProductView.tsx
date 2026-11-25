@@ -76,6 +76,7 @@ export default function ProductView({ devUser, code }: { devUser: string; code: 
           <div className="product-metadata">
             <span>Owner: <strong>{page.owner.name}</strong></span>
             <span>{page.freshness ? `Updated ${formatWhen(page.freshness.released_at)}` : "Not released yet"}</span>
+            {page.update_frequency && <span data-testid="product-update-frequency">{page.update_frequency}</span>}
           </div>
           {page.paused_since && <Text data-testid="product-paused" size="sm" style={{ color: "#9A3412", background: "#FFEDD5", borderRadius: 6, padding: "6px 10px" }}>
             {`Paused: not updating since ${formatWhen(page.paused_since)}`}

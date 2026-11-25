@@ -4,6 +4,7 @@ import { ConfidenceBar, CssDonut, KpiCard, LoadingSkeleton, SectionCard, StatusC
 import type { OperationsOverview } from "../api";
 import { useOverview } from "../hooks/use-overview";
 import { formatWhen } from "../theme";
+import DeliveriesRanking from "./DeliveriesRanking";
 
 type Load = OperationsOverview["recent_loads"][number];
 type Pending = OperationsOverview["pending_decisions"][number];
@@ -109,6 +110,7 @@ export default function OverviewView({ devUser }: { devUser: string }) {
             <p>{`${data.exceptions.open} groups open, ${data.exceptions.waiting_for_owner} waiting for the data owner. Reruns: ${data.exceptions.reruns_released} released, ${data.exceptions.reruns_still_held} still held.`}</p>
           </div>
         </SectionCard>}
+        <DeliveriesRanking devUser={devUser} />
         <SectionCard title="Recent loads" bare actions={<div className="page-actions">
           <span className="overview-note">All loads in period · scheduled and go-live tests</span>
           <div className="column-chooser">

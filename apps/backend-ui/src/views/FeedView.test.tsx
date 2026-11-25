@@ -269,6 +269,24 @@ test("phase 7.9: after a delete the page goes back to the registry", async () =>
   await vi.waitFor(() => expect(window.location.hash).toBe("#/feeds"));
 });
 
+test("phase 7.21: the feed page has an Overview tab (the page as it was) and a Deliveries tab", async () => {
+  const fetchStub = show(feedPage({ loads: [scheduledLoad()] }), {}, USERS[1], {
+    [`GET /api/amaze/feeds/${FEED_ID}/deliveries?window=30`]: { outcome: "schedule_not_set", feed_id: FEED_ID } });
+  await screen.findByTestId("feed-view");
+  expect(screen.getByTestId("feed-tab-overview").getAttribute("aria-selected")).toBe("true");
+  expect(screen.queryByTestId("deliveries-tab")).toBeNull();
+  expect(fetchStub.mock.calls.some(([u]) => String(u).includes("/deliveries"))).toBe(false); // not read until it is opened
+  fireEvent.click(screen.getByTestId("feed-tab-deliveries"));
+  expect(await screen.findByTestId("dlv-not-set")).toBeTruthy();
+  expect(screen.getByTestId("feed-tab-deliveries").getAttribute("aria-selected")).toBe("true");
+  const overview = document.getElementById("feed-tabpanel-overview") as HTMLElement;
+  expect(overview.hidden).toBe(true); // still mounted, so nothing on it is lost
+  expect(within(overview).getByTestId("section-source")).toBeTruthy();
+  fireEvent.click(screen.getByTestId("feed-tab-overview"));
+  expect(overview.hidden).toBe(false);
+  expect(screen.queryByTestId("deliveries-tab")).toBeNull();
+});
+
 test("P19: the result of Propose mappings shows above the mapping table", async () => {
   show(feedPage({ columns: [feedPage().columns[0], unmapped] }), {}, USERS[1], {
     [`POST /api/amaze/feeds/${FEED_ID}/mappings/propose`]: { result: {

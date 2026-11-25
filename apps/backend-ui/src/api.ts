@@ -267,6 +267,39 @@ export type FeedScheduleT = ScheduleBody & {
   id: string; feed_id: string; version: number; created_at: string; decided_by: string;
   grace_minutes: number; timezone: string; notify_owner: boolean;
 };
+// Phase 7.21, T3/T4: expected against actual deliveries (GET /api/amaze/feeds/{id}/deliveries).
+export type DeliveryStatus = "on_time" | "late" | "missing" | "resent_quarantined" | "held" | "awaited";
+export type DeliveryRowT = {
+  due_at: string; schedule_version: number; grace_minutes: number; status: DeliveryStatus;
+  timing: "on_time" | "late" | "missing" | "awaited";
+  result: "released" | "held" | "quarantined" | "failed" | "loaded" | "received" | "abandoned" | null;
+  load_id: string | null; received_at: string | null; late_minutes: number | null; minutes_from_due: number | null;
+  rows: number | null;
+};
+export type DeliveryFigures = {
+  expected: number; on_time: number; late: number; missing: number; on_time_pct: number | null;
+  mean_late_minutes: number | null; streak: number; next_expected: string | null; unexpected: number;
+};
+export type UnexpectedDeliveryT = { load_id: string; received_at: string; status: string;
+                                    reason: "no_delivery_was_due" | "second_delivery_for_one_due" };
+export type DeliveriesShown = {
+  outcome: "deliveries_shown"; feed_id: string; window: "30" | "90" | "all"; schedule: FeedScheduleT;
+  live_since: string | null; now: string; start: string; rows: DeliveryRowT[]; unexpected: UnexpectedDeliveryT[];
+  figures: DeliveryFigures;
+};
+export type OneTimeShown = {
+  outcome: "one_time_shown"; feed_id: string; label: "One-time load"; schedule: FeedScheduleT;
+  loads: { load_id: string; received_at: string; status: string; purpose: string; rows: number | null }[];
+};
+export type ScheduleNotSetAnswer = { outcome: "schedule_not_set"; feed_id: string };
+export type DeliveriesAnswer = DeliveriesShown | OneTimeShown | ScheduleNotSetAnswer;
+export type DeliveriesOverviewT = {
+  outcome: "deliveries_overview"; window: "30";
+  feeds: { feed_id: string; code: string; name: string; schedule: string; expected: number; on_time: number; late: number;
+           missing: number; on_time_pct: number | null; streak: number }[];
+  one_time: number; not_set: number;
+};
+
 export type ScheduleView = { current: FeedScheduleT | null; versions: FeedScheduleT[] };
 export type ScheduleAnswer = { outcome: "schedule_set" | "schedule_unchanged"; schedule: FeedScheduleT };
 

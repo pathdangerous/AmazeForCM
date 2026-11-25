@@ -50,6 +50,13 @@ class ScheduleInput(BaseModel):
             raise ValueError(f"{self.timezone!r} is not a time zone name (for example Europe/London)") from exc
         return self
 
+    def update_label(self) -> str:
+        """What the marketplace says: "Updated daily", "Updated on business days", ... or "One-time load"."""
+        if self.kind == "one_time":
+            return "One-time load"
+        return "Updated " + {"daily": "daily", "business_days": "on business days", "weekly": "weekly",
+                             "monthly": "monthly"}[self.frequency or "daily"]
+
     def describe(self) -> str:
         """One line, as the pages write it."""
         if self.kind == "one_time":

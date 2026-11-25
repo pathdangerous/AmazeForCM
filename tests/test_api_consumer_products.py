@@ -99,6 +99,22 @@ async def test_the_page_has_owner_freshness_and_the_dictionary(released, client)
     assert "unit" in by_key["volume"]
 
 
+async def test_the_page_says_how_often_the_product_is_updated(released, client):
+    """Phase 7.21, T4: from the feed's schedule in force; the helper's feed is daily."""
+    page = (await client.get(f"{BASE}/products/syn_loadable", headers=RILEY)).json()
+    assert page["update_frequency"] == "Updated daily"
+    for frequency, weekday, day, words in (("business_days", None, None, "Updated on business days"),
+                                           ("weekly", 4, None, "Updated weekly"), ("monthly", None, "last", "Updated monthly")):
+        await client.post(f"/api/amaze/feeds/{released.feed.id}/schedule", headers={"X-Dev-User": "dev-backend-team"},
+                          json={"kind": "recurring", "frequency": frequency, "weekday": weekday, "day_of_month": day,
+                                "expected_time": "07:00:00"})
+        page = (await client.get(f"{BASE}/products/syn_loadable", headers=RILEY)).json()
+        assert page["update_frequency"] == words
+    await client.post(f"/api/amaze/feeds/{released.feed.id}/schedule", headers={"X-Dev-User": "dev-backend-team"},
+                      json={"kind": "one_time"})
+    assert (await client.get(f"{BASE}/products/syn_loadable", headers=RILEY)).json()["update_frequency"] == "One-time load"
+
+
 async def test_the_preview_is_the_first_100_rows_in_row_order_with_labels(released, client):
     response = await client.get(f"{BASE}/products/syn_loadable/preview", headers=RILEY)
     assert response.status_code == 200, response.text

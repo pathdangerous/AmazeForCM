@@ -8,6 +8,7 @@ import {
 import { formatWhen } from "../theme";
 import CodeView from "./CodeView";
 import DriftSection from "./DriftSection";
+import DeliveriesTab from "./DeliveriesTab";
 import ExceptionsSection from "./ExceptionsSection";
 import FeedLifecycle from "./FeedLifecycle";
 import ProfileHistory from "./ProfileHistory";
@@ -206,7 +207,8 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
   const [text, setText] = useState("");
   const [owner, setOwner] = useState("");
   const [visibility, setVisibility] = useState<"open" | "restricted">("open");
-  const name =(userId: string) => people[userId] ?? userId; // P8: a person by name; an unknown id as itself
+  const [tab, setTab] = useState<"overview" | "deliveries">("overview");
+  const name = (userId: string) => people[userId] ?? userId; // P8: a person by name; an unknown id as itself
 
   useEffect(() => {
     if (!devUser) return;
@@ -306,6 +308,26 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
       <FeedLifecycle feed={feed} me={me} devUser={devUser} onChanged={onChange}
                      onDeleted={() => { window.location.hash = "#/feeds"; }} />
 
+      {/* phase 7.21: Overview is the page as it was; Deliveries is expected against actual arrivals. The overview stays
+          mounted while Deliveries shows, so nothing on it is lost or read again. */}
+      <div role="tablist" aria-label="Feed page" className="feed-tabs" style={{ display: "flex", gap: 8, margin: "8px 0" }}>
+        {(["overview", "deliveries"] as const).map((name) => (
+          <button key={name} type="button" role="tab" id={`feed-tab-${name}`} aria-selected={tab === name}
+                  aria-controls={`feed-tabpanel-${name}`} data-testid={`feed-tab-${name}`} onClick={() => setTab(name)}
+                  style={{ padding: "4px 12px", cursor: "pointer", fontWeight: tab === name ? 700 : 400,
+                           background: tab === name ? "var(--amz-marker)" : "var(--amz-panel)",
+                           color: tab === name ? "var(--amz-on-bright)" : "var(--amz-text)",
+                           border: "1px solid var(--amz-line)", borderRadius: 4 }}>
+            {name === "overview" ? "Overview" : "Deliveries"}
+          </button>
+        ))}
+      </div>
+      {tab === "deliveries" && (
+        <div role="tabpanel" id="feed-tabpanel-deliveries" aria-labelledby="feed-tab-deliveries">
+          <DeliveriesTab feedId={feedId} devUser={devUser} changed={changed} onOpenSchedule={() => setTab("overview")} />
+        </div>
+      )}
+      <div hidden={tab !== "overview"} role="tabpanel" id="feed-tabpanel-overview" aria-labelledby="feed-tab-overview">
       {(page.todo_actions ?? []).length > 0 && (
         <Section name="todo" title="To do by a person" result={result}>
           <ul data-testid="todo-actions" style={{ margin: 0, paddingLeft: 18 }}>
@@ -605,6 +627,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
                           canErase={!!me && (me.roles.includes("operations") || (feed.owner_id !== null && feed.owner_id === me.id))} />
         </Section>
       )}
+      </div>
     </section>
   );
 }
