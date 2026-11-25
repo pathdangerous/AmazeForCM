@@ -13,7 +13,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0038"  # old: "0037" (phase 7.19 T1: glossary_import), "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0039"  # old: "0038" (phase 7.21 T1: feed_schedules), "0037" (phase 7.19 T1: glossary_import), "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -265,6 +265,18 @@ REVIEWED_NULLABLE_CHECKS = {
     # 0035 (phase 7.15). Their NULL cases are in tests/test_db_report_guards.py.
     "reports.ck_reports_narrative_fits_status":
         "narrative_status is NOT NULL; IS NOT NULL spelt out on every branch: never NULL",
+    # 0039 (phase 7.21). Their NULL cases are in tests/test_db_feed_schedules.py.
+    "feed_schedules.ck_feed_schedules_frequency": "frequency IS NULL OR ...: NULL is a one_time schedule; recurring needs one",
+    "feed_schedules.ck_feed_schedules_weekday": "weekday IS NULL OR ...: NULL is any frequency but weekly; weekly needs one",
+    "feed_schedules.ck_feed_schedules_day_of_month":
+        "day_of_month IS NULL OR ...: NULL is any frequency but monthly; monthly needs one",
+    "feed_schedules.ck_feed_schedules_one_time_has_no_schedule": "kind is NOT NULL; every test is IS NULL: never NULL",
+    "feed_schedules.ck_feed_schedules_recurring_has_frequency_and_time":
+        "kind is NOT NULL; every test is IS NOT NULL: never NULL",
+    "feed_schedules.ck_feed_schedules_weekly_has_weekday": "IS DISTINCT FROM and IS NOT NULL spelt out: never NULL",
+    "feed_schedules.ck_feed_schedules_weekday_only_weekly": "IS NULL and IS NOT DISTINCT FROM spelt out: never NULL",
+    "feed_schedules.ck_feed_schedules_monthly_has_day": "IS DISTINCT FROM and IS NOT NULL spelt out: never NULL",
+    "feed_schedules.ck_feed_schedules_day_only_monthly": "IS NULL and IS NOT DISTINCT FROM spelt out: never NULL",
     # 0038 (phase 7.19). Its NULL cases are in tests/test_db_glossary_import.py.
     "proposals.ck_proposals_glossary_import_shape":
         "kind and origin are NOT NULL; feed_id and requirement_id IS NULL spelt out; each JSON test wrapped in "
@@ -1511,3 +1523,30 @@ def test_0037_downgrade_refuses_while_a_run_exists(scratch_schema):
                 [{"stage": s, "status": "passed", "log": []} for s in ("commit", "sql_parse", "rule_check", "test_load")])})
     with pytest.raises(DBAPIError, match="migration 0037"):
         command.downgrade(config, "0036")
+
+
+def test_0039_adds_schedules_and_alerts_and_downgrade_restores_0038(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0038")
+    before = _0037_state(engine)
+    command.upgrade(config, "0039")
+    up = _0037_state(engine)
+    assert {"feed_schedules", "delivery_alerts"} <= up["tables"] and not {"feed_schedules", "delivery_alerts"} & before["tables"]
+    assert "feed_schedules" in up["delete_function"] and "feed_schedules" not in before["delete_function"]
+    command.downgrade(config, "0038")
+    assert _0037_state(engine) == before
+    command.upgrade(config, "0039")
+    assert _0037_state(engine) == up
+
+
+def test_0039_downgrade_refuses_while_a_schedule_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0039")
+    with engine.begin() as connection:
+        feed = connection.execute(text("INSERT INTO feeds (code, name) VALUES ('syn_a', 'A') RETURNING id")).scalar_one()
+        connection.execute(text("INSERT INTO feed_schedules (feed_id, version, kind, frequency, expected_time, decided_by) "
+                                "VALUES (:f, 1, 'recurring', 'daily', '07:00', 'dev-operator')"), {"f": feed})
+    with pytest.raises(DBAPIError, match="migration 0039"):
+        command.downgrade(config, "0038")

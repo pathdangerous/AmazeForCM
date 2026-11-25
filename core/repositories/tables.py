@@ -7,7 +7,7 @@ Append-only tables are protected by a database trigger (migration 0002), not by 
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
@@ -24,6 +24,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     Text,
+    Time,
     UniqueConstraint,
     Uuid,
     func,
@@ -939,6 +940,61 @@ class PipelineRunRow(Base):
     stages: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     outcome: Mapped[str] = mapped_column(Text)
     run_by: Mapped[str] = mapped_column(Text)
+
+
+class FeedScheduleRow(Base):
+    """Phase 7.21: when a feed is expected, versioned per feed. Append-only (migration 0039); a change is a new version. The
+    guard needs the next version number; the checks fit the frequency to the weekday or day of month."""
+
+    __tablename__ = "feed_schedules"
+    __table_args__ = (
+        UniqueConstraint("feed_id", "version"),
+        CheckConstraint("version >= 1", name="version"),
+        CheckConstraint("kind IN ('one_time', 'recurring')", name="kind"),
+        CheckConstraint("frequency IS NULL OR frequency IN ('daily', 'business_days', 'weekly', 'monthly')", name="frequency"),
+        CheckConstraint("weekday IS NULL OR weekday BETWEEN 0 AND 6", name="weekday"),
+        CheckConstraint("day_of_month IS NULL OR day_of_month ~ '^([1-9]|1[0-9]|2[0-8]|last)$'", name="day_of_month"),
+        CheckConstraint("grace_minutes BETWEEN 0 AND 1440", name="grace_minutes"),
+        CheckConstraint("length(btrim(timezone)) > 0", name="timezone"),
+        CheckConstraint("length(btrim(decided_by)) > 0", name="decided_by"),
+        CheckConstraint("kind <> 'one_time' OR (frequency IS NULL AND weekday IS NULL AND day_of_month IS NULL "
+                        "AND expected_time IS NULL)", name="one_time_has_no_schedule"),
+        CheckConstraint("kind <> 'recurring' OR (frequency IS NOT NULL AND expected_time IS NOT NULL)",
+                        name="recurring_has_frequency_and_time"),
+        CheckConstraint("frequency IS DISTINCT FROM 'weekly' OR weekday IS NOT NULL", name="weekly_has_weekday"),
+        CheckConstraint("weekday IS NULL OR frequency IS NOT DISTINCT FROM 'weekly'", name="weekday_only_weekly"),
+        CheckConstraint("frequency IS DISTINCT FROM 'monthly' OR day_of_month IS NOT NULL", name="monthly_has_day"),
+        CheckConstraint("day_of_month IS NULL OR frequency IS NOT DISTINCT FROM 'monthly'", name="day_only_monthly"),
+    )
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    version: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(Text)
+    frequency: Mapped[str | None] = mapped_column(Text)
+    weekday: Mapped[int | None] = mapped_column(Integer)
+    day_of_month: Mapped[str | None] = mapped_column(Text)
+    expected_time: Mapped[time | None] = mapped_column(Time)
+    grace_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    timezone: Mapped[str] = mapped_column(Text, default="UTC", server_default="UTC")
+    notify_owner: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    decided_by: Mapped[str] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class DeliveryAlertRow(Base):
+    """Phase 7.21: the owner was told that this expected delivery did not arrive. One row per feed and due instant, so the
+    alert is sent once. Append-only (migration 0039)."""
+
+    __tablename__ = "delivery_alerts"
+    __table_args__ = (UniqueConstraint("feed_id", "due_at"), CheckConstraint("schedule_version >= 1", name="schedule_version"))
+
+    id: Mapped[uuid.UUID] = _id()
+    created_at: Mapped[datetime] = _created_at(clock=True)
+    feed_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("feeds.id"))
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    schedule_version: Mapped[int] = mapped_column(Integer)
 
 
 class LoadStageRow(Base):
