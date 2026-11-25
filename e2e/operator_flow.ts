@@ -42,6 +42,12 @@ export async function upload(page: Page, shot: Shot = none) {
   await expect(page.getByTestId("upload-preview")).toBeVisible({ timeout: 60_000 });
   await page.getByTestId("upload-feed-code").fill(FEED_CODE);
   await page.getByTestId("upload-feed-name").fill(FEED_NAME);
+  // phase 7.21: "Recurring feed or one-time load?" has no default and is required before the feed is created
+  await expect(page.getByTestId("upload-confirm")).toBeDisabled();
+  await page.getByTestId("upload-schedule-kind-recurring").check();
+  await page.getByTestId("upload-schedule-frequency").selectOption("business_days");
+  await page.getByTestId("upload-schedule-time").fill("07:00");
+  await page.getByTestId("upload-schedule-grace").fill("60");
   await shot(page, "W2-upload-preview");
   await page.getByTestId("upload-confirm").click();
   await expect(page).toHaveURL(/#\/onboarding\//, { timeout: 60_000 });

@@ -31,6 +31,7 @@ from ports.connectors.catalogue import DEFAULT_CATALOGUE, SourceCatalogue
 from ports.db import get_sessionmaker
 from ports.storage.local import LocalBlobStore
 from tests.conftest import alembic_config, fresh_schema, replay_ddl, running_app
+from tests.schedules import SCHEDULE
 
 ONBOARDING = "Your data is getting onboarded; we will notify you once it is ready."
 
@@ -806,11 +807,19 @@ async def test_confirm_upload_commits_the_feed_its_fetch_its_source_and_the_noti
         confirmed = await client.post(
             f"/api/amaze/uploads/{stored.json()['upload_id']}/confirm", headers={"X-Dev-User": "dev-operator"},
             json={"filename": "prices.csv", "feed_code": "upload_prices", "feed_name": "Prices", "sheet": None,
-                  "header_row": None})
+                  "header_row": None, "schedule": SCHEDULE})
         assert confirmed.status_code == 200, confirmed.text
         page = await client.get(f"/api/amaze/feeds/{confirmed.json()['feed_id']}", headers={"X-Dev-User": "dev-operator"})
         assert page.status_code == 200 and page.json()["source"]["code"] == "upl_upload_prices"
+        # phase 7.21: the schedule is written with the feed, and a change is a new committed version
+        assert page.json()["schedule"]["version"] == 1
+        weekly = {"kind": "recurring", "frequency": "weekly", "weekday": 4, "expected_time": "18:00:00"}
+        changed = await client.post(f"/api/amaze/feeds/{confirmed.json()['feed_id']}/schedule", json=weekly,
+                                    headers={"X-Dev-User": "dev-backend-team"})
+        assert changed.status_code == 200 and changed.json()["outcome"] == "schedule_set"
 
+    assert committed(own_schema, "SELECT version, kind, frequency, decided_by FROM feed_schedules ORDER BY version") == [
+        (1, "recurring", "daily", "dev-operator"), (2, "recurring", "weekly", "dev-backend-team")]
     assert committed(own_schema, "SELECT code, stage, connector, source_code, source_ref FROM feeds") == [
         ("upload_prices", "candidate", "dropzone", "upl_upload_prices", "dropzone/upload_prices")]
     assert committed(own_schema, "SELECT s.outcome, s.size_bytes > 0 FROM source_fetches s") == [("fetched", True)]
@@ -840,7 +849,7 @@ async def test_a_re_upload_puts_the_file_in_the_drop_folder_and_writes_no_row(
         confirmed = await client.post(
             f"/api/amaze/uploads/{stored.json()['upload_id']}/confirm", headers=operator,
             json={"filename": "prices.csv", "feed_code": "upload_prices", "feed_name": "Prices", "sheet": None,
-                  "header_row": None})
+                  "header_row": None, "schedule": SCHEDULE})
         again = await client.post(f"/api/amaze/feeds/{confirmed.json()['feed_id']}/files",
                                   params={"filename": "next.csv"}, headers={**operator, "Content-Type": "application/octet-stream"},
                                   content=b"id,name,qty\n2,b,3\n")

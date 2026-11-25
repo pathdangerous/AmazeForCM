@@ -1,6 +1,7 @@
 import { Alert, Button, NativeSelect, Table, Text, TextInput, Title } from "@mantine/core";
 import { useRef, useState } from "react";
 import { LoadingSkeleton } from "../../../ui-shared/phase711";
+import ScheduleForm, { EMPTY_SCHEDULE, scheduleBody, scheduleValid, type ScheduleValue } from "./ScheduleForm";
 import {
   ApiError, confirmUpload, describeError, reinspect, uploadFile,
   type InspectedUpload, type NeedsImageExtraction, type UploadAnswer, type UploadRefusal, type User,
@@ -64,6 +65,7 @@ export default function UploadView({ me, onUploaded }: { me: User | null; onUplo
   const [codeTaken, setCodeTaken] = useState(false);
   const [conditions, setConditions] = useState(DEFAULT_CONDITIONS);
   const [description, setDescription] = useState("");
+  const [schedule, setSchedule] = useState<ScheduleValue>(EMPTY_SCHEDULE); // phase 7.21: unanswered until a person chooses
   const latest = useRef(0); // only the newest read may change the screen
 
   if (!me || !me.roles.includes("backend_team")) {
@@ -122,7 +124,7 @@ export default function UploadView({ me, onUploaded }: { me: User | null; onUplo
   const codeValid = CODE_PATTERN.test(feedCode) && feedCode.length <= 60;
   const nameValid = feedName.trim().length > 0;
   const headerValid = Number.isInteger(Number(headerRow)) && Number(headerRow) >= 1;
-  const canConfirm = !!result && codeValid && nameValid && headerValid && !busy;
+  const canConfirm = !!result && codeValid && nameValid && headerValid && scheduleValid(schedule) && !busy;
 
   const confirm = async () => {
     if (!result) return;
@@ -132,7 +134,7 @@ export default function UploadView({ me, onUploaded }: { me: User | null; onUplo
     try {
       const answer = await confirmUpload(result.upload_id, devUser, {
         filename: result.filename, feed_code: feedCode, feed_name: feedName.trim(),
-        sheet: result.sheet, header_row: Number(headerRow), ...conditions, description,
+        sheet: result.sheet, header_row: Number(headerRow), ...conditions, description, schedule: scheduleBody(schedule),
       });
       if (answer.outcome === "uploaded") {
         if (answer.onboarding_id) onUploaded(answer.feed_id, answer.onboarding_id);
@@ -245,6 +247,7 @@ export default function UploadView({ me, onUploaded }: { me: User | null; onUplo
                        error={nameValid ? undefined : "A name is needed"}
                        onChange={(e) => setFeedName(e.currentTarget.value)} />
           </div>
+          <ScheduleForm value={schedule} onChange={setSchedule} idPrefix="upload-schedule" />
           <details className="conditions" style={{ margin: "var(--mantine-spacing-sm) 0" }}>
             <summary>Conditions of use</summary>
             <div className="toolbar">

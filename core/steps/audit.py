@@ -22,6 +22,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from core.domain.schedule import ScheduleInput
+
 MONTH = re.compile(r"(\d{4})-(0[1-9]|1[0-2])")
 CSV_COLUMNS = ("time", "kind", "feed", "who", "role", "decision", "item", "summary", "by", "agent", "code_version", "waiver",
                "rerun_of", "note")
@@ -32,13 +34,13 @@ class AuditRow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     at: datetime
-    kind: Literal["decision", "rerun", "erasure", "upload"]
+    kind: Literal["decision", "rerun", "erasure", "upload", "schedule"]
     feed_id: UUID | None
     feed_code: str | None
     who: str | None  # None: a rerun made before 0035 recorded who
     role: str | None
-    decision: Literal["approved", "rejected", "started", "erased", "uploaded"]
-    item: str  # the proposal's kind, "load" for a rerun, "profiles" for an erase (7.16), "glossary_upload" (7.19)
+    decision: Literal["approved", "rejected", "started", "erased", "uploaded", "set", "changed"]
+    item: str  # the proposal's kind, "load" for a rerun, "profiles" for an erase (7.16), "glossary_upload" (7.19), "schedule" (7.21)
     summary: str
     by: Literal["agent", "manual", "rule", "system"]  # who made the item; `system` when system decided
     agent: str | None
@@ -96,6 +98,17 @@ SELECT u.id, u.created_at AS at, u.uploaded_by, u.file_name, u.counts
    AND (CAST(:person AS text) IS NULL OR u.uploaded_by = CAST(:person AS text))
  ORDER BY u.created_at, u.id
 """)
+SCHEDULES = text("""
+SELECT s.created_at AS at, s.feed_id, f.code AS feed_code, s.decided_by, s.version, s.kind, s.frequency, s.weekday,
+       s.day_of_month, s.expected_time, s.grace_minutes, s.timezone, s.notify_owner, s.note,
+       (SELECT c.version FROM code_versions c WHERE c.feed_id = s.feed_id AND c.created_at <= s.created_at
+         ORDER BY c.version DESC LIMIT 1) AS code_version
+  FROM feed_schedules s JOIN feeds f ON f.id = s.feed_id
+ WHERE s.created_at >= :start AND s.created_at < :end
+   AND (CAST(:feed AS uuid) IS NULL OR s.feed_id = CAST(:feed AS uuid))
+   AND (CAST(:person AS text) IS NULL OR s.decided_by = CAST(:person AS text))
+ ORDER BY s.created_at, s.id
+""")
 COUNT_ORDER = ("new", "update", "unchanged", "invalid", "alias_conflict", "duplicate_in_file")
 
 
@@ -142,6 +155,13 @@ def audit_rows(session: Session, *, month: str, feed_id: UUID | None = None, per
             at=r.at, kind="upload", feed_id=None, feed_code=None, who=r.uploaded_by, role=None, decision="uploaded",
             item="glossary_upload", summary=f"{r.file_name}: {counts}", by="manual", agent=None, code_version=None,
             waiver=False, rerun_of=None, note=None, upload_id=r.id))
+    for r in session.execute(SCHEDULES, params):  # phase 7.21: when a feed is expected is set and changed by a person
+        described = ScheduleInput(kind=r.kind, frequency=r.frequency, weekday=r.weekday, day_of_month=r.day_of_month,
+                                  expected_time=r.expected_time, grace_minutes=r.grace_minutes, timezone=r.timezone).describe()
+        rows.append(AuditRow(
+            at=r.at, kind="schedule", feed_id=r.feed_id, feed_code=r.feed_code, who=r.decided_by, role=None,
+            decision="set" if r.version == 1 else "changed", item="schedule", summary=f"{described} (version {r.version})",
+            by="manual", agent=None, code_version=r.code_version, waiver=False, rerun_of=None, note=r.note))
     return sorted(rows, key=lambda row: row.at)  # stable: decisions keep their query order within a time
 
 

@@ -84,7 +84,54 @@ test("the feed code and name are prefilled from the file name, snake case", asyn
   await uploaded({});
   expect((screen.getByLabelText("Feed code") as HTMLInputElement).value).toBe("security_master_2026");
   expect((screen.getByLabelText("Feed name") as HTMLInputElement).value).toBe("Security Master 2026");
+  expect((screen.getByTestId("upload-confirm") as HTMLButtonElement).disabled).toBe(true); // the question is still open
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-one_time"));
   expect((screen.getByTestId("upload-confirm") as HTMLButtonElement).disabled).toBe(false);
+});
+
+// Phase 7.21: "Recurring feed or one-time load?" is asked at Create the feed and has no default.
+test("Create the feed waits for the answer to recurring or one-time", async () => {
+  await uploaded({});
+  const confirm = screen.getByTestId("upload-confirm") as HTMLButtonElement;
+  expect(screen.getByText("Recurring feed or one-time load?")).toBeTruthy();
+  expect((screen.getByTestId("upload-schedule-kind-recurring") as HTMLInputElement).checked).toBe(false);
+  expect((screen.getByTestId("upload-schedule-kind-one_time") as HTMLInputElement).checked).toBe(false);
+  expect(screen.getByTestId("upload-schedule-required").textContent).toBe("Choose one to continue.");
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-recurring"));
+  expect(confirm.disabled).toBe(false);
+  fireEvent.change(screen.getByTestId("upload-schedule-grace"), { target: { value: "-5" } });
+  expect(confirm.disabled).toBe(true);
+});
+
+test("the schedule fields are shown for a recurring feed only, and weekly and monthly add their own", async () => {
+  await uploaded({});
+  expect(screen.queryByTestId("upload-schedule-fields")).toBeNull();
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-recurring"));
+  expect(screen.getByTestId("upload-schedule-fields")).toBeTruthy();
+  expect(screen.queryByTestId("upload-schedule-weekday")).toBeNull();
+  fireEvent.change(screen.getByTestId("upload-schedule-frequency"), { target: { value: "weekly" } });
+  expect(screen.getByTestId("upload-schedule-weekday")).toBeTruthy();
+  fireEvent.change(screen.getByTestId("upload-schedule-frequency"), { target: { value: "monthly" } });
+  expect(screen.queryByTestId("upload-schedule-weekday")).toBeNull();
+  expect(screen.getByTestId("upload-schedule-day")).toBeTruthy();
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-one_time"));
+  expect(screen.queryByTestId("upload-schedule-fields")).toBeNull();
+});
+
+test("the answer is sent with the feed: business days, 07:00, 60 minutes grace", async () => {
+  const { fetchStub } = await uploaded({
+    [CONFIRM]: { outcome: "uploaded", feed_id: "feed-1", feed_code: "security_master_2026", fetch_id: "f", row_count: 3,
+                 columns: ["a"] } });
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-recurring"));
+  fireEvent.change(screen.getByTestId("upload-schedule-frequency"), { target: { value: "business_days" } });
+  fireEvent.change(screen.getByTestId("upload-schedule-time"), { target: { value: "07:00" } });
+  fireEvent.change(screen.getByTestId("upload-schedule-grace"), { target: { value: "60" } });
+  fireEvent.click(screen.getByTestId("upload-confirm"));
+  const call = await waitFor(() => fetchStub.mock.calls.find(([u]) => String(u).endsWith("/confirm"))!);
+  expect(JSON.parse(call[1]?.body as string).schedule).toEqual({
+    kind: "recurring", frequency: "business_days", weekday: null, day_of_month: null, expected_time: "07:00", grace_minutes: 60,
+    timezone: "UTC", notify_owner: true });
 });
 
 test("the feed name default turns underscores and hyphens into single spaces, case kept; the code stays snake case", async () => {
@@ -177,6 +224,7 @@ test("uploaded calls onUploaded with the feed id", async () => {
   const { fetchStub, onUploaded } = await uploaded({
     [CONFIRM]: { outcome: "uploaded", feed_id: "feed-123", feed_code: "security_master_2026", fetch_id: "f", row_count: 3,
                  columns: ["instr_id", "qty"] } });
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-one_time"));
   fireEvent.click(screen.getByTestId("upload-confirm"));
   await waitFor(() => expect(onUploaded).toHaveBeenCalledWith("feed-123"));
   const call = fetchStub.mock.calls.find(([u]) => String(u).endsWith("/confirm"))!;
@@ -186,6 +234,7 @@ test("uploaded calls onUploaded with the feed id", async () => {
 
 test("a 409 on confirm says the feed code is taken, next to the code field", async () => {
   await uploaded({ [CONFIRM]: new Reply(409, { detail: "Feed code already exists" }) });
+  fireEvent.click(screen.getByTestId("upload-schedule-kind-one_time"));
   fireEvent.click(screen.getByTestId("upload-confirm"));
   expect(await screen.findByText("The feed code is taken")).toBeTruthy();
 });

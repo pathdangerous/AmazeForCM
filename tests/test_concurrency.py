@@ -17,6 +17,7 @@ import uuid
 import pytest
 
 from ports.llm.mock import MockProvider
+from tests.schedules import SCHEDULE
 from tests.test_commit_visibility import (  # noqa: F401 (flow and own_schema are fixtures)
     BLAKE,
     GLENN,
@@ -1669,7 +1670,7 @@ async def test_the_image_extraction_holds_no_connection_during_the_call_and_comm
         confirmed = await client.post(
             f"/api/amaze/uploads/{upload_id}/confirm", headers=operator,
             json={"filename": "scan.pdf", "feed_code": "scan_a", "feed_name": "Scan A", "sheet": None,
-                  "header_row": None, "extracted_proposal_id": extracted.json()["proposal_id"]})
+                  "header_row": None, "schedule": SCHEDULE, "extracted_proposal_id": extracted.json()["proposal_id"]})
         assert confirmed.status_code == 200, confirmed.text
     assert provider.checked_out == [0]
     assert committed_rows(own_schema, "SELECT agent_name FROM proposal_log") == [("TableExtractorAgent",)]

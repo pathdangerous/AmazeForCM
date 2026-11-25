@@ -199,9 +199,9 @@ export const makeReport = (body: { kind: string; period_start: string; role: str
   apiPost<{ result: { outcome: string; report_id: string; version: number; reason?: string; figure?: string | null } }>(
     "/api/amaze/reports", body, devUser);
 
-export type AuditRowT = { at: string; kind: "decision" | "rerun" | "erasure" | "upload"; feed_id: string | null;
+export type AuditRowT = { at: string; kind: "decision" | "rerun" | "erasure" | "upload" | "schedule"; feed_id: string | null;
   feed_code: string | null; who: string | null; role: string | null;
-  decision: "approved" | "rejected" | "started" | "erased" | "uploaded"; item: string; summary: string;
+  decision: "approved" | "rejected" | "started" | "erased" | "uploaded" | "set" | "changed"; item: string; summary: string;
   by: "agent" | "manual" | "rule" | "system"; agent: string | null; code_version: number | null; waiver: boolean;
   rerun_of: string | null; note: string | null; proposal_id: string | null; load_id: string | null;
   upload_id?: string | null }; // phase 7.19: a glossary upload
@@ -257,7 +257,22 @@ export type FeedSignoff = {
 export type SignoffOutcome = "meets" | "meets_with_gaps" | "rejected";
 export type ProfileErasureT = { id: string; at: string; by: string; reason: string; erased_versions: number[];
   erased_count: number; kept_count: number };
+// Phase 7.21: when a feed is expected. kind one_time has no frequency, weekday, day or time.
+export type ScheduleBody = {
+  kind: "recurring" | "one_time"; frequency?: "daily" | "business_days" | "weekly" | "monthly" | null; weekday?: number | null;
+  day_of_month?: string | null; expected_time?: string | null; grace_minutes?: number; timezone?: string; notify_owner?: boolean;
+  note?: string | null;
+};
+export type FeedScheduleT = ScheduleBody & {
+  id: string; feed_id: string; version: number; created_at: string; decided_by: string;
+  grace_minutes: number; timezone: string; notify_owner: boolean;
+};
+export type ScheduleView = { current: FeedScheduleT | null; versions: FeedScheduleT[] };
+export type ScheduleAnswer = { outcome: "schedule_set" | "schedule_unchanged"; schedule: FeedScheduleT };
+
 export type FeedPage = {
+  schedule?: FeedScheduleT | null; // phase 7.21: the version in force; null is "Schedule not set"
+  schedules?: FeedScheduleT[]; // every version, oldest first
   feed: Feed & { source_code: string | null };
   source: { code: string; name: string; provider: string; conditions: Conditions } | null;
   requirements: { id: string; title: string; status: string; requester_id: string; basis: string | null;
@@ -526,7 +541,8 @@ export async function reinspect(uploadId: string, filename: string, devUser: str
 
 // Creates the feed. A 409 (feed code taken) throws an ApiError; a table that no longer reads is a refusal answer.
 export async function confirmUpload(uploadId: string, devUser: string, body: {
-  filename: string; feed_code: string; feed_name: string } & ReadOptions & UploadConditions): Promise<UploadedFeed | UploadRefusal> {
+  filename: string; feed_code: string; feed_name: string; schedule: ScheduleBody } & ReadOptions & UploadConditions
+): Promise<UploadedFeed | UploadRefusal> {
   const path = `/api/amaze/uploads/${uploadId}/confirm`;
   const response = await fetch(path, {
     method: "POST",

@@ -14,6 +14,7 @@ import ProfileHistory from "./ProfileHistory";
 import GoLiveSection from "./GoLiveSection";
 import LoadsSection from "./LoadsSection";
 import RulesSection from "./RulesSection";
+import ScheduleSection from "./ScheduleSection";
 
 // One feed, in the order of the work (phase 4 plan, section 10): source and requirements, the latest file,
 // the profile, the ProfilerAgent's summary, the sign-off, the registration, and the history.
@@ -205,7 +206,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
   const [text, setText] = useState("");
   const [owner, setOwner] = useState("");
   const [visibility, setVisibility] = useState<"open" | "restricted">("open");
-  const name = (userId: string) => people[userId] ?? userId; // P8: a person by name; an unknown id as itself
+  const name =(userId: string) => people[userId] ?? userId; // P8: a person by name; an unknown id as itself
 
   useEffect(() => {
     if (!devUser) return;
@@ -324,6 +325,11 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
             <dt>Redistribution</dt><dd>{page.source.conditions.redistribution}</dd>
           </dl>
         ) : <Text className="muted">No catalogue source.</Text>}
+      </Section>
+
+      <Section name="schedule" title="Schedule" result={result}>
+        <ScheduleSection feedId={feedId} schedule={page.schedule ?? null} schedules={page.schedules ?? []} me={me}
+                         devUser={devUser} onChanged={onChange} />
       </Section>
 
       <Section name="requirements" title="Requirements that select it" result={result}>

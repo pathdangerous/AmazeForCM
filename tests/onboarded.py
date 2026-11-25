@@ -21,6 +21,7 @@ from core.repositories.feed_registrations import FeedRegistrationRepository
 from core.repositories.feed_signoffs import FeedSignoffRepository
 from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
+from core.repositories.schedules import FeedScheduleRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from tests.conftest import dev_user_for
 
@@ -79,10 +80,18 @@ def registration(session, feed_id: UUID, *, owner_id: str = "dev-data-owner", vi
         permitted_use="Internal analysis", redistribution="Not allowed", visibility=visibility, registered_by=BACKEND)
 
 
-def registered_feed(session, feed_id: UUID, *, owner_id: str = "dev-data-owner", **profile) -> Feed:
-    """profile: spec= and columns= for the signed-off profile (default: one column qty, declared volume)."""
+def registered_feed(session, feed_id: UUID, *, owner_id: str = "dev-data-owner", scheduled: bool = True,
+                    **profile) -> Feed:
+    """profile: spec= and columns= for the signed-off profile (default: one column qty, declared volume).
+    scheduled (phase 7.21): the feed also gets a schedule, version 1 (daily 06:30 UTC, 120 minutes grace), as the upload
+    screen's question gives every new feed; False leaves it "Schedule not set", as a feed made before 7.21 is."""
     registration(session, feed_id, owner_id=owner_id, **profile)
-    return FeedRepository(session).register(feed_id, owner_id=owner_id)
+    feed = FeedRepository(session).register(feed_id, owner_id=owner_id)
+    if scheduled:
+        from tests.schedules import DEFAULT_INPUT
+
+        FeedScheduleRepository(session).add_version(feed_id=feed_id, schedule=DEFAULT_INPUT, decided_by=BACKEND)
+    return feed
 
 
 def rejected_feed(session, feed_id: UUID, *, reasons: Sequence[str] = ("Synthetic reason",)) -> Feed:

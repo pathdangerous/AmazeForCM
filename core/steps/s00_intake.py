@@ -43,6 +43,7 @@ from sqlalchemy.orm import Session
 
 from core.domain.extraction import ExtractedTable, TableExtractionInput
 from core.domain.proposal import Proposal
+from core.domain.schedule import ScheduleInput
 from core.domain.sourcing import AgentRun
 from core.intake import (
     IntakeColumn,
@@ -62,6 +63,7 @@ from core.intake import (
 from core.repositories.errors import ProposalAlreadyDecided, UploadNotFound
 from core.repositories.feeds import FeedRepository
 from core.repositories.proposals import ProposalRepository
+from core.repositories.schedules import FeedScheduleRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.upload_sources import UploadSourceRepository
 from core.steps.errors import StepInputError
@@ -326,7 +328,7 @@ def confirm_upload(session: Session, *, upload_id: UUID, filename: str, feed_cod
                    sheet: str | None, header_row: int | None, blob_store: BlobStore, user: User, notifier: Notifier,
                    backend_team: Sequence[str], conditions: SourceConditions | None = None,
                    description: str = "", extracted_proposal_id: UUID | None = None,
-                   dropzone_root: Path | None = None) -> ConfirmResult:
+                   dropzone_root: Path | None = None, schedule: ScheduleInput | None = None) -> ConfirmResult:
     """Read the stored original with the confirmed options and create the feed from it.
 
     With dropzone_root the original is also copied into the feed's drop folder (task 4.4, decision D5), so the first
@@ -340,7 +342,10 @@ def confirm_upload(session: Session, *, upload_id: UUID, filename: str, feed_cod
 
     InvalidUploadInput (422), UploadNotFound and ProposalNotFound (404), DuplicateFeedCode, DuplicateFeedSource and
     ProposalAlreadyDecided (409), NotAnApprover (403) are named errors. NotATableResult: the confirmed options find
-    no table; nothing is written."""
+    no table; nothing is written.
+
+    schedule (phase 7.21): recurring or one-time, and when; written as the feed's version 1 in this transaction. The API
+    requires it; the step accepts None so a caller that tests only the intake need not answer it."""
     if not _FEED_CODE.match(feed_code):
         raise InvalidUploadInput(f"Feed code {feed_code!r} must be lower-case snake_case (letters, digits, '_')")
     if not feed_name.strip():
@@ -382,8 +387,10 @@ def confirm_upload(session: Session, *, upload_id: UUID, filename: str, feed_cod
     feed = FeedRepository(session).create_candidate(
         code=feed_code, name=feed_name, source_code=source_code, connector="dropzone",
         source_ref=f"dropzone/{feed_code}")  # DuplicateFeedCode, DuplicateFeedSource
+    if schedule is not None:
+        FeedScheduleRepository(session).add_version(feed_id=feed.id, schedule=schedule, decided_by=user.id)
     fetch_id, day = uuid.uuid4(), datetime.now(UTC).date()
-    stem = safe_name(filename).rsplit(".", 1)[0] or "upload"
+    stem =safe_name(filename).rsplit(".", 1)[0] or "upload"
     csv_ref = blob_key(feed_code, day, fetch_id, f"{stem}.csv")
     manifest_ref = blob_key(feed_code, day, fetch_id, "manifest.json")
     blob_store.put(csv_ref, canonical)

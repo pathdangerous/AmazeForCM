@@ -42,6 +42,7 @@ from apps.api.deps import (
     get_request_notifier,
     get_table_extractor_agent,
 )
+from core.domain.schedule import ScheduleInput
 from core.steps.onboarding import start_session
 from apps.api.transactions import in_transaction, read
 from core.repositories.errors import NotADropzoneFeed, UploadNotFound
@@ -175,6 +176,7 @@ class ConfirmBody(BaseModel):
     permitted_use: Condition | None = None
     redistribution: Condition | None = None
     description: Annotated[str, StringConstraints(max_length=500)] = ""
+    schedule: ScheduleInput  # phase 7.21: recurring or one-time, required; written with the feed
 
 
 class UploadedAndOnboarding(Uploaded):
@@ -198,7 +200,8 @@ def confirm(upload_id: UUID, body: ConfirmBody, session: DbSession, user: Operat
             session, upload_id=upload_id, filename=body.filename, feed_code=body.feed_code, feed_name=body.feed_name,
             sheet=body.sheet, header_row=body.header_row, conditions=conditions, description=body.description,
             blob_store=blobs, user=user, notifier=notifier, backend_team=team,
-            extracted_proposal_id=body.extracted_proposal_id, dropzone_root=settings.dropzone_root)
+            extracted_proposal_id=body.extracted_proposal_id, dropzone_root=settings.dropzone_root,
+            schedule=body.schedule)
         if isinstance(result, NotATableResult):
             return result
         started = start_session(session, feed_id=result.feed_id, user=user)  # the profile job is queued with it

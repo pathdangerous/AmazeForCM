@@ -18,6 +18,7 @@ from core.seed import seed_glossary
 from ports.config import Settings
 from ports.storage.local import LocalBlobStore
 from tests.conftest import running_app
+from tests.schedules import SCHEDULE
 from tests.test_intake_pdf import image_pdf, make_pdf, prose_page, two_page_pdf
 
 pytestmark = pytest.mark.anyio
@@ -77,7 +78,7 @@ async def upload(client, data: bytes, filename: str = "a.csv", headers=OPERATOR,
 
 async def confirm(client, upload_id, headers=OPERATOR, **body):
     payload = {"filename": "a.csv", "feed_code": "upload_a", "feed_name": "Upload A", "sheet": None,
-               "header_row": None, **body}
+               "header_row": None, "schedule": SCHEDULE, **body}
     return await client.post(f"{URL}/{upload_id}/confirm", json=payload, headers=headers)
 
 
@@ -386,3 +387,87 @@ async def test_only_the_backend_team_re_uploads(client, headers, status):
     response = await client.post(files_url(feed_id), params={"filename": "a.csv"}, content=csv_bytes(),
                                  headers={**headers, **OCTET})
     assert response.status_code == status
+
+
+# ---------------------------------------------------------------- phase 7.21: recurring or one-time (T2)
+
+WEEKLY = {"kind": "recurring", "frequency": "weekly", "weekday": 4, "expected_time": "18:00:00", "grace_minutes": 30,
+          "timezone": "Europe/London", "notify_owner": False}
+
+
+async def feed_codes(client) -> list[str]:
+    return [f["code"] for f in (await client.get("/api/amaze/feeds", headers=OPERATOR)).json()]
+
+
+async def test_the_question_is_required_to_create_the_feed(client):
+    stored = (await upload(client, csv_bytes())).json()
+    payload = {"filename": "a.csv", "feed_code": "upload_a", "feed_name": "Upload A", "sheet": None, "header_row": None}
+    response = await client.post(f"{URL}/{stored['upload_id']}/confirm", json=payload, headers=OPERATOR)
+    assert response.status_code == 422 and "schedule" in response.text
+    assert await feed_codes(client) == []
+
+
+async def test_the_answer_is_written_with_the_feed_as_version_1(client):
+    stored = (await upload(client, csv_bytes())).json()
+    feed_id = (await confirm(client, stored["upload_id"], schedule=WEEKLY)).json()["feed_id"]
+    page = (await client.get(f"/api/amaze/feeds/{feed_id}", headers=OPERATOR)).json()
+    assert page["schedule"]["version"] == 1 and [s["version"] for s in page["schedules"]] == [1]
+    assert (page["schedule"]["frequency"], page["schedule"]["weekday"], page["schedule"]["expected_time"],
+            page["schedule"]["grace_minutes"], page["schedule"]["timezone"], page["schedule"]["notify_owner"]) == (
+        "weekly", 4, "18:00:00", 30, "Europe/London", False)
+    assert page["schedule"]["decided_by"] == "dev-operator"
+
+
+async def test_a_one_time_load_is_an_answer(client):
+    stored = (await upload(client, csv_bytes())).json()
+    feed_id = (await confirm(client, stored["upload_id"], schedule={"kind": "one_time"})).json()["feed_id"]
+    schedule = (await client.get(f"/api/amaze/feeds/{feed_id}/schedule", headers=OPERATOR)).json()["current"]
+    assert schedule["kind"] == "one_time" and schedule["frequency"] is None and schedule["expected_time"] is None
+
+
+@pytest.mark.parametrize("schedule", [
+    {"kind": "recurring", "frequency": "weekly", "expected_time": "07:00:00"},
+    {"kind": "recurring", "frequency": "monthly", "day_of_month": "31", "expected_time": "07:00:00"},
+    {"kind": "recurring", "frequency": "daily"},
+    {"kind": "one_time", "frequency": "daily"},
+    {"kind": "recurring", "frequency": "daily", "expected_time": "07:00:00", "timezone": "Nowhere/Land"},
+    {},
+])
+async def test_an_answer_that_does_not_fit_creates_no_feed(client, schedule):
+    stored = (await upload(client, csv_bytes())).json()
+    assert (await confirm(client, stored["upload_id"], schedule=schedule)).status_code == 422
+    assert await feed_codes(client) == []
+
+
+async def test_change_schedule_is_a_new_version_and_the_same_one_is_unchanged(client):
+    stored = (await upload(client, csv_bytes())).json()
+    feed_id = (await confirm(client, stored["upload_id"])).json()["feed_id"]
+    url = f"/api/amaze/feeds/{feed_id}/schedule"
+    same = await client.post(url, json=SCHEDULE, headers=TEAM)
+    assert same.status_code == 200 and same.json()["outcome"] == "schedule_unchanged"
+    changed = await client.post(url, json=WEEKLY, headers=TEAM)
+    assert changed.status_code == 200 and changed.json()["outcome"] == "schedule_set"
+    assert changed.json()["schedule"]["version"] == 2 and changed.json()["schedule"]["decided_by"] == "dev-backend-team"
+    view = (await client.get(url, headers=STEWARD)).json()  # any backend role reads
+    assert [v["version"] for v in view["versions"]] == [1, 2] and view["current"]["frequency"] == "weekly"
+    assert (await client.post(url, json={"kind": "recurring", "frequency": "weekly"}, headers=TEAM)).status_code == 422
+
+
+@pytest.mark.parametrize(("headers", "status"), [(TEAM, 200), (STEWARD, 403), (REQUESTER, 403), ({}, 401)])
+async def test_only_the_backend_team_changes_a_schedule(client, headers, status):
+    stored = (await upload(client, csv_bytes())).json()
+    feed_id = (await confirm(client, stored["upload_id"])).json()["feed_id"]
+    assert (await client.post(f"/api/amaze/feeds/{feed_id}/schedule", json=WEEKLY, headers=headers)).status_code == status
+
+
+async def test_a_feed_with_no_schedule_says_so_and_an_unknown_feed_is_404(client, db_session):
+    from core.repositories.feeds import FeedRepository
+
+    feed = FeedRepository(db_session).create_candidate(code="syn_old_feed", name="Old feed")
+    db_session.commit()  # the endpoints end their read transactions
+    page = (await client.get(f"/api/amaze/feeds/{feed.id}", headers=OPERATOR)).json()
+    assert page["schedule"] is None and page["schedules"] == []
+    assert (await client.get(f"/api/amaze/feeds/{feed.id}/schedule", headers=OPERATOR)).json() == {
+        "current": None, "versions": []}
+    assert (await client.post(f"/api/amaze/feeds/{feed.id}/schedule", json=WEEKLY, headers=TEAM)).status_code == 200
+    assert (await client.get(f"/api/amaze/feeds/{uuid.uuid4()}/schedule", headers=OPERATOR)).status_code == 404

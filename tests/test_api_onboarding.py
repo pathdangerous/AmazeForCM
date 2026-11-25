@@ -41,6 +41,7 @@ from ports.identity.dev import DevIdentity
 from ports.llm.mock import MockProvider
 from ports.storage.local import LocalBlobStore
 from tests.conftest import running_app
+from tests.schedules import SCHEDULE
 from tests.test_commit_visibility import committed, own_schema  # noqa: F401 (own_schema is a fixture)
 
 pytestmark = pytest.mark.anyio
@@ -53,7 +54,7 @@ STEWARD = {"X-Dev-User": "dev-data-steward"}
 OCTET = {"Content-Type": "application/octet-stream"}
 BASE = "/api/amaze/onboardings"
 CONFIRM = {"filename": DEMO.name, "feed_code": "syn_security_master", "feed_name": "Security master", "sheet": None,
-           "header_row": None}
+           "header_row": None, "schedule": SCHEDULE}
 
 
 class Doubting:

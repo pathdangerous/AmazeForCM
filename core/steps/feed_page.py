@@ -47,6 +47,8 @@ from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
 from core.steps.candidates import candidate_list, covered_by, new_columns
+from core.domain.schedule import FeedSchedule
+from core.repositories.schedules import FeedScheduleRepository
 from core.steps.profile_erase import ProfileErasure, erasures_of, keep_reasons
 from core.steps.s02_profile import ProfileSummary, _key_part, summary_of, todo_actions
 from core.steps.s10_transform import EffectiveKeyPolicy, effective_key_policy
@@ -179,6 +181,8 @@ class FeedPage(BaseModel):
     transformations: TransformationsOnPage | None = None
     todo_actions: list[TodoAction] = []  # phase 7.12, T1: the manual profile actions still to be done by a person
     erasures: list[ProfileErasure] = []  # phase 7.16: the erases of profiling history, oldest first
+    schedule: FeedSchedule | None = None  # phase 7.21: the version in force; None is "Schedule not set"
+    schedules: list[FeedSchedule] = []  # every version, oldest first
 
 
 class RuleOnPage(BaseModel):
@@ -394,6 +398,7 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         **_key_part(proposal.payload))
     signoffs = FeedSignoffRepository(session).history(feed.id)
     last_file = SourceFetchRepository(session).latest(feed.id)
+    schedules = FeedScheduleRepository(session).list_for_feed(feed.id)
     has_file = SourceFetchRepository(session).latest_fetched(feed.id) is not None
 
     next_action: FeedAction | None = None
@@ -411,7 +416,7 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         undeclared_columns=undeclared, missing_columns=missing,
         profiles=[ProfileOnPage(version=p.version, outcome=p.outcome, at=p.created_at, id=p.id, keep_reason=keep[p.id])
                   for p in profiles],
-        erasures=erasures_of(session, feed.id),
+        erasures=erasures_of(session, feed.id), schedule=schedules[-1] if schedules else None, schedules=schedules,
         summary=summary, summary_status=proposal.status if proposal else None, signoffs=signoffs,
         registration=FeedRegistrationRepository(session).current(feed.id), next_action=next_action,
         glossary_run=GlossaryRunRepository(session).latest(feed.id), columns=mapping_table(session, feed, latest),
