@@ -259,6 +259,21 @@ T3 docs.
 - **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.20.
   Push `phase-7.20`; do not merge.
 
+## Phase 7.21 — Recurring or one-time, and a Deliveries dashboard
+
+Plan: `docs/plans/phase-7.21.md`. T1 append-only `feed_schedules` (migration 0039; kind one_time|recurring, frequency, weekday or
+day of month, expected time, grace, timezone, notify owner; a change is a new version; checks in the database). T2 "Recurring
+feed or one-time load?" on "Create the feed" (required, written with the feed), "Change schedule" on the feed page, the audit
+view lists changes; a feed without one shows "Schedule not set". T3 deterministic expected vs actual (`on_time`, `late`,
+`missing`, `resent_quarantined`, `held`, plus `unexpected`; typed results) and a once-per-delivery missing alert to the owner.
+T4 Deliveries tab (figures, calendar, arrival vs window, rows over time), operations ranking, product page "Updated daily".
+T5 demo history with one missing day and two late arrivals, `docs/demo.md`, the demo story.
+
+- Rules: no model call; a schedule is a person's setting (versioned, who and when kept); no guard is loosened.
+- Out of scope: the source's own delivery time, holidays, a schedule proposal.
+- **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.21.
+  Push `phase-7.21`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0039).
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
