@@ -32,13 +32,13 @@ class AuditRow(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     at: datetime
-    kind: Literal["decision", "rerun", "erasure"]
+    kind: Literal["decision", "rerun", "erasure", "upload"]
     feed_id: UUID | None
     feed_code: str | None
     who: str | None  # None: a rerun made before 0035 recorded who
     role: str | None
-    decision: Literal["approved", "rejected", "started", "erased"]
-    item: str  # the proposal's kind, "load" for a rerun, "profiles" for an erase (phase 7.16)
+    decision: Literal["approved", "rejected", "started", "erased", "uploaded"]
+    item: str  # the proposal's kind, "load" for a rerun, "profiles" for an erase (7.16), "glossary_upload" (7.19)
     summary: str
     by: Literal["agent", "manual", "rule", "system"]  # who made the item; `system` when system decided
     agent: str | None
@@ -48,6 +48,7 @@ class AuditRow(BaseModel):
     note: str | None
     proposal_id: UUID | None = None
     load_id: UUID | None = None
+    upload_id: UUID | None = None
 
 
 DECISIONS = text("""
@@ -87,6 +88,17 @@ SELECT e.at, e.feed_id, e.feed_code, e."by", e.reason, e.erased_versions,
 """)
 
 
+UPLOADS = text("""
+SELECT u.id, u.created_at AS at, u.uploaded_by, u.file_name, u.counts
+  FROM glossary_uploads u
+ WHERE u.created_at >= :start AND u.created_at < :end
+   AND CAST(:feed AS uuid) IS NULL  -- an upload has no feed, so a feed filter hides it
+   AND (CAST(:person AS text) IS NULL OR u.uploaded_by = CAST(:person AS text))
+ ORDER BY u.created_at, u.id
+""")
+COUNT_ORDER = ("new", "update", "unchanged", "invalid", "alias_conflict", "duplicate_in_file")
+
+
 def month_bounds(month: str) -> tuple[datetime, datetime]:
     """ValueError for anything but YYYY-MM."""
     found = MONTH.fullmatch(month)
@@ -124,6 +136,12 @@ def audit_rows(session: Session, *, month: str, feed_id: UUID | None = None, per
             at=r.at, kind="erasure", feed_id=r.feed_id, feed_code=r.feed_code, who=r.by, role=None, decision="erased",
             item="profiles", summary="Erased profile versions " + ", ".join(map(str, r.erased_versions)), by="manual",
             agent=None, code_version=r.code_version, waiver=False, rerun_of=None, note=r.reason))
+    for r in session.execute(UPLOADS, params):  # phase 7.19: a glossary upload, then each decision on its rows (above)
+        counts = ", ".join(f"{r.counts[c]} {c.replace('_', ' ')}" for c in COUNT_ORDER if c in r.counts)
+        rows.append(AuditRow(
+            at=r.at, kind="upload", feed_id=None, feed_code=None, who=r.uploaded_by, role=None, decision="uploaded",
+            item="glossary_upload", summary=f"{r.file_name}: {counts}", by="manual", agent=None, code_version=None,
+            waiver=False, rerun_of=None, note=None, upload_id=r.id))
     return sorted(rows, key=lambda row: row.at)  # stable: decisions keep their query order within a time
 
 

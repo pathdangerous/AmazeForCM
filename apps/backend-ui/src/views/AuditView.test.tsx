@@ -27,6 +27,23 @@ test("an erase of profiling history is a row: who erased, which versions, and wh
   expect(erased.textContent).toContain("Old files nobody uses.");
 });
 
+test("phase 7.19: a glossary upload is a row (who, the file, the counts) and so is each decision on its rows", async () => {
+  stubFetch({ [FEEDS]: [], [AUDIT]: view([
+    row({ kind: "upload", decision: "uploaded", item: "glossary_upload", who: "dev-glossary-owner", role: null, feed_id: null,
+      feed_code: null, summary: "march.csv: 2 new, 1 invalid", by: "manual", agent: null, code_version: null, proposal_id: null,
+      upload_id: "u1" }),
+    row({ item: "glossary_import", who: "dev-glossary-owner", role: "glossary_owner", feed_id: null, feed_code: null,
+      summary: "New element best_fcf", by: "manual", agent: null, code_version: null, note: "Looks right." })]) });
+  renderWithTheme(<AuditView devUser="dev-operator" />);
+  const [upload, decision] = await screen.findAllByTestId("audit-row");
+  expect(upload.textContent).toContain("uploaded glossary upload");
+  expect(upload.textContent).toContain("march.csv: 2 new, 1 invalid");
+  expect(upload.textContent).toContain("dev-glossary-owner");
+  expect(decision.textContent).toContain("approved glossary import");
+  expect(decision.textContent).toContain("New element best_fcf (Looks right.)");
+  expect(decision.textContent).toContain("manual");
+});
+
 test("every decision shows who, what, who made the item, the code version, and a waiver or a rerun", async () => {
   stubFetch({ [FEEDS]: [], [AUDIT]: view([
     row(), row({ kind: "decision", decision: "approved", who: "dev-data-owner", role: "data_owner", summary: "Credits are real.",

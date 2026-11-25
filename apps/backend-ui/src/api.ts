@@ -199,10 +199,12 @@ export const makeReport = (body: { kind: string; period_start: string; role: str
   apiPost<{ result: { outcome: string; report_id: string; version: number; reason?: string; figure?: string | null } }>(
     "/api/amaze/reports", body, devUser);
 
-export type AuditRowT = { at: string; kind: "decision" | "rerun" | "erasure"; feed_id: string | null; feed_code: string | null;
-  who: string | null; role: string | null; decision: "approved" | "rejected" | "started" | "erased"; item: string; summary: string;
+export type AuditRowT = { at: string; kind: "decision" | "rerun" | "erasure" | "upload"; feed_id: string | null;
+  feed_code: string | null; who: string | null; role: string | null;
+  decision: "approved" | "rejected" | "started" | "erased" | "uploaded"; item: string; summary: string;
   by: "agent" | "manual" | "rule" | "system"; agent: string | null; code_version: number | null; waiver: boolean;
-  rerun_of: string | null; note: string | null; proposal_id: string | null; load_id: string | null };
+  rerun_of: string | null; note: string | null; proposal_id: string | null; load_id: string | null;
+  upload_id?: string | null }; // phase 7.19: a glossary upload
 export type AuditViewT = { month: string; count: number; truncated: boolean; rows: AuditRowT[] };
 
 // Phase 7.18: GET /api/amaze/settings, read only.
