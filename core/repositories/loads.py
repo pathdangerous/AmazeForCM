@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from core.domain.load import (
     STAGES, ArrivalOutcome, Load, LoadDraft, LoadStage, LoadStageDraft, LoadStatus, Stage)
 from core.repositories.errors import FeedNotFound, FeedNotRegistered, LoadInProgress, LoadNotFound
-from core.repositories.tables import FeedRow, LoadStageRow
+from core.repositories.tables import FeedRow, LoadStageRow, StandardRecordRow
 from core.repositories.tables import LoadRow as Row
 
 _STATUS = TypeAdapter(LoadStatus)
@@ -127,6 +127,15 @@ class LoadRepository:
     def latest_released(self, feed_id: UUID) -> Load | None:
         """The feed's newest released load (what a product shows), whatever came after it."""
         query = (select(Row).where(Row.feed_id == feed_id, Row.status == "released")
+                 .order_by(Row.received_at.desc(), Row.created_at.desc()).limit(1))
+        row = self._session.scalars(query).first()
+        return None if row is None else Load.model_validate(row)
+
+    def latest_with_records(self, feed_id: UUID) -> Load | None:
+        """Phase 7.20: the feed's newest loaded, released or held load that has standard records (a load held on
+        arrival has none), whatever its purpose."""
+        has_records = select(StandardRecordRow.id).where(StandardRecordRow.load_id == Row.id).exists()
+        query = (select(Row).where(Row.feed_id == feed_id, Row.status.in_(("loaded", "released", "held")), has_records)
                  .order_by(Row.received_at.desc(), Row.created_at.desc()).limit(1))
         row = self._session.scalars(query).first()
         return None if row is None else Load.model_validate(row)

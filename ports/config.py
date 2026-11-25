@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     # Phase 6: the longest one validation rule may run (the DuckDB sandbox interrupts it), and the number of days
     # after go-live in which every scheduled load is reported to the owner and operations (hypercare).
     rule_timeout_seconds: int = Field(default=5, ge=1)
+    # Phase 7.20: the most rows one page of "click a rule" may hold (a larger size is cut to it).
+    rule_rows_max_size: int = Field(default=200, ge=1)
     hypercare_days: int = Field(default=10, ge=1)
     # Phase 7: a load left received this long by a process that died is abandoned before the next load (step 12).
     load_stale_minutes: int = Field(default=30, ge=1)

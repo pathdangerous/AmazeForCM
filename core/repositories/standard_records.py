@@ -49,6 +49,21 @@ class StandardRecordRepository:
                  .order_by(Row.row_number).limit(limit))
         return list(self._session.scalars(query))
 
+    def rule_counts(self, load_id: UUID, rule_key: str) -> tuple[int, int, int]:
+        """Phase 7.20: (records, records the rule flagged, records a waiver took the rule's flag out of)."""
+        return tuple(self._session.execute(select(
+            func.count(), func.count().filter(rule_key == any_(Row.flags)),
+            func.count().filter(rule_key == any_(Row.waived))).where(Row.load_id == load_id)).one())
+
+    def rule_rows(self, load_id: UUID, rule_key: str, *, failing_only: bool, offset: int,
+                  limit: int) -> list[StandardRecord]:
+        """Phase 7.20: one page by row number; with failing_only, the records the rule flagged."""
+        query = select(Row).where(Row.load_id == load_id)
+        if failing_only:
+            query = query.where(rule_key == any_(Row.flags))
+        query = query.order_by(Row.row_number).offset(offset).limit(limit)
+        return [StandardRecord.model_validate(r) for r in self._session.scalars(query)]
+
     def iter_for_load(self, load_id: UUID, limit: int | None = None, batch: int = 1000) -> Iterator[StandardRecord]:
         """Every record of the load (or the first `limit`), by row number, read in batches."""
         query = select(Row).where(Row.load_id == load_id).order_by(Row.row_number)

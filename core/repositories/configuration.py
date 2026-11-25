@@ -132,6 +132,10 @@ class RuleRepository:
         self._session.flush()
         return Rule.model_validate(row)
 
+    def get(self, rule_id: UUID) -> Rule | None:
+        row = self._session.get(RuleRow, rule_id)
+        return None if row is None else Rule.model_validate(row)
+
     def current_for_feed(self, feed_id: UUID) -> list[Rule]:
         """The highest version of every rule of the feed, by rule key."""
         query = (
