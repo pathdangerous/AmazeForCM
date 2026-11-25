@@ -2,6 +2,7 @@ import { Alert, Button, Text, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 import { StatusChip } from "../../../ui-shared/phase711";
 import { approveConfident, describeError, getChain, type ChainReview as Chain, type StepName } from "../api";
+import RuleRowsButton from "./RuleRowsPanel";
 import { StateBadge, STEP_LABELS } from "./Stepper";
 
 // Phase 7.13, T2: every draft of the chain, by step. Blocked items (no single recommended value) first, then the
@@ -72,6 +73,9 @@ export default function ChainReview({ id, devUser, stamp, onOpenStep, onChanged 
                   {isBlocked && <StatusChip tone="attention">Blocked</StatusChip>}
                   {low_confidence && <StatusChip tone="attention">Low confidence</StatusChip>}
                   <span>{item.summary}</span>
+                  {step.step === "rules" && item.column && (
+                    <RuleRowsButton ruleId={item.proposal_id} ruleKey={item.column} devUser={devUser} variant="subtle" />
+                  )}
                   <Text size="sm" c="dimmed" component="span">
                     {item.confidence === null ? "" : `${Math.round(item.confidence * 100)}%`} {item.status}
                   </Text>

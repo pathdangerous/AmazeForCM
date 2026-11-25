@@ -4,6 +4,7 @@ import {
   apiPost, describeError, words, type Backtest, type FeedPage, type PendingRule, type RefusedRule, type ReturnedRule,
 } from "../api";
 import { formatWhen } from "../theme";
+import RuleRowsButton from "./RuleRowsPanel";
 
 // Step 09 on a registered feed (phase 6 plan, section 10): the rules it has, the rules waiting for the data steward
 // and then the checker, and Propose rules for the steward. A rule is SQL over the table `curated` that returns the
@@ -53,8 +54,8 @@ function BacktestDetail({ back }: { back: Backtest | null }) {
   );
 }
 
-function PendingRuleRow({ rule, roles, busy, onDecide }: {
-  rule: PendingRule; roles: string[]; busy: boolean;
+function PendingRuleRow({ rule, roles, busy, devUser, onDecide }: {
+  rule: PendingRule; roles: string[]; busy: boolean; devUser: string;
   onDecide: (id: string, decision: "approved" | "rejected", note: string) => void;
 }) {
   const [note, setNote] = useState("");
@@ -63,7 +64,8 @@ function PendingRuleRow({ rule, roles, busy, onDecide }: {
   const mine = rule.status === "pending" && roles.includes(role);
   return (
     <Table.Tr data-testid="pending-rule" data-rule={rule.payload.rule_key}>
-      <Table.Td><code>{rule.payload.rule_key}</code><div className="muted">{rule.payload.description}</div></Table.Td>
+      <Table.Td><code>{rule.payload.rule_key}</code><div className="muted">{rule.payload.description}</div>
+        <RuleRowsButton ruleId={rule.id} ruleKey={rule.payload.rule_key} devUser={devUser} /></Table.Td>
       <Table.Td><code>{rule.payload.sql}</code></Table.Td>
       <Table.Td>{share(rule.payload.backtest)}<BacktestDetail back={rule.payload.backtest} /></Table.Td>
       <Table.Td data-testid="rule-step">
@@ -143,7 +145,8 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
             <Table.Tbody>
               {rules.current.map((r) => (
                 <Table.Tr key={r.id} data-testid="rule-row" data-rule={r.rule_key}>
-                  <Table.Td><code>{r.rule_key}</code><div className="muted">{r.description}</div></Table.Td>
+                  <Table.Td><code>{r.rule_key}</code><div className="muted">{r.description}</div>
+                    <RuleRowsButton ruleId={r.id} ruleKey={r.rule_key} devUser={devUser} /></Table.Td>
                   <Table.Td><code>{r.sql}</code></Table.Td>
                   <Table.Td>{share(r.backtest)}<BacktestDetail back={r.backtest} /></Table.Td>
                   <Table.Td>{r.version}</Table.Td>
@@ -164,7 +167,7 @@ export default function RulesSection({ page, devUser, roles, onChange, onMessage
                   <Table.Th>Status</Table.Th><Table.Th /></Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {rules.pending.map((r) => <PendingRuleRow key={r.id} rule={r} roles={roles} busy={busy} onDecide={decide} />)}
+                {rules.pending.map((r) => <PendingRuleRow key={r.id} rule={r} roles={roles} busy={busy} devUser={devUser} onDecide={decide} />)}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>

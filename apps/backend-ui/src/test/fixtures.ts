@@ -4,8 +4,8 @@ import { render } from "@testing-library/react";
 import { createElement, type ReactElement } from "react";
 import { vi } from "vitest";
 import type {
-  Conditions, FeedPage, LoadOnPage, OnboardingItem, OnboardingRow, StepInputs, StepName, StepState, TimelineEntry, User,
-  Workspace,
+  Conditions, FeedPage, LoadOnPage, OnboardingItem, OnboardingRow, RuleRowsShown, StepInputs, StepName, StepState,
+  TimelineEntry, User, Workspace,
 } from "../api";
 import { cssVariablesResolver, theme } from "../theme";
 import type { ItemActions } from "../views/steps/shared";
@@ -283,6 +283,22 @@ export function itemActions(overrides: Partial<ItemActions> = {}): ItemActions {
   return {
     readOnly: false, busy: false, marked: [], editing: null, editError: null,
     decide: vi.fn(), startEdit: vi.fn(), saveEdit: vi.fn(), cancelEdit: vi.fn(), ...overrides,
+  };
+}
+
+// ---- phase 7.20: the rows of a rule. Row 2 fails, row 3 is waived, the rest pass; bid_price is the rule's column.
+export const RULE_ID = "00000000-0000-4000-8000-0000000000r1";
+export const ruleRowsPath = (query = "failing_only=false&page=1") => `GET /api/amaze/rules/${RULE_ID}/rows?${query}`;
+export function ruleRowsShown(overrides: Partial<RuleRowsShown> = {}): RuleRowsShown {
+  const values = (price: number) => ({ bid_price: price, instrument_id: `syn-${price}` });
+  return {
+    outcome: "rows_shown", rule: { rule_key: "price_positive", description: "Price is above zero",
+                                   sql: "SELECT _row FROM curated WHERE bid_price <= 0", element_keys: ["bid_price"] },
+    source: "draft", load_id: null,
+    columns: [{ key: "bid_price", affected: true }, { key: "instrument_id", affected: false }],
+    rows: [{ row: 1, values: values(10), passes: true, waived: false }, { row: 2, values: values(-5), passes: false, waived: false },
+           { row: 3, values: values(-1), passes: false, waived: true }],
+    counts: { rows: 6, failing: 1, waived: 1, shown: 6 }, page: 1, size: 3, ...overrides,
   };
 }
 

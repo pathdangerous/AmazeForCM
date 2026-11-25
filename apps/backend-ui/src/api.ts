@@ -666,6 +666,21 @@ export type ChainItem = { item: OnboardingItem; based_on: ChainBase[]; blocked: 
 export type ChainStep = { step: StepName; state: StepState; items: ChainItem[] };
 export type ChainReview = { run_mode: "step" | "chain"; current_step: StepName; steps: ChainStep[];
                             blocked: Record<string, string>; auto_accept_confidence: number };
+// ---- phase 7.20: click a rule, see its rows. A typed answer: the refusals are outcomes, not HTTP errors.
+export type RuleRowsShown = {
+  outcome: "rows_shown";
+  rule: { rule_key: string; description: string; sql: string; element_keys: string[] };
+  source: "draft" | "load"; load_id: string | null;
+  columns: { key: string; affected: boolean }[];
+  rows: { row: number; values: Record<string, unknown>; passes: boolean; waived: boolean }[];
+  counts: { rows: number; failing: number; waived: number; shown: number };
+  page: number; size: number;
+};
+export type RuleRowsAnswer = RuleRowsShown | { outcome: "rule_not_found" } | { outcome: "no_file"; reason: string }
+  | { outcome: "sql_refused"; reason: string };
+export const getRuleRows = (ruleId: string, failingOnly: boolean, page: number, devUser: string) =>
+  apiGet<RuleRowsAnswer>(`/api/amaze/rules/${ruleId}/rows?failing_only=${failingOnly}&page=${page}`, devUser);
+
 export const runAllAgents = (id: string, devUser: string) => apiPost<Workspace>(`${ONBOARDINGS}/${id}/run-all`, {}, devUser);
 export const getChain = (id: string, devUser: string) => apiGet<ChainReview>(`${ONBOARDINGS}/${id}/chain`, devUser);
 export const approveConfident = (id: string, step: StepName, devUser: string) =>

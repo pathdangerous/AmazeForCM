@@ -43,6 +43,17 @@ test("it lists every draft by step, blocked and low confidence flagged, with wha
   expect(open).toHaveBeenCalledWith("glossary");
 });
 
+test("7.20: a rule of the chain has a button that shows its rows; other steps' items do not", async () => {
+  const id = ruleItem().proposal_id;
+  stubFetch({ [`GET ${WS_PATH}/chain`]: chain(),
+              [`GET /api/amaze/rules/${id}/rows?failing_only=false&page=1`]: { outcome: "no_file", reason: "No file yet." } });
+  show();
+  const rules = await screen.findByTestId("chain-step-rules");
+  fireEvent.click(within(rules).getByRole("button", { name: "Show rows of price_positive" }));
+  expect(await screen.findByText("No file yet.")).toBeTruthy();
+  expect(within(screen.getByTestId("chain-step-mapping")).queryByRole("button", { name: /Show rows/ })).toBeNull();
+});
+
 test("Approve all confident sends the step and shows the new chain", async () => {
   const after = chain({ steps: chain().steps.map((s) => s.step === "glossary"
     ? { ...s, items: s.items.map((i) => ({ ...i, confident: false, item: { ...i.item, status: "approved" } })) } : s) });

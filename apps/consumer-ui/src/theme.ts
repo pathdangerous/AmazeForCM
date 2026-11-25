@@ -23,6 +23,12 @@ export const SHARED = {
   gridHeader: "#FEF1CC",
   gridFilter: "#FFF8E5",
   navMuted: "#C9CED6",
+  // Phase 7.20: a rule's rows. Fills with dark text; the word in the cell is the other signal, never the colour alone.
+  passFill: "#CDEBD3",
+  passText: "#14391F",
+  failFill: "#F8CFCB",
+  failText: "#6B130C",
+  waivedFill: "#FFE08A",
 };
 export const LIGHT = {
   page: "#F4F5F7",
@@ -89,6 +95,12 @@ export const CONTRAST_PAIRS = [
   ["dark: primary", "#1F2329", "#FAB800"],
   ["dark: info fill", "#1F2329", "#DBEAFE"],
   ["dark: success fill", "#FFFFFF", "#2563EB"],
+  ["light: rule row passes", "#14391F", "#CDEBD3"],
+  ["light: rule row fails", "#6B130C", "#F8CFCB"],
+  ["light: rule row waived", "#1F2329", "#FFE08A"],
+  ["dark: rule row passes", "#14391F", "#CDEBD3"],
+  ["dark: rule row fails", "#6B130C", "#F8CFCB"],
+  ["dark: rule row waived", "#1F2329", "#FFE08A"],
 ] as const;
 
 const BRAND: MantineColorsTuple = [
@@ -144,6 +156,8 @@ export const cssVariablesResolver = (_theme?: unknown): ReturnType<CSSVariablesR
     "--amz-info": SHARED.info, "--amz-marker": SHARED.marker, "--amz-on-bright": SHARED.onBright,
     "--amz-disabled": SHARED.disabled, "--amz-success": SHARED.success,
     "--amz-grid-header": SHARED.gridHeader, "--amz-grid-filter": SHARED.gridFilter,
+    "--amz-pass": SHARED.passFill, "--amz-on-pass": SHARED.passText, "--amz-fail": SHARED.failFill,
+    "--amz-on-fail": SHARED.failText, "--amz-waived": SHARED.waivedFill,
     "--mantine-primary-color-contrast": SHARED.onBright,
     "--mantine-color-brand-contrast": SHARED.onBright,
   },

@@ -50,16 +50,18 @@ loads, downloading the rows, a new CSV export.
     A page past the end is an empty list, not an error.
 12. Auth: any backend role (`backend_user`), like the other reads. The consumer app never calls it.
 13. No migration. If one seems needed, stop.
-14. UI: one shared `RuleRowsPanel` in `apps/ui-shared/` (the folder both apps already import from), shown as a Mantine `Drawer`
-    (focus trap and Esc come with it; focus returns to the opener). Its opener is a button on the rule card in the Rules step,
-    on each rules item of the chain review, and on each rule of the feed page (current and pending).
+14. UI: one `RuleRowsPanel` (`apps/backend-ui/src/views/RuleRowsPanel.tsx`; as built: not `apps/ui-shared/`, because only
+    backend-ui calls this endpoint and that folder holds what both apps import), shown as a Mantine `Drawer` (focus trap and Esc
+    come with it; focus returns to the opener). Its opener is a "Show rows" button on the rule card in the Rules step, on each
+    rules item of the chain review, and on each rule of the feed page (current and pending). The three openers share it.
 15. Colour: fills with dark text, never text colour alone. New tokens in `SHARED` of `theme.ts` (byte-identical in both apps):
     pass fill, fail fill, waived fill and one text colour for each, with all three pairs in `CONTRAST_PAIRS` at 4.5:1. Each
     coloured cell also carries the words ("passes", "fails", "waived") as visually-hidden text and in `aria-label`, and the
     header shows a small legend with the same three words. Affected column headers get the existing marker fill.
 16. The panel does not use `DataGrid` (its sort and filter run on the client over all rows; this table is paged by the server).
-17. Demo story: one step in `e2e/tests/poc_story.spec.ts` (and the same in `e2e/screens/screens.spec.ts`): open a rule in the
-    Rules step and see the failing count. If the story has no rule with a failing row, the step asserts the count line shown.
+17. Demo story: one step in the `step-rules` hook of `e2e/tests/demo_story.spec.ts` (the story that walks the workspace's Rules
+    step; the PoC story approves rules on the feed page and is unchanged, so `screens.spec.ts` is unchanged too): open a rule,
+    see "N of M rows fail" and a coloured cell, press Escape, see the focus return to the button.
 18. Test time: the API tests share the existing fixtures for a configured feed; the added time is stated in the report.
 
 ## 3. Tasks

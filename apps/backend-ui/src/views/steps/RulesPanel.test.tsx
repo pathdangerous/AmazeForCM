@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { itemActions, renderWithTheme, ruleItem, workspace } from "../../test/fixtures";
+import { itemActions, renderWithTheme, ruleItem, stubFetch, workspace } from "../../test/fixtures";
 import RulesPanel from "./RulesPanel";
 
 afterEach(() => {
@@ -10,9 +10,18 @@ afterEach(() => {
 
 function show(items = [ruleItem()], actions = itemActions()) {
   const ws = workspace("rules", "ready", { items });
-  const view = renderWithTheme(<RulesPanel ws={ws} items={ws.items} actions={actions} />);
+  const view = renderWithTheme(<RulesPanel ws={ws} items={ws.items} actions={actions} devUser="dev-data-steward" />);
   return { actions, ...view };
 }
+
+test("7.20: the rule's card has a button that shows the rows the rule checked", async () => {
+  const id = ruleItem().proposal_id;
+  const fetched = stubFetch({ [`GET /api/amaze/rules/${id}/rows?failing_only=false&page=1`]: { outcome: "rule_not_found" } });
+  show();
+  fireEvent.click(within(screen.getByTestId(`item-${id}`)).getByRole("button", { name: "Show rows of price_positive" }));
+  expect(await screen.findByText("This rule was not found.")).toBeTruthy();
+  expect(fetched).toHaveBeenCalledWith(`/api/amaze/rules/${id}/rows?failing_only=false&page=1`, expect.anything());
+});
 
 test("a rule shows its key, description, SQL in a monospace block and its flags on this file", () => {
   show();

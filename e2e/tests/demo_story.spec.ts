@@ -54,6 +54,16 @@ const hooks: StepHooks = {
   },
   // T7: add one rule by hand (back-tested), edit one agent rule, reject one
   "step-rules": async (page) => {
+    // 7.20: click a rule: its rows open in a panel with the failing count; Escape closes it and the focus returns
+    const opener = page.getByRole("button", { name: /^Show rows of / }).first();
+    await opener.focus();
+    await opener.click();
+    const rows = page.getByRole("dialog").getByTestId("rule-rows");
+    await expect(rows.getByTestId("rule-rows-counts")).toContainText(/\d+ of \d+ rows fail/, { timeout: 60_000 });
+    await expect(rows.locator("td[data-state]").first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(opener).toBeFocused();
     const cards = page.locator('[data-testid^="item-"]:not([data-testid^="item-badge"]):not([data-testid="item-decider"])');
     await page.getByRole("button", { name: "Add rule" }).click();
     const form = page.getByRole("group", { name: "Add rule" });

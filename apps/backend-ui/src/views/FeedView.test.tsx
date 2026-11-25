@@ -178,6 +178,26 @@ const SUMMARY = {
 };
 const STEWARD = { ...USERS[1], roles: ["data_steward"] };
 
+test("7.20: each rule of the feed page, stored or waiting, has a button that shows the rows it checked", async () => {
+  const back = { status: "not_back_tested" as const, total_rows: 0, flagged_rows: 0, share: null, deliveries: [] };
+  const stored = { id: "rule-row-1", rule_key: "price_positive", version: 1, description: "Price is above zero",
+                   sql: "SELECT _row FROM curated", proposal_id: "p1", created_at: "2026-11-18T09:00:00Z", backtest: back };
+  const waiting = { id: "proposal-2", status: "pending" as const, created_at: "2026-11-18T09:00:00Z", decisions: [],
+                    required_approver_roles: ["data_steward", "checker"], payload: {
+                      rule_key: "volume_present", sql: "SELECT _row FROM curated", description: "Volume is present",
+                      element_keys: ["volume"], template: null, backtest: back } };
+  show(feedPage({ rules: { current: [stored], pending: [waiting], rejected_keys: [] } }), {}, STEWARD, {
+    "GET /api/amaze/rules/rule-row-1/rows?failing_only=false&page=1": { outcome: "no_file", reason: "No file yet." },
+    "GET /api/amaze/rules/proposal-2/rows?failing_only=false&page=1": { outcome: "no_file", reason: "No file yet." } });
+  const rules = await screen.findByTestId("section-rules");
+  fireEvent.click(within(rules).getByRole("button", { name: "Show rows of price_positive" }));
+  expect(await screen.findByText("No file yet.")).toBeTruthy();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(within(rules).getByRole("button", { name: "Show rows of volume_present" }));
+  expect(await screen.findByText("No file yet.")).toBeTruthy();
+});
+
 test("P22 and P23: the last Propose rules answer survives a remount (this tab only); its line is in Rules", async () => {
   sessionStorage.clear();
   const answer = { [`POST /api/amaze/feeds/${FEED_ID}/rules/propose`]: { result: {

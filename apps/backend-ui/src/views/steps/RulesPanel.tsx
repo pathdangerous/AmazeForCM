@@ -1,4 +1,5 @@
 import { Text } from "@mantine/core";
+import RuleRowsButton from "../RuleRowsPanel";
 import ItemCard from "./ItemCard";
 import { asRecord, asText, type PanelProps } from "./shared";
 
@@ -12,7 +13,7 @@ function flagsLine(payload: Record<string, unknown>): string {
 }
 
 // The rules step (task 7.3b): rule key, description, the SQL in a monospace block and the flags on this file.
-export default function RulesPanel({ items, actions }: PanelProps) {
+export default function RulesPanel({ items, actions, devUser }: PanelProps & { devUser: string }) {
   if (items.length === 0) return <Text>No rules were proposed.</Text>;
   return (
     <ul style={{ padding: 0, margin: 0 }}>
@@ -24,6 +25,7 @@ export default function RulesPanel({ items, actions }: PanelProps) {
             overflowX: "auto", whiteSpace: "pre-wrap", margin: "6px 0",
           }}>{asText(item.payload.sql)}</pre>
           <Text size="sm">{flagsLine(item.payload)}</Text>
+          <RuleRowsButton ruleId={item.proposal_id} ruleKey={asText(item.payload.rule_key)} devUser={devUser} />
         </ItemCard>
       ))}
     </ul>
