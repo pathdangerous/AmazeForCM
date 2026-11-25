@@ -7,6 +7,7 @@ import {
   type ElementOption, type GlossaryElement,
 } from "../api";
 import { formatWhen } from "../theme";
+import GlossaryUploads from "./GlossaryUploads";
 
 function domainLabel(domains: DomainCount[], domain: string): string {
   return domains.find((d) => d.domain === domain)?.label ?? domain;
@@ -232,6 +233,9 @@ export default function GlossaryView({ devUser, canDecide, changed, people, onCh
         : <div data-testid="glossary-decided-list">
             {decidedList.map((p) => <DecidedRow key={p.id} proposal={p} name={name} />)}
           </div>)}
+
+      <GlossaryUploads devUser={devUser} canDecide={canDecide} people={people} changed={changed} domains={domains}
+                       onChange={onChange} />
 
       <Title order={3} mt="xl" mb="xs">Elements</Title>
       <div className="toolbar">

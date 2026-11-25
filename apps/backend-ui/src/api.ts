@@ -701,6 +701,49 @@ export async function approveStep(id: string, visibility: Visibility | undefined
   return (await response.json()) as { advance: StepAdvance; workspace: Workspace };
 }
 
+// ---- phase 7.19: glossary upload; each row is a proposal the glossary owner approves
+export type UploadLabel = "new" | "update" | "unchanged" | "invalid" | "alias_conflict" | "duplicate_in_file";
+export type GlossaryUploadRow = {
+  row: number; key: string; label: UploadLabel; detail: string | null; changes: string[]; used_by_mappings: number | null;
+  element: Record<string, unknown> | null; proposal_id: string | null;
+  status?: "pending" | "approved" | "rejected" | null; decided_by?: string | null; note?: string | null;
+};
+export type GlossaryUploadSummary = { id: string; created_at: string; uploaded_by: string; file_name: string;
+  counts: Record<string, number> };
+export type GlossaryUploadPage = GlossaryUploadSummary & { rows: GlossaryUploadRow[] };
+export type GlossaryUploaded = { outcome: "uploaded"; upload_id: string; file_name: string; counts: Record<string, number>;
+  rows: GlossaryUploadRow[]; proposals: number };
+export type GlossaryFileRefused = { outcome: "file_refused"; reason: string; detail: string };
+export type ImportItem =
+  | { outcome: "approved"; proposal_id: string; element: GlossaryElement }
+  | { outcome: "rejected"; proposal_id: string }
+  | { outcome: "refused"; proposal_id: string; reason: string; detail: string };
+
+// The file goes up as the raw body (a refused file is an answer: 413 or 422 with `file_refused`).
+export async function uploadGlossary(file: Blob, filename: string, devUser: string): Promise<GlossaryUploaded | GlossaryFileRefused> {
+  const path = `/api/amaze/glossary/uploads?filename=${encodeURIComponent(filename)}`;
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/octet-stream", "X-Dev-User": devUser },
+    body: file,
+  });
+  if (response.ok || response.status === 413 || response.status === 422) {
+    const body = (await response.clone().json().catch(() => null)) as { outcome?: string } | null;
+    if (body && (body.outcome === "uploaded" || body.outcome === "file_refused")) {
+      return body as GlossaryUploaded | GlossaryFileRefused;
+    }
+  }
+  throw await failure(path, response);
+}
+export const decideImports = (ids: string[], decision: "approved" | "rejected", note: string, devUser: string) =>
+  apiPost<{ items: ImportItem[] }>("/api/amaze/glossary/imports/decision",
+                                   { proposal_ids: ids, decision, note: note.trim() || null }, devUser);
+export async function getGlossaryTemplate(devUser: string): Promise<string> {
+  const response = await fetch("/api/amaze/glossary/template", { headers: { Accept: "text/csv", "X-Dev-User": devUser } });
+  if (!response.ok) throw new ApiError(response.status, `The template returned HTTP ${response.status}`);
+  return response.text();
+}
+
 // A sentence for the person, never a bare status code.
 export function describeError(err: unknown): string {
   if (err instanceof ApiError) {
