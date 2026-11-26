@@ -211,6 +211,25 @@ def test_approving_the_element_later_creates_the_proposal_after_go_live_and_the_
     assert now - set(live.mapping_ids), "the new mapping is not in the go-live: the engine refuses loads until a new one"
 
 
+def test_an_approval_through_the_item_route_shows_the_mapping_proposal_it_made_in_the_step(db_session, glossary, tmp_path):
+    from core.steps.onboarding import show_requested_mapping
+
+    w = at_mapping(db_session, tmp_path)
+    column = pick(w)[0]
+    settle_mapping(w, [column], by=REQUESTER)
+    approve(w)
+    work(w)
+    [element] = requested_proposals(db_session, w.feed_id, "pending")
+    done = decide_element(db_session, proposal_id=element.id, user=OPERATOR, decision="approved", choice=None, note=None,
+                          notifier=InAppNotifier(db_session), stewards=[])
+    assert column not in {i.column for i in view(w).items if i.kind == "mapping"}, "not in the step yet"
+
+    show_requested_mapping(db_session, session_id=w.session_id, result=done, user=OPERATOR)
+
+    [made] = [i for i in view(w).items if i.kind == "mapping"]
+    assert (made.column, made.origin, made.author, made.status) == (column, "manual", REQUESTER.id, "pending")
+
+
 def test_an_element_that_was_not_requested_creates_no_mapping_proposal(db_session, glossary, tmp_path):
     from tests.configured import glossary_proposal, new_element
 

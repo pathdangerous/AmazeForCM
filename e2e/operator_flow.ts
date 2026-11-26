@@ -80,25 +80,30 @@ export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {})
       await settle(page);
     }
 
-    // 7.22: columns no glossary element fits. Request a glossary element for the first one (once, so the Glossary requests
-    // step has one to approve); Ignore every other one. Approve & next waits until each has a choice.
+    // 7.22: columns no glossary element fits. Ignore the first one (it is left out, not loaded) and Request a glossary
+    // element for every other one, so the Glossary requests step has them to approve. Approve & next waits until each has
+    // a choice. The buttons are hidden while a choice is being saved, so each wait is for them to come back.
     const cannotMap = page.getByTestId("cannot-map");
     if (await cannotMap.isVisible()) {
-      const request = cannotMap.getByRole("button", { name: /^Request glossary element for / }).first();
-      if (!requested && (await request.count()) > 0) {
-        await request.click();
-        requested = true;
+      const buttons = cannotMap.getByRole("button", { name: /^(Ignore|Request) / });
+      await buttons.first().waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
+      const ignoreOne = cannotMap.getByRole("button", { name: /^Ignore (?!all)/ }).first();
+      if (!requested && (await ignoreOne.count()) > 0) {
+        await ignoreOne.click();
+        requested = true; // "decided": one column is ignored, once
+        await settle(page);
+        await buttons.first().waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
+      }
+      const requestAll = cannotMap.getByRole("button", { name: "Request all undecided" });
+      if (await requestAll.isVisible()) {
+        await requestAll.click();
         await settle(page);
       }
-      const ignoreAll = cannotMap.getByRole("button", { name: "Ignore all undecided" });
-      if (await ignoreAll.isVisible()) {
-        await ignoreAll.click();
-        await settle(page);
-      }
-      const one = cannotMap.getByRole("button", { name: /^Ignore (?!all)/ });
+      const one = cannotMap.getByRole("button", { name: /^Request glossary element for / });
       while ((await one.count()) > 0) {
         await one.first().click();
         await settle(page);
+        await buttons.first().waitFor({ state: "visible", timeout: 5_000 }).catch(() => {});
       }
     }
 
@@ -130,6 +135,7 @@ export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {})
         const before = await open.count();
         if (before === 0) break;
         const card = open.first();
+        const id = await card.getAttribute("data-testid"); // pin the card: the list may still be filling in
         const flagged = /Flags \d+ of \d+ rows/.test((await card.textContent()) ?? "");
         const choice = card.getByRole("combobox");
         if (!flagged && (await choice.count()) > 0) await choice.selectOption({ index: 1 });
@@ -140,9 +146,9 @@ export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {})
         } else {
           await card.getByRole("button", { name: "Approve", exact: true }).click();
         }
-        // wait for the decision to show (the card loses its Approve button) before the next one: the card locator is
-        // lazy, so a last card that is already decided would otherwise be waited for until the test times out
-        await expect(open).toHaveCount(before - 1, { timeout: 60_000 });
+        // wait for the decision to show (the card loses its Approve button) before the next one. The card is pinned by
+        // its id (7.22): counting the open cards is not enough, a card may appear while another is decided
+        await expect(page.getByTestId(id!).getByRole("button", { name: "Approve", exact: true })).toHaveCount(0, { timeout: 60_000 });
         await settle(page);
       }
     }

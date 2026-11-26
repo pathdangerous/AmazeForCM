@@ -264,6 +264,36 @@ Approved. Q1, Q3, Q4, Q5 as proposed. Q2 changed: the mapping proposal is author
 approving owner. Known limit accepted and recorded (assumption 13); the completion report shows "no rules yet" for such a column.
 `docs/demo.md` tells the reader to finish or delete open onboardings (the demo reset does it) before pulling 7.22.
 
+## Outcome and deviations (T1 to T6)
+
+Commits: T0 `ef7d744`, `723b691` (review); T1 `c2648fb`; T2 `f430854`; T3 `8e85c0a`; T4 `24d2300`; T5 `3650e21`; T6 (this one).
+
+- **One endpoint, not two:** `POST /onboardings/{id}/cannot-map {action: ignore | request, columns}` serves Ignore and Request
+  (the plan named `POST .../glossary-requests {column}`). It takes several columns, and the UI has "Ignore all undecided" and
+  "Request all undecided" (a demo file has 26 such columns).
+- **Files outside the plan:** `core/steps/rule_rows.py` (7.20's "Show rows" used `draft_config()`; it now reads the approved
+  mappings and transformations, the step flow having no drafts); `core/steps/onboarding.py`'s `show_requested_mapping()` (a
+  requested column's mapping proposal is an item of the step also when the glossary owner approves through the item route);
+  `approve_and_next()` refuses a visibility given at the wrong step before it asks for decisions; `apps/ui-shared/ElementLink.tsx`
+  and a `#/glossary/<key>` route in the backend UI; `tests/test_migrations.py`, `test_prompts.py`, `test_domain_models.py`
+  (constants); `e2e/operator_flow.ts` (the walk ignores one cannot-map column and requests the rest; it pins the card it decides
+  by id instead of counting open cards).
+- **The one real model-free guarantee kept:** the Request decision calls no model; the builder runs afterwards (background or the
+  Glossary requests job), logged as before. The mapping proposal made on approval is manual and has no log row.
+- **Test scaffolding, named:** the demo file has 26 columns the seed glossary has no element for, so the walk-through tests
+  call `tests/test_onboarding.py::glossary_has_them()` (an approved element and mapping per such column) to keep a fully mapped
+  feed. The real Request path is in `tests/test_glossary_requests.py`. `test_feed_delete.py` queues a `requested` glossary run
+  by hand, since the onboarding no longer queues one.
+- **Tests removed or rewritten (T1):** see the T1 commit message (chain tests and `test_drafts.py` removed; the rest moved to
+  the step flow).
+- **Commit-visibility:** the existing `test_every_committing_workspace_endpoint_commits_what_it_wrote` gained one happy-path
+  request and one ignore through the real schema (a few hundred milliseconds); `approve-confident` is in the same test.
+- **No migration to drop anything:** `proposal_bases`, `run_mode` and the four chain event names stay.
+- **Noticed, not touched:** `Stepper.canOpen` still opens a `ready`/`needs_decision` step ahead of the cursor (harmless);
+  `docs/ui-polish.md` lines about the Chain review describe a removed screen.
+- **Open at the end:** a rejected glossary request can only be Ignored (no second request: the builder does not ask again about
+  a column it was asked about).
+
 ## Out of scope
 
 Taking back a glossary request; asking for several requested columns in one click; a MappingAgent run after an element approval;

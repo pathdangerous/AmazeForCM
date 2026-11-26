@@ -72,6 +72,7 @@ from core.steps.onboarding import (
     enter_step,
     approve_confident,
     manual_rule_input,
+    show_requested_mapping,
     timeline,
     workspace,
 )
@@ -232,6 +233,7 @@ def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session
                                  notifier=notifier, settings=settings)
         sessions.add_event(session_id, step=sess.current_step, event=body.decision, actor=user.id,
                            proposal_id=proposal_id, detail={"note": body.note} if body.note else {})
+        show_requested_mapping(session, session_id=session_id, result=result, user=user)  # 7.22: a requested column's mapping
         return result
 
     result = in_transaction(session, work)

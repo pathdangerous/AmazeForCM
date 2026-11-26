@@ -30,12 +30,13 @@ const hooks: StepHooks = {
     await expect(list).toContainText("Undecided");
     await expect(page.getByTestId("workspace-approve")).toBeDisabled();
   },
-  // the Glossary requests step: the builder drafted the element for the one requested column and nothing else; Approve
-  // all confident approves it (and, as steward, its mapping) without moving the step on
+  // the Glossary requests step: the builder drafted an element for each requested column and for no other (the walk
+  // ignores one column and requests the rest, so the later drift and exceptions have their columns mapped)
   "step-glossary": async (page) => {
     await expect(page.getByTestId("workspace-approve-confident")).toBeVisible();
     const items = page.locator('[data-testid^="item-"]:not([data-testid^="item-badge"]):not([data-testid="item-decider"])');
-    await expect(items).toHaveCount(1, { timeout: 60_000 });
+    await expect(items.first()).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("workspace-preaccepted")).toBeVisible();
   },
   // T1: the facts in plain words, each action says who does it; a person adds one and rejects one
   "step-profile": async (page) => {

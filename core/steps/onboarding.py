@@ -889,6 +889,17 @@ def approve_and_next(session: Session, *, session_id: UUID, user: User, ctx: Onb
     return StepAdvance(moved=True, current_step=following, approved=approved)
 
 
+def show_requested_mapping(session: Session, *, session_id: UUID, result: Any, user: User) -> None:
+    """The glossary owner's approval of a requested element made the column's mapping proposal (decide_element(), plan D5).
+    Here it becomes an item of the Glossary requests step (`item_added`), so the step shows it and its Approve & next
+    decides it. Nothing for any other decision. Called by the step's own approval and by the item decision route."""
+    mapping_id = getattr(result, "mapping_proposal_id", None)
+    if mapping_id is not None:
+        OnboardingRepository(session).add_event(session_id, step="glossary", event="item_added", actor=user.id,
+                                                proposal_id=mapping_id,
+                                                detail={"kind": "mapping", "via": "glossary_approval"})
+
+
 def _undecided_columns(session: Session, sess: OnboardingSession, step: str) -> list[str]:
     """The mapping step's cannot-map columns nobody has chosen Ignore or Request for (phase 7.22)."""
     return [c.column for c in cannot_map_of(session, sess) if c.state == "undecided"] if step == "mapping" else []
@@ -953,7 +964,6 @@ def _approve(session: Session, sess: OnboardingSession, step: str, items: list[O
     elif step == "glossary":
         # 7.22 (plan D6): only what this person may decide and the agent is sure of; the rest stays pending, and its
         # column is "waiting for glossary (not loaded yet)" while the onboarding goes on
-        sessions = OnboardingRepository(session)
         for item in pending:
             if item.kind == "glossary_element":
                 if not item.pre_accepted or "glossary_owner" not in user.roles:
@@ -963,9 +973,7 @@ def _approve(session: Session, sess: OnboardingSession, step: str, items: list[O
                                       stewards=_with_role(ctx, "data_steward"))
                 approved.append(item.proposal_id)
                 if done.mapping_proposal_id is not None:  # the requested column's mapping: its steward decides
-                    sessions.add_event(sess.id, step="glossary", event="item_added", actor=user.id,
-                                       proposal_id=done.mapping_proposal_id,
-                                       detail={"kind": "mapping", "via": "glossary_approval"})
+                    show_requested_mapping(session, session_id=sess.id, result=done, user=user)
                     if "data_steward" in user.roles:
                         decide_mapping(session, proposal_id=done.mapping_proposal_id, user=user, decision="approved",
                                        choice=None, note=None)
