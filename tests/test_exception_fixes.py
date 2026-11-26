@@ -21,7 +21,6 @@ from agents.exception_fix import ExceptionFixAgent
 from core.repositories.errors import ExceptionGroupChangedMeanwhile, LoadNotHeld, NotAnApprover
 from core.repositories.proposals import ProposalRepository
 from core.repositories.tables import ExceptionResolutionRow, ProposalLogEntry, ProposalRow
-from core.steps.drafts import draft_config
 from core.steps.errors import StepInputError
 from core.steps.exceptions import (
     MAX_AGENT_GROUPS,
@@ -31,7 +30,6 @@ from core.steps.exceptions import (
     load_exceptions,
     propose_fixes,
 )
-from core.steps.onboarding import stale_drafts
 from core.steps.s10_transform import decide_transformation
 from ports.config import Settings
 from ports.llm.mock import MockProvider
@@ -312,29 +310,3 @@ def test_a_manual_fix_is_refused_for_an_unknown_group_or_a_non_steward(world):
                        action="refer", reason="x", user=OWNER)
 
 
-# ---------------------------------------------------------------- 7.13 (plan, section 2.3)
-
-
-def test_a_chain_never_builds_on_an_exception_fix_and_rejecting_one_makes_nothing_stale(world, agent):
-    held = a_held_load_with_three_kinds_of_group(world)
-    trim = fixes(world, agent, held)["transformation"]
-    assert "instr_id" not in {t.source_field for t in draft_config(world.session, world.feed).transformations}
-    decide_transformation(world.session, proposal_id=trim.id, user=STEWARD, decision="rejected", note="No.")
-    assert stale_drafts(world.session, world.feed) == []
-    assert world.session.scalar(text("SELECT count(*) FROM approvals WHERE decided_by = 'system'")) == 0
-
-
-def test_a_rule_draft_says_the_transformation_version_it_was_tested_on_known_gap_g1(world):
-    from core.domain.onboarding import TestedOn
-    from core.steps.onboarding import transformations_tested_on
-    from tests.configured import approved_transformation, rule_proposal
-
-    approved_transformation(world.session, world.feed, "traded_qty", [{"op": "trim"}])  # version 1
-    rule = rule_proposal(world.session, world.feed, "volume_small", sql="SELECT _row FROM curated WHERE volume > 5")
-    approved_transformation(world.session, world.feed, "traded_qty", [{"op": "trim"}, {"op": "cast", "type": "integer"}])
-    assert transformations_tested_on(world.session, rule) == [TestedOn(column="traded_qty", version=1, current_version=2)]
-    draft = transformation_proposal(world.session, world.feed, "instr_id", [{"op": "trim"}])
-    on_draft = rule_proposal(world.session, world.feed, "id_known", sql=ID_SQL)
-    ProposalRepository(world.session).add_bases(on_draft.id, [draft.id], feed_id=world.feed)
-    assert transformations_tested_on(world.session, on_draft) == [
-        TestedOn(column="instr_id", version=None, current_version=None)]

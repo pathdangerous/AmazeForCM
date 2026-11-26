@@ -2,7 +2,7 @@
 
 Two sources, one answer:
   a) a rule proposal that is not approved: its SQL runs in the sandbox on the feed's latest fetched file, through the
-     draft configuration, the way the back-test reads a delivery (draft_rows(): no session, so no connection is held
+     feed's approved configuration, the way the back-test reads a delivery (draft_rows(): no session, no connection held
      while the file is read and the rule runs);
   b) an approved rule: the flags of the feed's newest load that has records (load_rows(): no SQL runs).
 Outcomes (rule 3): rows_shown, rule_not_found, no_file, sql_refused.
@@ -23,13 +23,14 @@ from sqlalchemy.orm import Session
 from core.engine.curate import curated_rows_sql, curated_sql, match_header, uncast_sql
 from core.engine.passthrough import json_value
 from core.engine.sandbox import FileUnreadable, RuleFailed, RuleRefused, Sandbox
-from core.repositories.configuration import RuleRepository
+from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.errors import ProposalNotFound
+from core.repositories.glossary import GlossaryRepository
 from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.standard_records import StandardRecordRepository
-from core.steps.drafts import draft_config
+from core.repositories.transformations import TransformationRepository
 from core.steps.result import StepResult
 from ports.storage.base import BlobNotFound, BlobStore
 
@@ -128,12 +129,14 @@ def rule_rows_plan(session: Session, rule_id: UUID) -> DraftPlan | LoadPlan | Ru
                     sql=stored.sql if stored else payload["sql"], element_keys=list(payload.get("element_keys", [])))
     if stored is not None or proposal.status == "approved":
         return LoadPlan(feed_id=proposal.feed_id, rule=rule)
-    draft = draft_config(session, proposal.feed_id)
+    glossary = GlossaryRepository(session)  # the draft is the rule; the mappings and transformations are the approved ones
     fetch = SourceFetchRepository(session).latest_fetched(proposal.feed_id)
     columns = tuple(SimpleNamespace(source_field=m.source_field, element_key=m.element_key,
-                                    data_type=draft.types[m.element_key]) for m in draft.mappings)
+                                    data_type=glossary.get_current(m.element_key).data_type)
+                    for m in MappingRepository(session).current_for_feed(proposal.feed_id))
     return DraftPlan(rule=rule, file_ref=fetch.blob_ref if fetch else None, columns=columns,
-                     steps_of={t.source_field.lower(): tuple(t.steps) for t in draft.transformations})
+                     steps_of={t.source_field.lower(): tuple(t.steps)
+                               for t in TransformationRepository(session).current_for_feed(proposal.feed_id)})
 
 
 def _shown(rule: RuleInfo, source: Literal["draft", "load"], load_id: UUID | None, keys: list[str], rows: list[RowInfo],

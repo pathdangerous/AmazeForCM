@@ -128,10 +128,9 @@ def test_deleting_the_feed_deletes_its_bases(s, feed):
 def test_a_session_runs_step_by_step_until_it_is_set_to_run_the_chain_and_never_back(s, feed):
     sessions = OnboardingRepository(s)
     created = sessions.create(feed_id=feed, created_by="dev-operator")
-    assert created.run_mode == "step"
-    sessions.set_run_mode(created.id, "chain")
-    s.flush()
-    assert sessions.get(created.id).run_mode == "chain"
+    assert s.scalar(text("SELECT run_mode FROM onboarding_sessions WHERE id = :i"), {"i": created.id}) == "step"
+    s.execute(text("UPDATE onboarding_sessions SET run_mode = 'chain' WHERE id = :i"), {"i": created.id})  # 7.22: no code does
+    assert s.scalar(text("SELECT run_mode FROM onboarding_sessions WHERE id = :i"), {"i": created.id}) == "chain"
     refused(s, "run_mode", "UPDATE onboarding_sessions SET run_mode = 'step' WHERE id = :i", i=created.id)
     refused(s, "run_mode", "UPDATE onboarding_sessions SET run_mode = 'later' WHERE id = :i", i=created.id)
 

@@ -6,9 +6,8 @@ GET  /api/amaze/onboardings/{id}[?step=<step>]    the workspace view (steps, the
                                                   inputs); another step than the current is read only
 POST /api/amaze/onboardings/{id}/steps/{step}/enter    run the step's agent in the background (queues its job)
 POST /api/amaze/onboardings/{id}/approve          Approve & next; 409 decision_needed lists the items to decide first
-POST /api/amaze/onboardings/{id}/run-all          Run all agents (7.13): run_mode chain; agents ahead draft on drafts
-GET  /api/amaze/onboardings/{id}/chain            the chain review: every draft by step, with what it was built on
-POST /api/amaze/onboardings/{id}/chain/approve-confident   {step}: one approval per confident item, by the caller
+POST /api/amaze/onboardings/{id}/steps/{step}/approve-confident   one approval per confident item of the current step,
+                                                  by the caller (the step does not move on)
 POST /api/amaze/onboardings/{id}/back             {to_step}: later steps become stale and the step reruns
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/decision   one item, by the decision code of
                                                   POST /api/amaze/proposals/{id}/decision (decide_proposal)
@@ -46,7 +45,6 @@ from core.domain.common import NonBlank
 from core.domain.manual import ManualItem, ManualRule
 from core.domain.onboarding import (
     ApproveOptions,
-    ChainReview,
     ConfidentApproved,
     StepAdvance,
     StepName,
@@ -67,12 +65,8 @@ from core.steps.onboarding import (
     checked_rule_payload,
     edit_item,
     enter_step,
-    STEP_OF_KIND,
     approve_confident,
-    chain_review,
     manual_rule_input,
-    refresh_chain,
-    run_all,
     timeline,
     workspace,
 )
@@ -203,34 +197,12 @@ def approve(session_id: UUID, options: ApproveOptions, session: DbSession, user:
     return Advanced(advance=advance, workspace=_view(session, session_id, settings))
 
 
-@router.post("/{session_id}/run-all", response_model=Workspace,
-             responses={409: {"description": "Run all agents is on already, or the onboarding is finished"}})
-def run_all_agents(session_id: UUID, session: DbSession, user: Operator, settings: AppSettings,
-                   kick: Kick) -> Workspace:
-    """Run all agents (phase 7.13): after the profile approval every agent ahead drafts on the drafts before it."""
-    in_transaction(session, lambda: run_all(session, session_id=session_id, user=user))
-    kick()  # after the commit: a draft job may be queued
-    return _view(session, session_id, settings)
-
-
-class ChainStepBody(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    step: StepName
-
-
-@router.get("/{session_id}/chain", response_model=ChainReview)
-def get_chain(session_id: UUID, session: DbSession, settings: AppSettings) -> ChainReview:
-    """The chain review (phase 7.13): every draft by step, blocked and low-confidence first, with its bases."""
-    return read(session, lambda: chain_review(session, session_id=session_id, settings=settings))
-
-
-@router.post("/{session_id}/chain/approve-confident", response_model=ConfidentApproved,
-             responses={409: {"description": "not a chain step, or its agent has not answered"}})
-def approve_all_confident(session_id: UUID, body: ChainStepBody, session: DbSession, user: Operator,
+@router.post("/{session_id}/steps/{step}/approve-confident", response_model=ConfidentApproved,
+             responses={409: {"description": "not the current step, not an item step, or its agent has not answered"}})
+def approve_all_confident(session_id: UUID, step: StepName, session: DbSession, user: Operator,
                           ctx: Context) -> ConfidentApproved:
-    """Approve all confident of one step: the person's own decision on each item, one approval row each."""
-    return in_transaction(session, lambda: approve_confident(session, session_id=session_id, step=body.step,
+    """Approve all confident of the current step: the person's own decision on each item, one approval row each."""
+    return in_transaction(session, lambda: approve_confident(session, session_id=session_id, step=step,
                                                              user=user, ctx=ctx))
 
 
@@ -244,7 +216,7 @@ def go_back(session_id: UUID, body: BackBody, session: DbSession, user: Operator
 
 @router.post("/{session_id}/items/{proposal_id}/decision", response_model=ItemDecided)
 def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session: DbSession, user: Operator,
-                identity: IdentityPort, notifier: RequestNotifier, settings: AppSettings, kick: Kick) -> ItemDecided:
+                identity: IdentityPort, notifier: RequestNotifier, settings: AppSettings) -> ItemDecided:
     def work():
         sessions = OnboardingRepository(session)
         sess = sessions.lock(session_id)  # OnboardingNotFound: 404
@@ -252,15 +224,11 @@ def decide_item(session_id: UUID, proposal_id: UUID, body: DecisionBody, session
             raise ProposalNotFound(f"Proposal {proposal_id} is not an item of onboarding {session_id}")
         result = decide_proposal(session, proposal_id=proposal_id, body=body, user=user, identity=identity,
                                  notifier=notifier, settings=settings)
-        decided = ProposalRepository(session).get(proposal_id)
-        step = STEP_OF_KIND.get(decided.kind, sess.current_step) if sess.run_mode == "chain" else sess.current_step
-        sessions.add_event(session_id, step=step, event=body.decision, actor=user.id,
+        sessions.add_event(session_id, step=sess.current_step, event=body.decision, actor=user.id,
                            proposal_id=proposal_id, detail={"note": body.note} if body.note else {})
-        refresh_chain(session, session_id=session_id, decided=decided, actor=user.id)  # 7.13: stale drafts rerun
         return result
 
     result = in_transaction(session, work)
-    kick()  # a stale draft's step may be queued
     return ItemDecided(result=result, workspace=_view(session, session_id, settings))
 
 
@@ -292,7 +260,7 @@ def _back_tested(agent_input, proposed, own, ctx) -> dict[str, Any]:
              responses={409: {"description": "the item is no longer pending"},
                         422: {"description": "the edited payload is not valid for its kind"}})
 def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession, user: Operator, ctx: Context,
-         settings: AppSettings, kick: Kick) -> ItemEdited:
+         settings: AppSettings) -> ItemEdited:
     payload = body.payload
     kind = read(session, lambda: ProposalRepository(session).get(proposal_id).kind)
     if kind == "rule":  # an edited rule is back-tested again, like a new one (T7)
@@ -301,7 +269,6 @@ def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession
         payload = _back_tested(agent_input, proposed, own, ctx)
     proposal = in_transaction(session, lambda: edit_item(session, session_id=session_id, proposal_id=proposal_id,
                                                          payload=payload, user=user))
-    kick()  # 7.13: a stale draft's step may be queued
     return ItemEdited(proposal=proposal, workspace=_view(session, session_id, settings))
 
 

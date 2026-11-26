@@ -63,7 +63,6 @@ from core.repositories.loads import LoadRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
-from core.steps.drafts import DraftConfig, check_unchanged
 from core.steps.errors import needs_a_note
 from core.steps.result import StepResult
 from core.steps.rule_candidates import element_offers, feed_offers
@@ -164,25 +163,22 @@ def _known_keys(session: Session, feed_id: UUID) -> list[str]:
     return _all_known_keys(session, feed_id)[:MAX_KNOWN_KEYS]
 
 
-def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue,
-                draft: DraftConfig | None = None) -> RuleRecommenderInput:
-    """Read only. FeedNotRegistered, FeedNotProfiled, NothingToMap (no current mapping). With a draft (phase 7.13),
-    the draft mappings and transformations count as current: the back-test reads the history through them, in the
-    sandbox, and nothing is written to `mappings` or `rules`."""
+def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue) -> RuleRecommenderInput:
+    """Read only. FeedNotRegistered, FeedNotProfiled, NothingToMap (no current mapping)."""
     feed = FeedRepository(session).get(feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}; only a registered feed has rules")
     profile = FeedProfileRepository(session).latest(feed_id)
     if profile is None:
         raise FeedNotProfiled(f"Feed {feed.code!r} has no profile")
-    mappings = draft.mappings if draft is not None else MappingRepository(session).current_for_feed(feed_id)
+    mappings = MappingRepository(session).current_for_feed(feed_id)
     if not mappings:
         raise NothingToMap(f"Feed {feed.code!r} has no current mapping to write rules for")
     stats = {c.name: c for c in profile.columns}
     glossary = GlossaryRepository(session)
     elements = []
     for mapping in mappings:
-        data_type = draft.types[mapping.element_key] if draft else glossary.get_current(mapping.element_key).data_type
+        data_type = glossary.get_current(mapping.element_key).data_type
         column = stats.get(mapping.source_field)
         elements.append(RuleCandidateElement(
             source_field=mapping.source_field, key=mapping.element_key, data_type=data_type,
@@ -199,8 +195,7 @@ def rules_input(session: Session, *, feed_id: UUID, catalogue: SourceCatalogue,
         connector=feed.connector, history=list(entry.history) if entry else [],
         load_history=[LoadHistoryItem(label=f"load {load.received_at:%Y-%m-%d}", file_ref=load.file_ref)
                       for load in LoadRepository(session).fully_loaded_scheduled(feed_id, LOAD_HISTORY)],
-        transformations=(draft.transformations if draft is not None
-                         else TransformationRepository(session).current_for_feed(feed_id)),
+        transformations=TransformationRepository(session).current_for_feed(feed_id),
         profile_actions=selected_actions(session, feed_id))
 
 
@@ -384,15 +379,12 @@ def check_manual_rule(agent_input: RuleRecommenderInput, rule: ProposedRule, *, 
 # ---------------------------------------------------------------- propose
 
 
-def _still_as_input(session: Session, agent_input: RuleRecommenderInput, draft: DraftConfig | None = None) -> None:
-    """before_write: the feed row locked, then the mappings (with a draft: the drafts it used) and the rule keys
-    checked against the input."""
+def _still_as_input(session: Session, agent_input: RuleRecommenderInput) -> None:
+    """before_write: the feed row locked, then the mappings and the rule keys checked against the input."""
     feed = FeedRepository(session).lock(agent_input.feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} became {feed.stage} while the agent answered")
-    if draft is not None:
-        check_unchanged(session, draft)
-    elif sorted(m.id for m in MappingRepository(session).current_for_feed(feed.id)) != sorted(agent_input.mapping_ids):
+    if sorted(m.id for m in MappingRepository(session).current_for_feed(feed.id)) != sorted(agent_input.mapping_ids):
         raise ConfigurationChangedMeanwhile(f"The mappings of feed {feed.code!r} changed while the agent answered")
     if (_known_keys(session, feed.id) != agent_input.existing_keys
             or sorted(RuleRepository(session).rejected_keys(feed.id)) != agent_input.rejected_keys):
@@ -401,17 +393,9 @@ def _still_as_input(session: Session, agent_input: RuleRecommenderInput, draft: 
 
 
 def record_rules(session: Session, *, agent: RunsAgent, agent_input: RuleRecommenderInput,
-                 backtest: Callable[[RuleRecommenderOutput], RuleRecommenderOutput],
-                 draft: DraftConfig | None = None) -> RulesResult:
-    run = agent.run(session, agent_input, before_write=lambda s: _still_as_input(s, agent_input, draft),
+                 backtest: Callable[[RuleRecommenderOutput], RuleRecommenderOutput]) -> RulesResult:
+    run = agent.run(session, agent_input, before_write=lambda s: _still_as_input(s, agent_input),
                     after_answer=backtest)
-    if draft is not None:  # phase 7.13: each names the draft mappings and transformations of its elements' columns
-        column_of = {}
-        for m in draft.mappings:
-            column_of.setdefault(m.element_key, []).append(m.source_field)
-        for p in run.proposals:
-            columns = [c for key in p.payload.get("element_keys", []) for c in column_of.get(key, [])]
-            ProposalRepository(session).add_bases(p.id, draft.bases_for_columns(columns), feed_id=agent_input.feed_id)
     returned, refused = [], []
     for rule in run.output.rules:
         if rule.verdict == "returned":

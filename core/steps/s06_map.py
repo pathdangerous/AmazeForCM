@@ -44,7 +44,6 @@ from core.repositories.feeds import FeedRepository
 from core.repositories.glossary import GlossaryRepository
 from core.repositories.proposals import ProposalRepository
 from core.steps.candidates import candidate_list, kept_elements
-from core.steps.drafts import DraftConfig, check_unchanged
 from core.steps.errors import ChoiceNeeded, ChoiceNotOffered, needs_a_note
 from core.steps.result import StepResult
 from core.steps.s02_profile import excluded_by_actions, selected_actions
@@ -128,11 +127,10 @@ def excluded_columns(session: Session, feed_id: UUID) -> set[str]:
 
 
 def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,
-                  source_description: str | None = None, draft: DraftConfig | None = None) -> MappingInput:
+                  source_description: str | None = None) -> MappingInput:
     """Read only. Every profile column with no current mapping and no pending mapping proposal, or the one
     named (Propose again). Each with its candidates (the spec's hint among them, marked), less the elements
-    the steward rejected for it, and its current element. With a draft (phase 7.13), the candidates come from the
-    approved glossary and the feed's pending glossary drafts."""
+    the steward rejected for it, and its current element."""
     feed = FeedRepository(session).get(feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} is {feed.stage}; only a registered feed is mapped")
@@ -154,7 +152,7 @@ def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,
                   and proposals.pending_for_column("mapping", feed_id, c.name) is None]
         if not chosen:
             raise NothingToMap(f"Feed {feed.code!r} has no column left to map")
-    glossary = draft.elements if draft is not None else GlossaryRepository(session).list_current()
+    glossary = GlossaryRepository(session).list_current()
     columns = []
     for c in chosen:
         declared = profile.spec.columns.get(c.name)
@@ -168,12 +166,10 @@ def mapping_input(session: Session, *, feed_id: UUID, column: str | None = None,
                         profile_actions=selected_actions(session, feed_id))
 
 
-def _still_mappable(session: Session, agent_input: MappingInput, draft: DraftConfig | None = None) -> None:
+def _still_mappable(session: Session, agent_input: MappingInput) -> None:
     feed = FeedRepository(session).lock(agent_input.feed_id)
     if feed.stage != "registered":
         raise FeedNotRegistered(f"Feed {feed.code!r} became {feed.stage} while the agent answered")
-    if draft is not None:
-        check_unchanged(session, draft)
     proposals, mappings = ProposalRepository(session), MappingRepository(session)
     current = {m.source_field: m.element_key for m in mappings.current_for_feed(feed.id)}
     for column in agent_input.columns:
@@ -198,14 +194,9 @@ def _why_none(session: Session, feed_id: UUID, column: ColumnToMap) -> str:
     return "no_candidate"
 
 
-def record_mappings(session: Session, *, agent: RunsAgent, agent_input: MappingInput, user: User,
-                    draft: DraftConfig | None = None) -> MappingsProposed:
-    run = agent.run(session, agent_input, before_write=lambda s: _still_mappable(s, agent_input, draft))
+def record_mappings(session: Session, *, agent: RunsAgent, agent_input: MappingInput, user: User) -> MappingsProposed:
+    run = agent.run(session, agent_input, before_write=lambda s: _still_mappable(s, agent_input))
     feed_id = agent_input.feed_id
-    if draft is not None:  # phase 7.13: each mapping names the glossary drafts among its candidates
-        for p in run.proposals:
-            ProposalRepository(session).add_bases(p.id, draft.bases_for_candidates(p.payload["candidates"]),
-                                                  feed_id=feed_id)
     made = {p.payload["source_field"]: p for p in run.proposals}
     answers = {}
     for answer in run.output.answers:

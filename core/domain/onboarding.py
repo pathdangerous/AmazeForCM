@@ -28,12 +28,13 @@ SESSION_STATUSES: tuple[str, ...] = get_args(SessionStatus)
 EventName = Literal["entered", "agent_queued", "agent_started", "agent_done", "agent_failed", "pre_accepted",
                     "edited", "approved", "rejected", "back", "stale", "done", "call_cap_reached",
                     "item_added",  # item_added: a person added an item (0028)
-                    # 0032 (phase 7.13): the chain of drafts
+                    # 0032 (phase 7.13): the chain of drafts. Retired in 7.22; the names stay because an onboarding that
+                    # ran in chain mode still has them in its append-only history
                     "chain_started", "chain_done", "chain_stopped", "draft_stale"]
 EVENT_NAMES: tuple[str, ...] = get_args(EventName)
 
-RunMode = Literal["step", "chain"]  # chain (0032): every agent ahead runs on the drafts before it; never back to step
-RUN_MODES: tuple[str, ...] = get_args(RunMode)
+# onboarding_sessions.run_mode (0032) is no longer read or written (phase 7.22); the column and its check stay, unused
+RUN_MODES: tuple[str, ...] = ("step", "chain")
 
 JobStatus = Literal["queued", "running", "done", "failed", "discarded"]
 JOB_STATUSES: tuple[str, ...] = get_args(JobStatus)
@@ -59,7 +60,6 @@ class OnboardingSession(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_calls: int
-    run_mode: RunMode = "step"
 
 
 class OnboardingEvent(BaseModel):
@@ -150,69 +150,6 @@ class OnboardingItem(BaseModel):
     author: str | None = None
     decided_by: str | None = None  # the user id of the latest approval decision on this proposal; None while pending
     decided_at: datetime | None = None
-
-
-class ChainBase(BaseModel):
-    """One draft an item was built on (phase 7.13): the "based on" link of the chain review."""
-
-    model_config = ConfigDict(frozen=True)
-
-    proposal_id: UUID
-    step: StepName
-    column: str | None
-    status: str
-
-
-class TestedOn(BaseModel):
-    """Phase 7.14, known gap G1: the transformation of one column a rule draft was back-tested on. version None: a
-    pending (draft) transformation; current_version: the column's approved version now (None if it has none)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    column: str
-    version: int | None
-    current_version: int | None
-
-
-class ChainItem(BaseModel):
-    """One draft of the chain review: the workspace item, what it was built on, and why it sorts where it does."""
-
-    model_config = ConfigDict(frozen=True)
-
-    item: OnboardingItem
-    based_on: list[ChainBase]
-    blocked: bool  # no single recommended value: later agents skipped its column (plan, decision 3)
-    low_confidence: bool  # a value, below AUTO_ACCEPT_CONFIDENCE: drafted past, flagged
-    confident: bool  # pending, at or above the threshold, its bases approved: "Approve all confident" takes it
-    tested_on: list[TestedOn] = []  # 7.14 (G1): a rule draft's transformations, so a newer approved version shows
-
-
-class ChainStep(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    step: StepName
-    state: StepState
-    items: list[ChainItem]  # blocked first, then low confidence, then the rest
-
-
-class ChainReview(BaseModel):
-    """Every draft of the chain, by step (phase 7.13, T2)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    run_mode: RunMode
-    current_step: StepName
-    steps: list[ChainStep]
-    blocked: dict[str, str]  # column -> why the chain could not draft past it (the latest chain_done)
-    auto_accept_confidence: float
-
-
-class ConfidentApproved(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    step: StepName
-    approved: list[UUID]  # one approval each, by the person who clicked (rule 1)
-    chain: ChainReview
 
 
 class AgentNote(BaseModel):
@@ -329,6 +266,16 @@ class Workspace(BaseModel):
     model_call_cap: int
     can_approve: bool
     blocked_by: str | None  # why Approve & next is disabled
+
+
+class ConfidentApproved(BaseModel):
+    """"Approve all confident" of one step (phase 7.13, kept in 7.22): what was approved, and the screen after."""
+
+    model_config = ConfigDict(frozen=True)
+
+    step: StepName
+    approved: list[UUID]  # one approval each, by the person who clicked (rule 1)
+    workspace: Workspace
 
 
 class TimelineEntry(BaseModel):

@@ -365,44 +365,36 @@ test("the first-load step shows its panel", async () => {
   expect(await screen.findByTestId("first-load-outcome")).toBeTruthy();
 });
 
-// ---- phase 7.13: run all agents ahead, review the chain once
-const chainWs = (overrides: Parameters<typeof workspace>[2] = {}) => {
-  const ws = workspace("glossary", "ready", { items: [glossaryItem()], ...overrides });
-  const states = { ...ws.session.step_states, mapping: "needs_decision", transformations: "ready", rules: "ready" } as typeof ws.session.step_states;
-  return { ...ws, session: { ...ws.session, run_mode: "chain" as const, step_states: states },
-           steps: ws.steps.map((s) => ({ ...s, state: states[s.name] })) };
-};
-const EMPTY_CHAIN = { run_mode: "chain", current_step: "glossary", steps: [], blocked: {}, auto_accept_confidence: 0.85 };
-
-test("Run all agents is one button in step mode; it sends the call and shows the chain review", async () => {
-  const fetchStub = stubFetch(base({
-    [GET]: workspace("profile", "ready", { items: [profileItem()] }),
-    [`POST ${WS_PATH}/run-all`]: chainWs(),
-    [`GET ${WS_PATH}/chain`]: EMPTY_CHAIN,
-  }));
+// ---- phase 7.22: "Run all agents" is gone; "Approve all confident" is a button of each item step
+test("there is no Run all agents button and no chain review", async () => {
+  stubFetch(base({ [GET]: workspace("profile", "ready", { items: [profileItem()] }) }));
   show();
-  fireEvent.click(await screen.findByTestId("workspace-run-all"));
-  expect(await screen.findByTestId("chain-review")).toBeTruthy();
-  expect(fetchStub.mock.calls.filter(([u]) => String(u).endsWith("/run-all")).length).toBe(1);
+  await screen.findByTestId("workspace-approve");
   expect(screen.queryByTestId("workspace-run-all")).toBeNull();
+  expect(screen.queryByText("Run all agents")).toBeNull();
+  expect(screen.queryByTestId("chain-review")).toBeNull();
 });
 
-test("in chain mode a drafted step ahead opens with its decision buttons, and a decision there stays on it", async () => {
-  const tie = tieItem();
-  const ahead = { ...chainWs(), viewed_step: "mapping" as StepName, items: [tie] };
+test("Approve all confident posts the step's route, and shows the workspace it answers with", async () => {
+  const confident = glossaryItem({ pre_accepted: true });
+  const doubtful = tieItem({ kind: "glossary_element", pre_accepted: false, needs_decision: true, confidence: null });
+  const after = workspace("glossary", "needs_decision", { items: [glossaryItem({ status: "approved" }), doubtful] });
   const fetchStub = stubFetch(base({
-    [GET]: chainWs(),
-    [`${GET}?step=mapping`]: ahead,
-    [`GET ${WS_PATH}/chain`]: EMPTY_CHAIN,
-    [`POST ${WS_PATH}/items/${tie.proposal_id}/decision`]: { result: {}, workspace: chainWs() },
+    [GET]: workspace("glossary", "needs_decision", { items: [confident, doubtful] }),
+    [`POST ${WS_PATH}/steps/glossary/approve-confident`]: { step: "glossary", approved: [confident.proposal_id],
+                                                            workspace: after },
   }));
   show();
-  await screen.findByTestId("chain-review");
-  fireEvent.click(screen.getByTestId("step-mapping"));
-  const row = await screen.findByTestId(`item-${tie.proposal_id}`);
-  fireEvent.change(within(row).getByLabelText("Choice for Price"), { target: { value: "1" } });
-  fireEvent.click(within(row).getByRole("button", { name: "Approve" }));
-  await waitFor(() => expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/decision"))).toBe(true));
-  expect(screen.getByTestId(`item-${tie.proposal_id}`)).toBeTruthy(); // still viewing the mapping step
-  expect(screen.getByTestId("workspace-approve")).toHaveProperty("disabled", true); // Approve & next is the cursor's
+  const button = (await screen.findByTestId("workspace-approve-confident")) as HTMLButtonElement;
+  expect(button.disabled).toBe(false);
+  fireEvent.click(button);
+  await waitFor(() => expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/steps/glossary/approve-confident"))).toBe(true));
+  await waitFor(() => expect((screen.getByTestId("workspace-approve-confident") as HTMLButtonElement).disabled).toBe(true));
+});
+
+test("Approve all confident is not offered at the profile step", async () => {
+  stubFetch(base({ [GET]: workspace("profile", "ready", { items: [profileItem()] }) }));
+  show();
+  await screen.findByTestId("workspace-approve");
+  expect(screen.queryByTestId("workspace-approve-confident")).toBeNull();
 });

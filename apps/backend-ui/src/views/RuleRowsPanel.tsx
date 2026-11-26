@@ -118,7 +118,7 @@ function Panel({ ruleId, devUser }: { ruleId: string; devUser: string }) {
   );
 }
 
-// The opener: a button on a rule (a card in the Rules step, a chain review item, a row of the feed page's rules). The
+// The opener: a button on a rule (a card in the Rules step, a row of the feed page's rules). The
 // drawer closes with Escape and gives the focus back to this button.
 export default function RuleRowsButton({ ruleId, ruleKey, devUser, variant = "default" }: {
   ruleId: string; ruleKey: string; devUser: string; variant?: "default" | "subtle";

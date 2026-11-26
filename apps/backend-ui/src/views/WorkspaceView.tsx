@@ -2,12 +2,11 @@ import { Alert, Button, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingSkeleton, StickyFooter } from "../../../ui-shared/phase711";
 import {
-  addItem, apiGet, approveStep, CHAIN_STEPS, decideItem, DecisionNeeded, describeError, editItem, enterStep, getTimeline,
-  getWorkspace, goBack, ONBOARDING_STEPS, runAllAgents, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
+  addItem, apiGet, approveConfident, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep,
+  getTimeline, getWorkspace, goBack, ITEM_STEPS, ONBOARDING_STEPS, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
   type TimelineEntry, type Visibility, type Workspace,
 } from "../api";
 import AgentPanel from "./AgentPanel";
-import ChainReview from "./ChainReview";
 import AddItem from "./steps/AddItem";
 import Stepper, { StateBadge, STEP_LABELS } from "./Stepper";
 import FirstLoadPanel from "./steps/FirstLoadPanel";
@@ -95,11 +94,6 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const current = ws.current_step;
   const shown = viewed ?? current;
   const atCurrent = shown === current;
-  // phase 7.13: in chain mode a chain step drafted ahead of the cursor takes decisions, edits and rejections too
-  const chain = ws.session.run_mode === "chain";
-  const shownStepState = ws.steps.find((s) => s.name === shown)?.state;
-  const draftedAhead = chain && !atCurrent && (CHAIN_STEPS as readonly string[]).includes(shown)
-    && (shownStepState === "ready" || shownStepState === "needs_decision");
   const view = atCurrent ? ws : viewedWs?.viewed_step === shown ? viewedWs : null;
   const items: OnboardingItem[] = view?.items ?? [];
   const stepView = ws.steps.find((s) => s.name === current);
@@ -113,7 +107,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
     setNote(null);
     try {
       const next = await work();
-      if (next) { setWs(next); if (!draftedAhead) { setViewed(null); setViewedWs(null); } } // ahead: stay on that step
+      if (next) { setWs(next); setViewed(null); setViewedWs(null); }
       setMarked([]);
       setEditing(null);
     } catch (err: unknown) {
@@ -134,7 +128,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const rerun = () => act(() => enterStep(id, current, devUser));
 
   const actions: ItemActions = {
-    readOnly: !atCurrent && !draftedAhead, busy, marked, editing, editError, people, addError,
+    readOnly: !atCurrent, busy, marked, editing, editError, people, addError,
     add: async (body) => {
       setBusy(true);
       setAddError(null);
@@ -184,6 +178,9 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
   const backTo: StepName | null = !atCurrent && shown !== "upload" && shownState === "done"
     && ONBOARDING_STEPS.indexOf(shown) < ONBOARDING_STEPS.indexOf(current) ? shown : null;
   const preAccepted = atCurrent ? ws.items.filter((i) => i.status === "pending" && i.pre_accepted).length : 0;
+  const confident = atCurrent ? ws.items.filter((i) => i.status === "pending" && i.pre_accepted && !i.waiting_for).length : 0;
+  const offersConfident = atCurrent && (ITEM_STEPS as readonly string[]).includes(current)
+    && (state === "ready" || state === "needs_decision");
 
   const reason = ws.can_approve ? null
     : ws.blocked_by ?? (state === "agent_working" ? "The agent is working" : state === "failed" ? "The step failed"
@@ -261,11 +258,6 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
           </Text>}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {!chain && ws.session.status === "active" && (
-            <Button data-testid="workspace-run-all" disabled={busy}
-                    title="After the profile is approved, every agent ahead drafts on the drafts before it; you review once"
-                    onClick={() => void act(() => runAllAgents(id, devUser))}>Run all agents</Button>
-          )}
           <a href="#/onboardings" className="amz-button">Save and exit</a>
         </div>
       </div>
@@ -276,11 +268,6 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
         </div>
       )}
       <Stepper steps={ws.steps} current={current} viewed={shown} onOpen={(s) => { setViewed(s === current ? null : s); setViewedWs(null); }} />
-      {chain && ws.session.status === "active" && (
-        <ChainReview id={id} devUser={devUser} stamp={ws.session.updated_at}
-                     onOpenStep={(s) => { setViewed(s === current ? null : s); setViewedWs(null); }}
-                     onChanged={() => void load()} />
-      )}
       <div className="workspace-body">
         <div className="workspace-step-content">
           <div className="workspace-step-heading">
@@ -309,6 +296,13 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
         </span>
         {preAccepted > 0 && (
           <span data-testid="workspace-preaccepted">{`Approves ${preAccepted} pre-accepted item${preAccepted === 1 ? "" : "s"}`}</span>
+        )}
+        {offersConfident && (
+          <Button data-testid="workspace-approve-confident" variant="default" disabled={confident === 0 || busy}
+                  title="Approve the items the agent is sure of, one approval each, and stay on this step"
+                  onClick={() => void act(async () => (await approveConfident(id, current, devUser)).workspace)}>
+            Approve all confident
+          </Button>
         )}
         <Button data-testid="workspace-approve" disabled={!ws.can_approve || busy || !atCurrent} onClick={() => void approve()}>
           {approveLabel}
