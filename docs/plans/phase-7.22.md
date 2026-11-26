@@ -116,7 +116,7 @@ Typed result `glossary_requested` (`column`, `run_id`, `created`); refusals are 
 (the one decision function every route uses) gets one more outcome field `mapping_proposal_id`. When the approved proposal came
 from a `column_requested` run (the proposal payload's `run_id` points at it) and the column is still unmapped, not excluded and
 has no pending mapping proposal, it creates a pending `mapping` proposal for the column and the approved element, **in the same
-transaction**: `origin = 'manual'`, `author` = the person who approved the element, `proposal_log_id` none (no model is called,
+transaction**: `origin = 'manual'`, `author` = the person who pressed Request for that column (the run's `requested_by`; review of T0), `proposal_log_id` none (no model is called,
 so no made-up log row, as in 7.12 T7), approver role `data_steward`, one candidate = the element, recommended, with a reason
 that names the request. Chosen over a second MappingAgent run because it is deterministic, needs no model call inside the
 approval, and works the same after go-live, when no onboarding session or job exists. The steward still decides it (rule 1).
@@ -198,7 +198,7 @@ proposal's candidate is the element); the glossary-run guard of 0017 (a run stil
    typed `created = false`).
 7. The builder run is not counted in the session's model-call cap (it never was: the registration run is not either); each call
    is still logged (rule 4).
-8. D5's mapping proposal is manual by origin and authored by the approving glossary owner (Q2). It is not an agent proposal and
+8. D5's mapping proposal is manual by origin and authored by the person who requested the column (Q2, decided in the T0 review). It is not an agent proposal and
    writes no `proposal_log` row.
 9. D6: a step that only has items nobody can decide still ends; the column's state is shown, not hidden.
 10. "Approve all confident" approves only pre-accepted items the person may approve; it never approves a conflict, a tie or a
@@ -207,8 +207,8 @@ proposal's candidate is the element); the glossary-run guard of 0017 (a run stil
     decision only queues a run, it calls no model.
 12. T5's "kind" is the transformation step's `op` (Q4). The memory is per feed and column and counts only a person's rejection
     with a reason; a rejection by `system` (Back) does not count.
-13. A requested column approved after the Transformations step has no transformation or rule proposal from this session (known
-    limit); the steward may add one by hand while the step is current, or after go-live through the existing path.
+13. KNOWN LIMIT (accepted in the T0 review): a requested column approved after the Transformations step has no transformation or
+    rule proposal from this session, and the completion report shows "no rules yet" for it; the steward may add one by hand while the step is current, or after go-live through the existing path.
 14. An open onboarding at deploy time has the old order or chain drafts. **No data migration is written** (no data is dropped);
     finish or delete such feeds (`amaze_delete_feed()`, 7.9) before pulling 7.22 on dev and on Replit. Sessions already `done` are
     unaffected. *Ask: Q5.*
@@ -257,6 +257,12 @@ proposal's candidate is the element); the glossary-run guard of 0017 (a run stil
   mapping to see its definition); `CLAUDE.md` (steps, the new rule on registration and requests, 7.13 notes); `docs/ui-polish.md`;
   `BUILD_PLAN.md`; `pytest -q -n 6`, both UI suites, the three Playwright stories (summary lines pasted); `graphify update .`;
   push `phase-7.22`; do not merge. Tell the user to run `alembic upgrade head` on dev and on Replit (0040).
+
+## T0 review (2026-11-26)
+
+Approved. Q1, Q3, Q4, Q5 as proposed. Q2 changed: the mapping proposal is authored by the person who pressed Request, not the
+approving owner. Known limit accepted and recorded (assumption 13); the completion report shows "no rules yet" for such a column.
+`docs/demo.md` tells the reader to finish or delete open onboardings (the demo reset does it) before pulling 7.22.
 
 ## Out of scope
 
