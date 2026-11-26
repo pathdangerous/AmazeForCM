@@ -22,6 +22,14 @@ test("per column: the element chosen and its score", () => {
   expect(card.textContent).toContain("Score 0.93");
 });
 
+test("7.22: the chosen element is a link to the element on the Glossary page, reachable by keyboard", () => {
+  show();
+  const card = screen.getByTestId(`item-${mappingItem().proposal_id}`);
+  const link = within(card).getByRole("link", { name: "instrument_ticker" });
+  expect(link.getAttribute("href")).toBe("#/glossary/instrument_ticker");
+  expect(link.tabIndex).toBe(0);
+});
+
 test("a tie lists its candidates and decides through the select, with the key as the choice", () => {
   const actions = show();
   const card = screen.getByTestId(`item-${tieItem().proposal_id}`);

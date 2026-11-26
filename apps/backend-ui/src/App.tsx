@@ -37,6 +37,7 @@ function viewFromHash(): View {
   if (name.startsWith("feed/")) return "feeds"; // one feed's page belongs to the registry tab
   if (name.startsWith("onboarding/")) return "onboarding";
   if (name.startsWith("reports/")) return "reports"; // one report (phase 7.15)
+  if (name.startsWith("glossary/")) return "glossary"; // one element (phase 7.22: an element link)
   if (name === "onboard" || name === "upload") return "onboard";
   return name in VIEWS ? (name as View) : "overview";
 }
@@ -52,6 +53,11 @@ const NAV_OF: Record<View, keyof typeof VIEWS> = {
   glossary: "glossary", status: "status", notifications: "notifications", reports: "reports", audit: "audit",
   settings: "settings",
 };
+
+function elementFromHash(): string | null {
+  const match = window.location.hash.match(/^#\/glossary\/([A-Za-z0-9_%.-]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 function reportFromHash(): string | null {
   const match = window.location.hash.match(/^#\/reports\/([0-9a-f-]{36})$/);
@@ -77,6 +83,7 @@ function App() {
   const [feedId, setFeedId] = useState<string | null>(feedFromHash);
   const [onboardingId, setOnboardingId] = useState<string | null>(onboardingFromHash);
   const [reportId, setReportId] = useState<string | null>(reportFromHash);
+  const [elementKey, setElementKey] = useState<string | null>(elementFromHash);
   const [users, setUsers] = useState<User[]>([]);
   const [fourEyes, setFourEyes] = useState(true);
   const [selected, setSelected] = useState<string>("");
@@ -97,6 +104,7 @@ function App() {
       setFeedId(feedFromHash());
       setOnboardingId(onboardingFromHash());
       setReportId(reportFromHash());
+      setElementKey(elementFromHash());
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
@@ -201,7 +209,7 @@ function App() {
         {view === "status" && <StatusView devUser={me ? selected : ""} people={people} />}
         {view === "glossary" && (
           <GlossaryView devUser={me ? selected : ""} canDecide={!!me && me.roles.includes("glossary_owner")} people={people}
-                        changed={changed} onChange={onChange} />
+                        changed={changed} onChange={onChange} initialKey={elementKey} />
         )}
         {view === "notifications" && <NotificationsView rows={inbox.rows} error={inbox.error} onRefresh={inbox.refresh} />}
         {view === "onboardings" && <OnboardingsView devUser={me ? selected : ""} />}

@@ -20,7 +20,7 @@ export type ItemActions = {
   cannotMap?: (action: "ignore" | "request", columns: string[]) => void;
 };
 
-export type PanelProps = { ws: Workspace; items: OnboardingItem[]; actions: ItemActions };
+export type PanelProps = { ws: Workspace; items: OnboardingItem[]; actions: ItemActions; devUser?: string };
 
 export function asRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};

@@ -1,4 +1,5 @@
 import { Text, Title } from "@mantine/core";
+import ElementLink from "../../../../ui-shared/ElementLink";
 import { ONBOARDING_STEPS, type Visibility } from "../../api";
 import { STATE_LABELS, STEP_LABELS } from "../Stepper";
 import PipelinePanel from "../PipelinePanel";
@@ -34,6 +35,14 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
         <div data-testid="completion-report" style={{ marginBottom: 12 }}>
           <Text fw={600}>Completion report</Text>
           <ul>{ws.inputs.completion.words.map((w) => <li key={w}>{w}</li>)}</ul>
+          {ws.inputs.completion.mappings.mapped_columns.length > 0 && (
+            <ul aria-label="Mapped columns" style={{ margin: "4px 0" }}>
+              {ws.inputs.completion.mappings.mapped_columns.map((m) => (
+                <li key={m.column}><code>{m.column}</code>{" → "}<ElementLink elementKey={m.element_key} devUser={devUser ?? ""} />
+                  {m.no_rules_yet && " (no rules yet)"}</li>
+              ))}
+            </ul>
+          )}
           <ul aria-label="Rules and their back-tests" style={{ margin: "4px 0" }}>
             {ws.inputs.completion.rules.current.map((r) => (
               <li key={r.rule_key}>

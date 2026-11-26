@@ -1,5 +1,6 @@
 import { Anchor, Badge, Button, Group, NativeSelect, Radio, Table, Text, Textarea, TextInput, Title } from "@mantine/core";
 import { useEffect, useState, type ReactNode } from "react";
+import ElementLink from "../../../ui-shared/ElementLink";
 import { LoadingSkeleton } from "../../../ui-shared/phase711";
 import {
   apiGet, apiPost, decideProposal, describeError, words, type ColumnMapping, type FeedPage, type GlossaryRun,
@@ -69,8 +70,8 @@ function Section({ name, title, result, children }: {
 }
 
 // One column of the mapping table: mapped (with Propose again), pending (choose, approve, reject), or why none.
-function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
-  column: ColumnMapping; canMap: boolean; busy: boolean; onPropose: (column: string) => void;
+function MappingRow({ column, canMap, busy, onPropose, onDecide, devUser }: {
+  column: ColumnMapping; canMap: boolean; busy: boolean; devUser: string; onPropose: (column: string) => void;
   onDecide: (proposalId: string, decision: "approved" | "rejected", choice: string | null, note: string) => void;
 }) {
   const pending = column.pending;
@@ -87,7 +88,7 @@ function MappingRow({ column, canMap, busy, onPropose, onDecide }: {
       <Table.Td>
         {column.mapped_to ? (
           <>
-            <code>{column.mapped_to}</code> <span className="muted">version {column.mapped_version}</span>
+            <ElementLink elementKey={column.mapped_to} devUser={devUser} /> <span className="muted">version {column.mapped_version}</span>
             {column.versions.length > 1 && (
               <> <Button size="compact-xs" variant="default" onClick={() => setShowVersions(!showVersions)}
                          data-testid="versions">
@@ -577,7 +578,7 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
                 </Table.Thead>
                 <Table.Tbody>
                   {page.columns.map((c) => (
-                    <MappingRow key={c.name} column={c} canMap={canMap} busy={busy} onPropose={proposeMappings}
+                    <MappingRow key={c.name} column={c} canMap={canMap} busy={busy} devUser={devUser} onPropose={proposeMappings}
                                 onDecide={decideMapping} />
                   ))}
                 </Table.Tbody>

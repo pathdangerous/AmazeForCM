@@ -119,8 +119,9 @@ function DecidedRow({ proposal, name }: { proposal: ConfigProposal; name: (id: s
   );
 }
 
-export default function GlossaryView({ devUser, canDecide, changed, people, onChange }: {
+export default function GlossaryView({ devUser, canDecide, changed, people, onChange, initialKey = null }: {
   devUser: string; canDecide: boolean; changed: number; people: Record<string, string>; onChange: () => void;
+  initialKey?: string | null; // phase 7.22: an element link (#/glossary/<key>) opens that element
 }) {
   const [proposals, setProposals] = useState<ConfigProposal[] | null>(null);
   const [show, setShow] = useState<"pending" | "decided">("pending");
@@ -130,7 +131,8 @@ export default function GlossaryView({ devUser, canDecide, changed, people, onCh
   const [domain, setDomain] = useState<string>(""); // "" = all domains
   const [query, setQuery] = useState("");
   const [elements, setElements] = useState<GlossaryElement[] | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(initialKey);
+  useEffect(() => { if (initialKey) setSelectedKey(initialKey); }, [initialKey]); // the hash changed while the page is open
   const [detail, setDetail] = useState<ElementDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const name = (id: string) => people[id] ?? id;

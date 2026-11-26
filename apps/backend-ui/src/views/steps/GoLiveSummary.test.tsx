@@ -109,6 +109,8 @@ test("the completion report names the ignored columns and the columns waiting fo
   expect(box).toContain("Coupon: waiting for glossary (not loaded yet).");
   expect(box).toContain("No rules yet: Ticker.");
   expect(box.match(/Scratch/g)?.length).toBe(1); // named once
+  const link = screen.getByRole("link", { name: "ticker" }); // each mapped column names its element as a link
+  expect(link.getAttribute("href")).toBe("#/glossary/ticker");
 });
 
 test("the completion report is shown in plain words with each rule's back-test and what was left out (T2)", () => {

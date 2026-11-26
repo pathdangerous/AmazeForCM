@@ -46,6 +46,23 @@ test("task 12: the glossary is converted; P14: an alias says Same as, not Clashe
   expect(within(card).getByTestId("approve").tagName).toBe("BUTTON");
 });
 
+test("7.22: opened from an element link (#/glossary/<key>), the element is selected and its detail is shown", async () => {
+  const element = { id: "e1", created_at: AT, key: "coupon_rate", version: 1, name: "Coupon rate", domain: "security_master",
+                    data_type: "decimal", definition: "The annual coupon.", aliases: ["coupon"], unit: "percent",
+                    proposal_id: null, created_by: "seed" };
+  const fetchStub = stubFetch({
+    "GET /api/amaze/glossary/domains": [{ domain: "security_master", label: "Security master", count: 1 }],
+    "GET /api/amaze/proposals?kind=glossary_element&status=pending": [],
+    "GET /api/amaze/glossary/elements?": [element],
+    "GET /api/amaze/glossary/elements/coupon_rate": { element, history: [element] },
+  });
+  renderWithTheme(<GlossaryView devUser="dev-glossary-owner" canDecide={false} changed={0} people={NAMES}
+                                onChange={() => undefined} initialKey="coupon_rate" />);
+  await screen.findByText("The annual coupon.");
+  expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/glossary/elements/coupon_rate"))).toBe(true);
+  expect(screen.getAllByText(/Coupon rate/).length).toBeGreaterThan(0);
+});
+
 test("a decided proposal of a deleted feed says so and does not link to the feed", async () => {
   stubFetch({
     "GET /api/amaze/glossary/domains": [],

@@ -187,7 +187,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
     : ws.blocked_by ?? (state === "agent_working" ? "The agent is working" : state === "failed" ? "The step failed"
       : current === "product_ready" ? "Nothing left to approve" : "Not ready to approve");
   const approveLabel = current === "go_live" ? "Approve go-live" : "Approve & next";
-  const panel = { ws: view ?? ws, items, actions };
+  const panel = { ws: view ?? ws, items, actions, devUser };
 
   let main;
   if (!view) {

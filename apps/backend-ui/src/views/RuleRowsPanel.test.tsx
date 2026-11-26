@@ -29,6 +29,13 @@ test("it shows the rule, how many rows fail, and asks the API for the first page
     headers: expect.objectContaining({ "X-Dev-User": "dev-data-steward" }) }));
 });
 
+test("7.22: each column header names its glossary element as a link", async () => {
+  const { dialog } = await open({ [ruleRowsPath()]: ruleRowsShown() });
+  await within(dialog).findByText("1 of 6 rows fail");
+  const link = within(dialog).getByRole("link", { name: "bid_price" });
+  expect(link.getAttribute("href")).toBe("#/glossary/bid_price");
+});
+
 test("the rule's column header is highlighted and its cells are green, red or amber, each with its word", async () => {
   const { dialog } = await open({ [ruleRowsPath()]: ruleRowsShown() });
   await within(dialog).findByText("1 of 6 rows fail");

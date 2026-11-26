@@ -75,6 +75,12 @@ test("7.22: the feed page names the columns left out and the columns waiting for
   expect(box.textContent).toContain("Waiting for glossary (not loaded yet): Coupon");
 });
 
+test("7.22: a mapped column shows its element as a link to the Glossary page", async () => {
+  show();
+  const table = await screen.findByTestId("section-mapping");
+  expect(within(table).getByRole("link", { name: "instrument_id" }).getAttribute("href")).toBe("#/glossary/instrument_id");
+});
+
 test("7.22: no columns left out, no box", async () => {
   show(feedPage());
   await screen.findByTestId("section-source");

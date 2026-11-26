@@ -1,5 +1,6 @@
 import { Button, Drawer, Text, VisuallyHidden } from "@mantine/core";
 import { useEffect, useState } from "react";
+import ElementLink from "../../../ui-shared/ElementLink";
 import { describeError, getRuleRows, type RuleRowsAnswer, type RuleRowsShown } from "../api";
 
 // Phase 7.20: click a rule, see the data it checked. The rule's columns are marked in the header; in them a cell is
@@ -35,7 +36,7 @@ function Legend() {
   );
 }
 
-function Rows({ shown }: { shown: RuleRowsShown }) {
+function Rows({ shown, devUser }: { shown: RuleRowsShown; devUser: string }) {
   return (
     <div style={{ overflowX: "auto" }} role="region" aria-label="Rows checked by the rule" tabIndex={0}>
       <table className="amz-grid">
@@ -45,7 +46,8 @@ function Rows({ shown }: { shown: RuleRowsShown }) {
             {shown.columns.map((c) => (
               <th key={c.key} scope="col" data-affected={c.affected ? "true" : undefined}
                   style={c.affected ? { background: "var(--amz-marker)", color: "var(--amz-on-bright)" } : undefined}>
-                {c.key}{c.affected && <VisuallyHidden> (a column of the rule)</VisuallyHidden>}
+                <ElementLink elementKey={c.key} devUser={devUser} />
+                {c.affected && <VisuallyHidden> (a column of the rule)</VisuallyHidden>}
               </th>
             ))}
           </tr>
@@ -108,7 +110,7 @@ function Panel({ ruleId, devUser }: { ruleId: string; devUser: string }) {
         <input type="checkbox" checked={failingOnly} onChange={(e) => { setFailingOnly(e.currentTarget.checked); setPage(1); }} />
         Show failing rows only
       </label>
-      {answer.rows.length === 0 ? <Text>No rows to show.</Text> : <Rows shown={answer} />}
+      {answer.rows.length === 0 ? <Text>No rows to show.</Text> : <Rows shown={answer} devUser={devUser} />}
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
         <Button size="xs" variant="default" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous page</Button>
         <Text size="sm">{`Page ${answer.page} of ${pages}`}</Text>
