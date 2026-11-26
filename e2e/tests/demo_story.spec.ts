@@ -22,14 +22,20 @@ async function reject(page: Page, card: ReturnType<Page["locator"]>, why: string
 }
 
 const hooks: StepHooks = {
-  // 7.22: "Approve all confident" is a button of the step (one approval per item); the step stays
+  // 7.22: mapping first. Columns no element fits are listed in words; the walk requests a glossary element for one and
+  // ignores the rest (operator_flow.ts), and Approve & next waits until each has a choice
+  "step-mapping": async (page) => {
+    const list = page.getByTestId("cannot-map");
+    await expect(list).toContainText("Cannot map: no glossary element fits");
+    await expect(list).toContainText("Undecided");
+    await expect(page.getByTestId("workspace-approve")).toBeDisabled();
+  },
+  // the Glossary requests step: the builder drafted the element for the one requested column and nothing else; Approve
+  // all confident approves it (and, as steward, its mapping) without moving the step on
   "step-glossary": async (page) => {
-    const confident = page.getByTestId("workspace-approve-confident");
-    await expect(confident).toBeVisible();
-    if (await confident.isEnabled()) {
-      await confident.click();
-      await expect(page.getByTestId("workspace-preaccepted")).toBeHidden({ timeout: 60_000 });
-    }
+    await expect(page.getByTestId("workspace-approve-confident")).toBeVisible();
+    const items = page.locator('[data-testid^="item-"]:not([data-testid^="item-badge"]):not([data-testid="item-decider"])');
+    await expect(items).toHaveCount(1, { timeout: 60_000 });
   },
   // T1: the facts in plain words, each action says who does it; a person adds one and rejects one
   "step-profile": async (page) => {
@@ -83,6 +89,14 @@ const hooks: StepHooks = {
   "step-go_live": async (page) => {
     const report = page.getByTestId("completion-report");
     await expect(report).toBeVisible();
+    // 7.22: a mapped column names its element as a link; hover or focus shows the definition, data type and aliases
+    const element = report.getByRole("list", { name: "Mapped columns" }).getByRole("link").first();
+    await element.hover();
+    await expect(page.getByRole("tooltip")).toContainText("Type:");
+    await page.keyboard.press("Escape");
+    await element.focus();
+    await expect(page.getByRole("tooltip")).toContainText("Type:");
+    await expect(report).toContainText("Left out (not loaded)");
     await expect(report).toContainText("added by hand");
     await expect(report).toContainText("Items:");
   },

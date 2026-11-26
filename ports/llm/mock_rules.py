@@ -399,17 +399,18 @@ def transformation(data: dict[str, Any]) -> dict[str, Any]:
     answers = []
     chosen = {(a["action"], c) for a in data.get("profile_actions", []) for c in a.get("columns", [])}
     decided = bool(data.get("profile_actions_decided"))  # 7.12: the profile step proposed actions; only a selected one counts
+    refused = {(r["source_field"], op) for r in data.get("rejected", []) for op in r.get("ops", [])}  # 7.22, T5
     for column in data.get("columns", []):
         steps: list[dict[str, Any]] = []
         parts: list[str] = []
         confidence = 0.95
         name = column["source_field"]
-        if column.get("placeholder_count") and column.get("placeholder_values") and (
+        if column.get("placeholder_count") and column.get("placeholder_values") and (name, "placeholder_to_null") not in refused and (
                 not decided or ("placeholder_to_null", name) in chosen):
             steps.append({"op": "placeholder_to_null", "values": list(column["placeholder_values"])})
             parts.append(f"{column['placeholder_count']} cell(s) hold a placeholder "
                          f"({', '.join(column['placeholder_values'])}), so they become empty")
-        if column.get("text_date_format") and column.get("element_type") == "date" and (
+        if column.get("text_date_format") and column.get("element_type") == "date" and (name, "parse_date") not in refused and (
                 not decided or ("parse_date", name) in chosen):
             steps.append({"op": "parse_date", "format": column["text_date_format"]})
             ambiguous = bool(column.get("date_format_ambiguous"))

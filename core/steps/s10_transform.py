@@ -155,7 +155,9 @@ def transform_input(session: Session, *, feed_id: UUID, settings: Settings | Non
             for m, c in open_columns],
         samples={m.source_field: samples[c.name] for m, c in open_columns if c.name in samples},
         profile_actions=selected_actions(session, feed.id),
-        profile_actions_decided=actions_were_proposed(session, feed.id))
+        profile_actions_decided=actions_were_proposed(session, feed.id),
+        rejected=[r for r in TransformationRepository(session).rejected_steps(feed_id)
+                  if r.source_field in {m.source_field for m, _ in open_columns}])
 
 
 # ---------------------------------------------------------------- propose

@@ -117,6 +117,17 @@ class ColumnToTransform(BaseModel):
     constant: bool
 
 
+class RejectedTransform(BaseModel):
+    """Phase 7.22, T5: the ops of a transformation proposal a person rejected for a column, and why. The agent is not to
+    propose any of these ops for that column again."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_field: str
+    ops: list[str]
+    reason: str
+
+
 class TransformationInput(BaseModel):
     """What the TransformationAgent sees: the feed's currently mapped columns (never the glossary), and, only when
     SEND_SAMPLE_VALUES is true (decision D3), at most 5 values per column."""
@@ -130,6 +141,7 @@ class TransformationInput(BaseModel):
     profile_actions: list[dict[str, Any]] = Field(default_factory=list)  # T1: selected profile actions
     # True when the profile step proposed actions: then clean a column only if an action for it was selected
     profile_actions_decided: bool = False
+    rejected: list[RejectedTransform] = Field(default_factory=list)  # T5: a person rejected these ops, with a reason
 
 
 class ColumnTransforms(BaseModel):

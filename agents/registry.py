@@ -35,7 +35,7 @@ PROMPT_VERSIONS: dict[str, str] = {
     "rule_recommender": "v2",  # v2 (7.12): profile_actions; v1 stays on disk
     "review_summariser": "v2",  # v2 (phase 7.8, S8): the input has no visibility; v1 stays on disk
     "table_extractor": "v1",
-    "transformation": "v2",  # v2 (7.12): profile_actions; v1 stays on disk
+    "transformation": "v3",  # v3 (7.22): rejected ops; v2 (7.12): profile_actions; v1, v2 stay on disk
     "exception_fix": "v1",  # phase 7.14
     "report_summariser": "v1",  # phase 7.15
 }
@@ -47,6 +47,7 @@ PROMPT_FILE_HASHES: dict[str, str] = {
     "glossary_builder.v3.yaml": "e38e716d282963d94736b1e28173b52630a79b65b7856cdd5ab5b8a4a6e2604f",
     "mapping.v2.yaml": "c773134418cc57fd24e2a01b00548627cb9ea930c0b4ef627e1f2514887865b2",
     "transformation.v2.yaml": "f68866da61b5f2d318ab3fe6f67a52d5f48185be7daa64fe82473237df75fbd7",
+    "transformation.v3.yaml": "bb3fb4cc4b29782e1853fde2f2a4c4aeee99ce2d00ccc20cc3d5109f8b2468fa",
     "rule_recommender.v2.yaml": "9a628abd04386e7582b5ffd9ce68607f469bc8ac6f47e3c73055aa842e8b8a93",
     "mapping.v1.yaml": "9afdfcd5605b25a07a26b743f2672f340f3a3251ec87de63671d6f0bb7ed2fc4",
     "intent.v1.yaml": "40ae53c05f86abac70d7993f22e0c78bd8456252d0aaa94f10627a949f0dbb05",

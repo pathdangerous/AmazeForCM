@@ -14,7 +14,14 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.orm import Session
 
-from core.domain.transformation import KeyPolicy, KeyPolicyDraft, Transformation, TransformationDraft
+from core.domain.transformation import (
+    KeyPolicy,
+    KeyPolicyDraft,
+    RejectedTransform,
+    Transformation,
+    TransformationDraft,
+)
+from core.repositories.configuration import _by_a_person
 from core.repositories.errors import (
     FeedNotFound,
     FeedNotRegistered,
@@ -29,6 +36,23 @@ from core.repositories.tables import FeedKeyPolicyRow, FeedRow, MappingRow, Tran
 class TransformationRepository:
     def __init__(self, session: Session):
         self._session = session
+
+    def rejected_steps(self, feed_id: UUID) -> list[RejectedTransform]:
+        """Phase 7.22, T5: per column, the ops of the transformation proposals a person rejected (with the reason they
+        gave): not proposed again. A rejection by `system` (Back) is no judgement and does not count, as for mappings
+        (7.13 T4); nor does a rejected fix of a held load (7.14), which is a different question."""
+        proposals = ProposalRepository(self._session)
+        rejected = [p for p in proposals.list_for_feed(feed_id, "transformation", "rejected")
+                    if not p.payload.get("exception_group")]
+        found: dict[str, RejectedTransform] = {}
+        for p in _by_a_person(self._session, rejected):
+            reason = next((a.note for a in reversed(proposals.approvals(p.id)) if a.decision == "rejected" and a.note), "")
+            column = p.payload["source_field"]
+            ops = [s["op"] for s in p.payload.get("steps", [])]
+            before = found.get(column)
+            found[column] = RejectedTransform(source_field=column, ops=list(dict.fromkeys([*(before.ops if before else []), *ops])),
+                                              reason=reason or (before.reason if before else ""))
+        return list(found.values())
 
     def add_version(self, *, feed_id: UUID, source_field: str, steps: Sequence[Any], proposal_id: UUID,
                     created_by: str) -> Transformation:

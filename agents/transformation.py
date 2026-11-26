@@ -29,15 +29,18 @@ class TransformationAgent(Agent):
 
     def to_proposals(self, agent_input: TransformationInput, output: TransformationOutput) -> list[AgentProposal]:
         columns = {c.source_field: c for c in agent_input.columns}
+        rejected = {r.source_field: set(r.ops) for r in agent_input.rejected}  # T5: a person said no to these ops
         seen: set[str] = set()
         drafts = []
         for answer in output.columns:
             column = columns.get(answer.source_field)
-            if column is None or answer.source_field in seen or not answer.steps:
+            steps = [s for s in answer.steps  # (a step may still be raw here: its validation is below)
+                     if (s.get("op") if isinstance(s, dict) else s.op) not in rejected.get(answer.source_field, ())]
+            if column is None or answer.source_field in seen or not steps:
                 continue
             seen.add(answer.source_field)
             checked = TransformationDraft(feed_id=agent_input.feed_id, source_field=column.source_field,
-                                          steps=answer.steps)  # a step outside the set raises: the answer is discarded
+                                          steps=steps)  # a step outside the set raises: the answer is discarded
             payload = TransformationProposalPayload(
                 source_field=column.source_field, element_key=column.element_key, steps=checked.steps,
                 reason=answer.reason, confidence=answer.confidence)

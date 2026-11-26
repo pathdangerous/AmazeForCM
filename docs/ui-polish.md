@@ -78,3 +78,8 @@ A running list of UI polish items, one line each: screen, issue, proposed fix. I
 | backend-ui, Deliveries (phase 7.21) | The calendar of "Since the feed began loading" is one long grid; a year is 52 rows | Group by month with a heading | open |
 | backend-ui, Deliveries (phase 7.21) | The arrival chart has no x axis dates, only the table below | Label the first and last delivery on the axis | open |
 | consumer-ui, Product (phase 7.21) | "Updated daily" sits beside the release date as one more line of small text | Put it in a chip next to the access chip | open |
+| backend-ui, Mapping (phase 7.22) | With 26 columns no element fits, the "Cannot map" list is 26 rows above the mapping grid; the step needs a scroll before the proposals | Collapse the list to a count with "Show the columns", or put it beside the grid | open |
+| backend-ui, Mapping (phase 7.22) | A person who wants to ignore some and request others of many columns clicks one by one (Ignore all / Request all only take every undecided column) | Tick boxes and one "Ignore selected" / "Request selected" | open |
+| backend-ui, Element link (phase 7.22) | The definition card opens under the link and can run off the right edge of a narrow table cell | Flip the card to the left when it would overflow | open |
+| backend-ui, Glossary requests (phase 7.22) | A requested element left pending (no glossary owner present) is visible only as a pending item and on the completion report | A notice on the Glossary page naming the feed and the waiting columns | open |
+| consumer-ui, Product (phase 7.22) | "Left out, not loaded" and "Waiting for glossary" are two lines of plain text under the owner line | A collapsed "Columns not loaded" disclosure | open |

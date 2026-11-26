@@ -252,6 +252,23 @@ Order of precedence when they disagree:
   tells the owner once (`delivery_alerts`, one row per feed and due time) through the daily job. Deliveries are judged on the load's
   `received_at` (when Amaze took the file in), not on when the source sent it. `amaze_delete_feed()` also deletes the schedules and
   alerts. Never work around these checks.
+- Phase 7.22 (`docs/plans/phase-7.22.md`, migration `0040`): the onboarding is Profile, **Mapping**, **Glossary requests**,
+  Transformations, Rules, Go-live, First load, Product ready (the step key `glossary` is kept; the database checks the nine
+  names, not their order). "Run all agents" (7.13 chain mode) is gone: no `run_mode` use, no chain worker or review, no
+  `core/steps/drafts.py`; 0032's tables and the `run_mode` column stay, unused. The onboarding's registration queues **no**
+  glossary run (`register_feed(queue_glossary=False)`; the workbench path keeps `True`), and the mapping step maps to the
+  existing glossary only (`record_mappings(send_back=False)`). A column no element fits is **derived**, not a proposal
+  (`core/steps/cannot_map.py`: the typed outcome `no_element_back_to_05` is written in the mapping `agent_done` event); a person
+  chooses per column through `POST /onboardings/{id}/cannot-map`: **ignore** (the existing excluded manual mapping) or
+  **request** (a glossary run for those columns only, reason `column_requested`, event `glossary_requested`, no model call at
+  the decision). `decide_element()` makes the requested column's mapping proposal by code in the same transaction: `origin
+  'manual'`, `author` the person who pressed Request, pending for the steward, no model call and no logged call row. The Glossary
+  requests step never blocks (an element the person cannot or will not approve stays pending: "waiting for glossary (not loaded
+  yet)"), and an ignored or requested column never blocks go-live; the completion report, the feed page and the product page name
+  both lists (`columns_not_loaded()`). A requested column approved after Transformations gets no transformation or rule from that
+  session (the report says "No rules yet"). `TransformationRepository.rejected_steps()`: a transformation a person rejected with a
+  reason is not proposed again for that column and op (prompt `transformation.v3`; the agent also drops the op in code).
+  Migration 0040 changed two CHECK constraints (`ck_glossary_runs_reason`, `ck_onboarding_events_event`) and no trigger.
 - From `0028` (phase 7.12, T7, `docs/plans/phase-7.12.md`): a proposal is made by an agent (`origin = 'agent'`, a `proposal_log_id`, no `author`) or by a person (`origin = 'manual'`, an `author`, no `proposal_log_id`). Never write a made-up `proposal_log` row for a manual item: no model was called (rule 4 logs model calls). A person adds only glossary, mapping, transformation and rule items (`add_item()` in `core/steps/onboarding.py`, `POST /api/amaze/onboardings/{id}/items`); a go-live note is an edit of the review summary's `notes`. A manual mapping may name any existing glossary element, and a column may be left out (`excluded`: an approved proposal and no mappings row, so it is not loaded). A manual or edited rule is back-tested by `check_manual_rule()` (the agent's own back-test code) before it is written, with no connection held; a failure is `ManualRuleRefused`, 422. Never work around these checks.
 - A glossary builder run is a `glossary_runs` row (one active run per feed), queued in the same transaction as the registration or the steward's request, and run by the worker in `apps/api/jobs.py` with a lease (`GLOSSARY_RUN_LEASE_SECONDS`); an answer that arrives after its lease was taken again is discarded (logged, not used). No agent input holds the whole glossary: each column or term gets at most 10 candidate elements (`core/steps/candidates.py`); a test enforces this.
 - Step 02 reads the file only through `BlobStore.get()` and runs DuckDB with no database connection held, like a model call: read, end the transaction, profile, lock, check again, write.

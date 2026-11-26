@@ -7,8 +7,10 @@ real pipeline, the same rule failing every Monday, so Reports has numbers and on
 on Reports (counted like a report, never stored) and the **recorded erase of old profiles** (History on the feed page; the
 audit lists it). Phase 7.15 adds **Reports** (a daily and a monthly report per data owner and data steward, made
 every morning, numbers counted by code, an optional narrative apart from them), recurring failure patterns, and the monthly
-**Audit** with a CSV. Phase 7.13 adds **Run all agents**: after one click on the profile, every onboarding
-agent drafts ahead on the drafts before it, and you review the whole chain once, top to bottom. Phase 7.14 adds
+**Audit** with a CSV. Phase 7.22 **removes Run all agents** (7.13): the onboarding is mapping first, then glossary requests
+(see "What changed in 7.22" below). **Before pulling 7.22, finish or delete every open onboarding** (a feed is deleted from its
+page, "Delete feed", which keeps a record; the Playwright story rebuilds its own schema, so it has none): a session started in
+the old order or in chain mode is not carried over. Run `alembic upgrade head` (0040) on dev and on Replit. Phase 7.14 adds
 **Exceptions**: the rows a held load's rules flagged, grouped; an agent proposes one fix per group; a person approves in
 bulk; the held file is rerun as a new, recorded load.
 
@@ -23,10 +25,10 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
 
 | Min | Say | Do | Show |
 |---|---|---|---|
-| 0-1 | "Agents propose, people decide, rules execute." | Onboard a file: upload version 1. At **Create the feed** answer **Recurring feed or one-time load?** (7.21: there is no default and the button waits): choose **Recurring**, **Business days**, **07:00**, **60** minutes grace, then confirm. Press **Run all agents** (once). | The nine steps and the empty **Chain review**. Nothing is loaded yet. |
-| 1-2.5 | "The profile in a business user's words." | Profile step. | Records that are incomplete, how many columns already match the glossary. **Actions**: each marked "agent applies" or "I'll do it". Select (approve) or reject each; add one of your own ("Add action"). The "I'll do it" ones become a to-do list on the feed. Approve: **the one click**. The profile registers the feed (owner, licence, visibility), so it stays a person's decision before the agents go on. |
-| 2.5-3.5 | "One click ran every agent ahead; you review the chain once." | Wait a few seconds; nothing else is clicked. | **Chain review**: glossary, mapping, transformations and rules are all drafted. Blocked items (a tie, a conflict: the chain did not draft past that column) come first, then low-confidence ones. A mapping says "based on" the glossary draft it used; click it to open that step. Nothing is configuration yet: no mapping or rule exists until it is approved. |
-| 3.5-4.5 | "Approve top to bottom; an edit re-runs only what it touches." | **Approve all confident** on the glossary (one approval per item, by you). Edit one glossary draft: the mapping drafts built on it go stale, are rejected by the system and re-drafted; nothing else runs again. Approve and next through glossary and mapping: the cursor moves, no agent runs again. A draft approved before what it is based on is refused ("approve top to bottom"). | Cleaning steps appear only for columns whose action was selected; a column left out is not asked about. |
+| 0-1 | "Agents propose, people decide, rules execute." | Onboard a file: upload version 1. At **Create the feed** answer **Recurring feed or one-time load?** (7.21: there is no default and the button waits): choose **Recurring**, **Business days**, **07:00**, **60** minutes grace, then confirm. (7.22: there is no **Run all agents**; the agents run one step at a time.) | The nine steps: Profile, **Mapping**, **Glossary requests**, Transformations, Rules, Go-live, First load, Product ready. Nothing is loaded yet. |
+| 1-2.5 | "The profile in a business user's words." | Profile step. | Records that are incomplete, how many columns already match the glossary. **Actions**: each marked "agent applies" or "I'll do it". Select (approve) or reject each; add one of your own ("Add action"). The "I'll do it" ones become a to-do list on the feed. Approve: the profile registers the feed (owner, licence, visibility) and asks the glossary builder **nothing**: the next step maps to the glossary that already exists. |
+| 2.5-3.5 | "Map to the glossary you have first. What does not fit is a person's call." | **Mapping** step. Read the proposals; **hover or Tab to an element name** (the link) to see its definition, data type and aliases; press Enter or click to open it on the Glossary page. The list **Cannot map: no glossary element fits** names each column no element fits, with its reason. Press **Ignore** for most of them (or **Ignore all undecided**) and **Request glossary element** for one. | Each cannot-map column says **Undecided**, **Ignored: left out, not loaded** or **Glossary element requested: waiting for the glossary owner** in words. **Approve & next** says "N columns cannot be mapped" until every one has a choice. Nothing is loaded for an ignored or requested column, and neither blocks go-live. |
+| 3.5-4.5 | "Request it, approve it, and the column is mapped." | Approve the mapping step. **Glossary requests** step: the builder's element for the one requested column (only that column was asked about). **Approve & next**: the element, then the column's mapping (a proposal made by code, by the person who pressed Request, no model call) are approved by you, as glossary owner and as steward. | The element is in the Glossary; the column is mapped to it. A person without the glossary owner role could not approve it: it would stay **pending**, the step would still end, and the column would show **waiting for glossary (not loaded yet)** on the completion report, the feed page and the product page. Cleaning steps appear only for columns whose action was selected; a transformation a person rejected with a reason is not proposed again for that column. |
 | 4-6 | "A person can always add, edit or reject." | Rules step: **click a rule to see its rows** (press **Show rows**), then Escape. **Add a rule by hand** (it is back-tested before it is accepted; a failing SQL is refused with its reason), **edit one agent rule** (it is back-tested again), **reject one**. | **Show rows** (7.20) opens the data the rule checked, run on the feed's file as a draft: the rule's columns are marked, each cell is green (passes), red (fails) or amber (waived) and says so in words, and the header says "N of M rows fail" with **Show failing rows only**. The same button is on the chain review and the feed page; on an approved rule it shows the newest load's flags. No model is called and nothing is written. Items say "added by Olive Operator". The timeline shows who made each. No model call is made for a hand-made item. |
 | 6-7 | "Before go-live: what is done and what is not." | Go-live step. | The **completion report**: mappings done, pending and left out; transformations; each rule with its back-test; actions by agents vs by hand; items by agents vs by hand. |
 | 7-8 | "The code that will run, versioned, and checked before it can go live." | On the go-live summary press **Run pipeline** (the **Pipeline** panel), read its four stages, then approve go-live; open the feed page, section **Generated code**. | The pipeline: **commit** (the code is committed to a git repository of its own, one folder per feed; the short commit hash is shown), **SQL parse**, **rule check** (the sandbox's own check of each rule), **test load** (a dry run of the engine on the feed's file: nothing is written). "Latest result: Passed". Version 1: staging DDL, load and curated SQL, each rule's SQL, README; under it the run that passed, with the same commit hash. The engine runs exactly these statements; the version is pinned by the go-live and cannot be edited. Release the first load; the consumer sees the product. |
@@ -136,18 +138,24 @@ The same path is the Playwright story `e2e/tests/demo_story.spec.ts`.
   (`rerun_needs_go_live`).
 - A rerun is recorded (`rerun_of_load_id` and a reason, checked by the database). Step 12 leaves out only the held load's
   own hash: any other resend is still quarantined. A held load that is rerun again needs something resolved since.
-- Known gap G1: a pending rule draft in a chain is not made stale when a fix approves a newer transformation version; the
-  chain review shows "tested on transformation version N (now version M)".
 - Run `alembic upgrade head` (0033 and 0034) on dev and on Replit before showing it.
 
-## What Run all agents does and does not do (7.13)
+## What changed in 7.22 (and what did not)
 
-- Rule 1 is unchanged: every draft is a pending proposal; a person approves each one (one approval row per item, also
-  with "Approve all confident"); the database refuses an approval before the drafts it was built on are approved.
-- It stops only at the model-call cap or a failed call (enter the step again to resume), and drafts past a
-  low-confidence item (flagged) but not past an item with no single value (blocked: that column only).
-- Go-live, its test load and its code version, and every load after it (steps 12-15), are as before: they run on
-  approved configuration only. Approval in advance is not built.
+- **Run all agents is gone** (the owner did not want it). Each step's agent runs when the step is entered; a person decides each
+  item (one approval row per item). **Approve all confident** stays, per step, and does not move the step on. The Back fix of
+  7.13 stays (a rejection by `system` is no judgement). 7.13's tables and columns are left in place, unused; nothing was dropped.
+- **Mapping runs before the glossary.** The MappingAgent maps only to elements that exist. A column no element fits is "Cannot
+  map": **Ignore** (the existing excluded mapping: left out, not loaded) or **Request glossary element** (a glossary run for that
+  column only; the glossary owner approves it; the approval makes the column's mapping proposal, by code, authored by the
+  person who pressed Request, no model call). Mapping and the later steps go on with the mapped columns.
+- **An ignored or requested column never blocks go-live.** The completion report, the feed page and the product page name them:
+  "Left out, not loaded" and "waiting for glossary (not loaded yet)". After go-live the element's approval still makes the
+  mapping proposal; once the steward approves it the configuration differs from the go-live's, so the owner approves a new
+  go-live and the next released load adds the column to the product (7.19).
+- **Known limit:** a requested column whose element is approved after the Transformations step gets no transformation or rule
+  proposal from that session; the completion report shows "No rules yet" for it.
+- Go-live, its test load and code version, and every load after it (steps 12-15), are as before.
 
 ## Roadmap (not built yet)
 

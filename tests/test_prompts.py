@@ -70,7 +70,7 @@ def test_every_agent_in_the_registry_names_a_current_prompt():
     assert (registry.AGENT_PROMPTS["ExceptionFixAgent"], registry.PROMPT_VERSIONS["exception_fix"]) == (
         "exception_fix", "v1")
     assert (registry.AGENT_PROMPTS["TransformationAgent"], registry.PROMPT_VERSIONS["transformation"]) == (
-        "transformation", "v2")  # old: v1; 7.12: profile_actions
+        "transformation", "v3")  # old: v1; 7.12: v2 profile_actions; 7.22: v3 rejected ops (v1, v2 stay on disk)
     assert registry.AGENT_PROMPTS["ReviewSummariserAgent"] == "review_summariser" and (
         registry.PROMPT_VERSIONS["review_summariser"] == "v2")  # old: v1; S8: v2 drops visibility
     assert (registry.AGENT_PROMPTS["RuleRecommenderAgent"], registry.PROMPT_VERSIONS["rule_recommender"]) == (
@@ -83,7 +83,8 @@ def test_every_agent_in_the_registry_names_a_current_prompt():
     # 7.12: glossary_builder.v3 and mapping.v2 say what profile_actions mean; every older file stays on disk
     assert (registry.PROMPT_VERSIONS["glossary_builder"], registry.PROMPT_VERSIONS["mapping"]) == ("v3", "v2")
     assert {"glossary_builder.v1.yaml", "glossary_builder.v2.yaml", "glossary_builder.v3.yaml", "mapping.v1.yaml",
-            "mapping.v2.yaml", "transformation.v1.yaml", "transformation.v2.yaml", "rule_recommender.v1.yaml",
+            "mapping.v2.yaml", "transformation.v1.yaml", "transformation.v2.yaml", "transformation.v3.yaml",
+            "rule_recommender.v1.yaml",
             "rule_recommender.v2.yaml"} <= set(registry.PROMPT_FILE_HASHES)
     v2 = PromptLibrary().get("glossary_builder")
     for word in ("unit", "times", "percent", "consensus estimate", "samples"):

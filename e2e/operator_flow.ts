@@ -60,6 +60,7 @@ export type StepHooks = Record<string, (page: Page) => Promise<void>>;
 
 export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {}) {
   let edited = false;
+  let requested = false; // 7.22: one cannot-map column is requested, the others are ignored
   const hooked = new Set<string>();
   for (let turn = 0; turn < 40; turn++) {
     await settle(page);
@@ -77,6 +78,28 @@ export async function walk(page: Page, shot: Shot = none, hooks: StepHooks = {})
       hooked.add(step);
       await hooks[step](page);
       await settle(page);
+    }
+
+    // 7.22: columns no glossary element fits. Request a glossary element for the first one (once, so the Glossary requests
+    // step has one to approve); Ignore every other one. Approve & next waits until each has a choice.
+    const cannotMap = page.getByTestId("cannot-map");
+    if (await cannotMap.isVisible()) {
+      const request = cannotMap.getByRole("button", { name: /^Request glossary element for / }).first();
+      if (!requested && (await request.count()) > 0) {
+        await request.click();
+        requested = true;
+        await settle(page);
+      }
+      const ignoreAll = cannotMap.getByRole("button", { name: "Ignore all undecided" });
+      if (await ignoreAll.isVisible()) {
+        await ignoreAll.click();
+        await settle(page);
+      }
+      const one = cannotMap.getByRole("button", { name: /^Ignore (?!all)/ });
+      while ((await one.count()) > 0) {
+        await one.first().click();
+        await settle(page);
+      }
     }
 
     if (await page.getByTestId("summary-page").isVisible()) {
