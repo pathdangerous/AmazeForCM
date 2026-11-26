@@ -3,7 +3,7 @@ import type { StepName, StepState, StepView } from "../backend-ui/src/api";
 import { StatusChip } from "./phase711";
 
 export const STEP_LABELS: Record<StepName, string> = {
-  upload: "Upload", profile: "Profile", glossary: "Glossary", mapping: "Mapping", transformations: "Transformations",
+  upload: "Upload", profile: "Profile", mapping: "Mapping", glossary: "Glossary requests", transformations: "Transformations",
   rules: "Rules", go_live: "Go-live", first_load: "First load", product_ready: "Product ready",
 };
 export const STATE_LABELS: Record<StepState, string> = {

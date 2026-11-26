@@ -11,12 +11,14 @@ from core.repositories.proposals import ProposalRepository
 from core.steps.completion import completion_report
 from core.steps.onboarding import add_item
 from core.steps.s06_map import decide_mapping
-from tests.test_onboarding import OPERATOR, make_world, run_to, view
+from tests.test_onboarding import OPERATOR, approve, make_world, run_to, view, work
 
 
 def test_the_report_counts_mappings_excluded_columns_rules_actions_and_who_made_each_item(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
-    run_to(w, "mapping")
+    work(w)
+    approve(w)  # the profile registers the feed; the mapping step is next (7.22)
+    work(w)
     first = next(i for i in view(w).items if i.kind == "mapping" and i.status == "pending")
     decide_mapping(db_session, proposal_id=first.proposal_id, user=OPERATOR, decision="rejected", choice=None, note="n")
     add_item(db_session, session_id=w.session_id, user=OPERATOR, item=ManualMapping(

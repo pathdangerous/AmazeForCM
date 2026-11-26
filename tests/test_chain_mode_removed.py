@@ -11,7 +11,7 @@ from apps.api.main import app
 from core.domain.onboarding import ConfidentApproved, OnboardingSession
 from core.repositories.proposals import ProposalRepository
 from core.steps.onboarding import approve_confident
-from tests.test_onboarding import OPERATOR, approve, current, events, make_world, settle, view, work
+from tests.test_onboarding import OPERATOR, Doubting, approve, current, events, make_world, settle, view, work
 
 PREFIX = "/api/amaze/onboardings/{session_id}"
 
@@ -33,7 +33,7 @@ def test_a_session_has_no_run_mode():
 
 
 def test_approve_all_confident_approves_only_the_confident_items_of_the_current_step(db_session, glossary, tmp_path):
-    w = make_world(db_session, tmp_path)
+    w = make_world(db_session, tmp_path, provider=Doubting())  # the transformation agent doubts one column
     work(w)
     approve(w)  # the profile registers the feed
     work(w)

@@ -2,7 +2,7 @@ import { Alert, Button, Text, Title } from "@mantine/core";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingSkeleton, StickyFooter } from "../../../ui-shared/phase711";
 import {
-  addItem, apiGet, approveConfident, approveStep, decideItem, DecisionNeeded, describeError, editItem, enterStep,
+  addItem, apiGet, approveConfident, approveStep, decideCannotMap, decideItem, DecisionNeeded, describeError, editItem, enterStep,
   getTimeline, getWorkspace, goBack, ITEM_STEPS, ONBOARDING_STEPS, setKeyPolicy, uploadFeedFile, type Health, type KeyPolicy, type OnboardingItem, type StepName,
   type TimelineEntry, type Visibility, type Workspace,
 } from "../api";
@@ -129,6 +129,7 @@ export default function WorkspaceView({ id, devUser, people = {} }: { id: string
 
   const actions: ItemActions = {
     readOnly: !atCurrent, busy, marked, editing, editError, people, addError,
+    cannotMap: (action, columns) => void act(async () => (await decideCannotMap(id, action, columns, devUser)).workspace),
     add: async (body) => {
       setBusy(true);
       setAddError(null);

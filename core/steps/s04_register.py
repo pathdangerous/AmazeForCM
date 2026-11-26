@@ -55,7 +55,7 @@ class Registered(StepResult):
     outcome: Literal["registered"] = "registered"
     feed: Feed
     registration: FeedRegistration
-    glossary_run_id: UUID  # phase 5: the glossary run queued in the same transaction
+    glossary_run_id: UUID | None  # phase 5: the glossary run queued in the same transaction (None: not queued, 7.22)
 
 
 class DuplicateLinked(StepResult):
@@ -75,7 +75,10 @@ RegisterResult = Annotated[Registered | DuplicateLinked | NoOwner, Field(discrim
 
 
 def register_feed(session: Session, *, feed_id: UUID, user: User, owner_id: str | None, visibility: FeedVisibility,
-                  catalogue: SourceCatalogue, identity: Identity, notifier: Notifier) -> Registered | NoOwner:
+                  catalogue: SourceCatalogue, identity: Identity, notifier: Notifier,
+                  queue_glossary: bool = True) -> Registered | NoOwner:
+    """`queue_glossary=False` (the onboarding, phase 7.22): the feed is mapped to the existing glossary first, and a
+    glossary element is asked for only per column, by a person; no run is queued here."""
     feeds = FeedRepository(session)
     feed = feeds.lock(feed_id)  # before the stage, the sign-off and the next version are read
     if feed.stage != "candidate":
@@ -97,11 +100,11 @@ def register_feed(session: Session, *, feed_id: UUID, user: User, owner_id: str 
         permitted_use=conditions.permitted_use, redistribution=conditions.redistribution, visibility=visibility,
         registered_by=user.id)
     registered = feeds.register(feed.id, owner_id=owner)
-    run, _ = queue_run(session, feed_id=feed.id, reason="registered", requested_by=user.id)  # phase 5, step 05
+    run = queue_run(session, feed_id=feed.id, reason="registered", requested_by=user.id)[0] if queue_glossary else None
     notifier.notify(recipient=owner, subject=f"Feed registered: {feed.code}",
                     body=f"Feed {feed.code} ({feed.name}) is registered, {visibility}, under {conditions.licence}. "
                          "You are its owner.")
-    return Registered(feed=registered, registration=registration, glossary_run_id=run.id)
+    return Registered(feed=registered, registration=registration, glossary_run_id=run.id if run else None)
 
 
 def revise_visibility(session: Session, *, feed_id: UUID, user: User, visibility: FeedVisibility) -> Registered:
@@ -129,7 +132,7 @@ def revise_visibility(session: Session, *, feed_id: UUID, user: User, visibility
             permitted_use=latest.permitted_use, redistribution=latest.redistribution, visibility=visibility,
             registered_by=user.id)
     run = GlossaryRunRepository(session).latest(feed.id)
-    return Registered(feed=feed, registration=latest, glossary_run_id=run.id)
+    return Registered(feed=feed, registration=latest, glossary_run_id=run.id if run else None)
 
 
 def link_to_registered_feed(session: Session, *, requirement_id: UUID, feed_id: UUID, notifier: Notifier,

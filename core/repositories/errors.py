@@ -361,6 +361,11 @@ class StepNotEnterable(RepositoryError):
     """Only the current step is entered (again); a finished session enters nothing."""
 
 
+class NotACannotMapColumn(StepNotEnterable):
+    """Phase 7.22: Ignore or Request was asked for a column that is not an undecided cannot-map column of the mapping
+    step the onboarding is on (a mapped column, a decided one, another step)."""
+
+
 class StepJobActive(RepositoryError):
     """The session's agent is already working on a step (one queued or running job per session)."""
 

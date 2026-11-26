@@ -305,10 +305,10 @@ test("Back is one control: disabled with a hint until an earlier done step is vi
 });
 
 test("viewing a done step fetches ?step=, shows it without decision buttons, and Back goes to it", async () => {
-  const done = workspace("mapping", "ready", {
+  const done = workspace("transformations", "ready", {
     viewed_step: "glossary", items: [glossaryItem({ status: "approved", pre_accepted: false })] });
   const fetchStub = stubFetch(base({
-    [GET]: workspace("mapping"),
+    [GET]: workspace("transformations"),
     [`${GET}?step=glossary`]: done,
     [`POST ${WS_PATH}/back`]: workspace("glossary", "stale"),
   }));
@@ -320,7 +320,7 @@ test("viewing a done step fetches ?step=, shows it without decision buttons, and
   expect(within(row).queryAllByRole("button").length).toBe(0);
   expect(screen.getByTestId("workspace-approve")).toHaveProperty("disabled", true);
   const back = screen.getByTestId("workspace-back") as HTMLButtonElement;
-  expect(back.textContent).toBe("Go back to Glossary");
+  expect(back.textContent).toBe("Go back to Glossary requests");
   expect(back.disabled).toBe(false);
   fireEvent.click(back);
   await waitFor(() => expect(fetchStub.mock.calls.some(([u]) => String(u).endsWith("/back"))).toBe(true));
@@ -330,14 +330,14 @@ test("viewing a done step fetches ?step=, shows it without decision buttons, and
 
 test("clicking the current step again returns to it", async () => {
   stubFetch(base({
-    [GET]: workspace("mapping"),
-    [`${GET}?step=glossary`]: workspace("mapping", "ready", { viewed_step: "glossary", items: [] }),
+    [GET]: workspace("transformations"),
+    [`${GET}?step=glossary`]: workspace("transformations", "ready", { viewed_step: "glossary", items: [] }),
   }));
   show();
   await screen.findByTestId("item-00000000-0000-4000-8000-0000000000e1");
   fireEvent.click(screen.getByTestId("step-glossary"));
   await waitFor(() => expect(screen.queryByTestId("item-00000000-0000-4000-8000-0000000000e1")).toBeNull());
-  fireEvent.click(screen.getByTestId("step-mapping"));
+  fireEvent.click(screen.getByTestId("step-transformations"));
   expect(await screen.findByTestId("item-00000000-0000-4000-8000-0000000000e1")).toBeTruthy();
   expect((screen.getByTestId("workspace-back") as HTMLButtonElement).disabled).toBe(true);
 });

@@ -50,6 +50,7 @@ from core.steps.onboarding import (
     approve_and_next,
     back,
     confidence_of,
+    decide_cannot_map,
     edit_item,
     enter_step,
     run_job,
@@ -217,12 +218,34 @@ def events(w: World, event: str | None = None, step: str | None = None):
     return [e for e in found if (event is None or e.event == event) and (step is None or e.step == step)]
 
 
+def glossary_has_them(w, columns: list[str]) -> int:  # w: anything with .session and .feed_id
+    """Phase 7.22, test scaffolding: the demo file has columns the seed glossary has no element for. Here the glossary
+    already holds an element for each (approved by its owner) and the steward approved the mapping, so the walk-through
+    tests keep a fully mapped feed. The real path (Request glossary element) is tested in tests/test_glossary_requests.py."""
+    from core.repositories.feed_profiles import FeedProfileRepository
+    from tests.configured import approved_element, approved_mapping, new_element
+
+    kinds = {"DOUBLE": "decimal", "DECIMAL": "decimal", "BIGINT": "integer", "INTEGER": "integer", "DATE": "date",
+             "TIMESTAMP": "datetime", "BOOLEAN": "boolean"}
+    types = {c.name: c.type.upper().split("(")[0] for c in FeedProfileRepository(w.session).latest(w.feed_id).columns}
+    for column in columns:
+        key = "_".join(column.lower().replace("-", "_").split())  # the key the builder's mock gave a new element
+        approved_element(w.session, new_element(key, data_type=kinds.get(types[column], "string"), domain="reference_data"),
+                         feed_id=w.feed_id, column=column)
+        approved_mapping(w.session, w.feed_id, column, key)
+    w.session.commit()
+    return len(columns)
+
+
 def settle(w: World, flagged_rules: str = "rejected") -> int:
     """Decide, as the operator would with the existing decision calls, every mapping, glossary or rule item of the step
     that only a person can (a tie, a conflict, a rule that flags rows of this file: task 5.3b). flagged_rules is what
     the operator does with such a rule: "rejected" (it is wrong for this data) or "approved" (kept knowingly). Returns
     how many were decided."""
     decided = 0
+    undecided = [c.column for c in view(w).cannot_map if c.state == "undecided"]
+    if undecided and current(w).current_step == "mapping":
+        decided += glossary_has_them(w, undecided)
     for item in view(w).items:
         if not item.needs_decision:
             continue
@@ -345,7 +368,7 @@ def test_the_security_master_goes_from_upload_to_product_ready_with_one_edit_and
     assert note.input_ref.startswith("agent-inputs/ProfilerAgent/") and note.reasoning
 
     advance = approve(w, options=ApproveOptions(visibility="restricted"))
-    assert advance.moved and current(w).current_step == "glossary"
+    assert advance.moved and current(w).current_step == "mapping"  # 7.22: mapping first, to the existing glossary
     feed = FeedRepository(db_session).get(w.feed_id)
     assert feed.stage == "registered" and feed.owner_id == "dev-operator"
     registration = FeedRegistrationRepository(db_session).current(w.feed_id)
@@ -353,7 +376,7 @@ def test_the_security_master_goes_from_upload_to_product_ready_with_one_edit_and
         "dev-operator", "restricted", "dev-operator")
     assert current(w).step_states["profile"] == "done"
 
-    # glossary, mapping: the existing glossary run and mapping step, decided in one click each
+    # mapping, glossary requests: columns no element fits are settled (see glossary_has_them), then one click each
     run_to(w, "transformations")
     assert current(w).step_states["glossary"] == "done" and current(w).step_states["mapping"] == "done"
 
@@ -375,12 +398,15 @@ def test_the_security_master_goes_from_upload_to_product_ready_with_one_edit_and
     assert after_back.current_step == "mapping" and after_back.step_states["mapping"] == "agent_working"
     assert after_back.step_states["transformations"] == "stale"
     assert after_back.step_states["rules"] == "waiting" and after_back.step_states["go_live"] == "waiting"
-    assert [e.step for e in events(w, "stale")] == ["transformations"]
+    assert [e.step for e in events(w, "stale")] == ["glossary", "transformations"]
     assert [e.event for e in events(w, step="mapping")].count("agent_queued") == 2
     rejected = ProposalRepository(db_session).list_for_feed(w.feed_id, "transformation", "rejected")
     assert len(rejected) == 0  # the pending ones of the stale step are rejected when it is entered again, not now
     work(w)
     assert current(w).step_states["mapping"] == "ready"
+    approve(w)
+    assert current(w).current_step == "glossary"  # stale too: it runs again (nothing was requested)
+    work(w)
     approve(w)
     assert current(w).current_step == "transformations"
     pending = ProposalRepository(db_session).list_for_feed(w.feed_id, "transformation", "pending")
@@ -504,14 +530,14 @@ def test_a_job_that_would_pass_the_call_cap_is_not_run(db_session, glossary, tmp
     assert current(w).model_calls == 1
     approve(w)
     ran = work(w)
-    assert [(r.step, r.status) for r in ran] == [("glossary", "discarded")]
+    assert [(r.step, r.status) for r in ran] == [("mapping", "discarded")]
     capped = events(w, "call_cap_reached")
-    assert len(capped) == 1 and capped[0].step == "glossary" and capped[0].detail["cap"] == 1
+    assert len(capped) == 1 and capped[0].step == "mapping" and capped[0].detail["cap"] == 1
     after = current(w)
-    assert after.step_states["glossary"] == "failed" and after.model_calls == 1
+    assert after.step_states["mapping"] == "failed" and after.model_calls == 1
     assert OnboardingJobRepository(db_session).list_for_session(w.session_id)[-1].status == "discarded"
     assert "call cap" in view(w).progress
-    assert not events(w, "agent_started", "glossary")  # no model was asked
+    assert not events(w, "agent_started", "mapping")  # no model was asked
 
 
 def test_a_model_that_is_down_fails_the_step_and_entering_it_again_works(db_session, glossary, tmp_path):

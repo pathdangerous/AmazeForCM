@@ -15,6 +15,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from core.steps.s05_glossary import queue_run
 from core.steps.s20_create_product import FinishContext
 from ports.notify.inapp import InAppNotifier
 from ports.storage.local import LocalBlobStore
@@ -63,6 +64,10 @@ def onboarded(db_session, tmp_path, code: str = "syn_security_master"):
     approve(w)
     work(w)
     assert current(w).status == "done"
+    # 7.22: the onboarding asks the builder for nothing until a person requests a column; the glossary owner's own run
+    # request (the workbench route) gives the delete something to remove, as a registration run did before
+    queue_run(db_session, feed_id=w.feed_id, reason="requested", requested_by="dev-glossary-owner")
+    db_session.commit()
     return w
 
 

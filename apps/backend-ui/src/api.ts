@@ -588,7 +588,8 @@ export async function confirmUpload(uploadId: string, devUser: string, body: {
 
 // ---- phase 7.8, task 7.2: the onboarding workspace (/api/amaze/onboardings)
 
-export const ONBOARDING_STEPS = ["upload", "profile", "glossary", "mapping", "transformations", "rules", "go_live",
+// phase 7.22: mapping first; "glossary" is shown as "Glossary requests"
+export const ONBOARDING_STEPS = ["upload", "profile", "mapping", "glossary", "transformations", "rules", "go_live",
                                  "first_load", "product_ready"] as const;
 export type StepName = (typeof ONBOARDING_STEPS)[number];
 export type StepState = "waiting" | "agent_working" | "needs_decision" | "ready" | "done" | "stale" | "failed";
@@ -660,6 +661,9 @@ export type StepInputs = {
 };
 export type KeyPolicy = { policy: "hold" | "keep_last" | "flag"; key_columns: string[]; reason: string };
 export type Visibility = "open" | "restricted";
+// phase 7.22: a column no glossary element fits; what a person chose for it (state) is derived by the API
+export type CannotMapColumn = { column: string; reason: string; state: "undecided" | "ignored" | "requested";
+                                glossary_status: string | null };
 export type Workspace = {
   session: { id: string; feed_id: string; current_step: StepName; step_states: Record<string, StepState>;
              status: "active" | "done"; updated_at: string; model_calls: number };
@@ -667,6 +671,7 @@ export type Workspace = {
   inputs: StepInputs | null; items: OnboardingItem[]; job: OnboardingJob | null;
   progress: string | null; agent_notes: AgentNote[]; key_policy: KeyPolicy | null;
   model_calls: number; model_call_cap: number; can_approve: boolean; blocked_by: string | null;
+  cannot_map: CannotMapColumn[];
 };
 export type StepAdvance = { moved: boolean; current_step: StepName; approved: string[]; waiting_for: string | null };
 export type TimelineEntry = {
@@ -701,6 +706,9 @@ export const decideItem = (id: string, proposalId: string, decision: "approved" 
                                     { decision, ...(choice === undefined ? {} : { choice }), ...(note ? { note } : {}) }, devUser);
 export const addItem = (id: string, body: ManualItemBody, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items`, body, devUser);
+// phase 7.22: Ignore (the excluded mapping) for columns no glossary element fits
+export const decideCannotMap = (id: string, action: "ignore", columns: string[], devUser: string) =>
+  apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/cannot-map`, { action, columns }, devUser);
 export const editItem = (id: string, proposalId: string, payload: Record<string, unknown>, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/edit`, { payload }, devUser);
 

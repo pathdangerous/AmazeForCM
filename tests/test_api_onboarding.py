@@ -181,9 +181,21 @@ async def workspace_of(w, oid) -> dict:
     return await call(w, "GET", f"/{oid}")
 
 
-async def settle(w, oid) -> int:
-    """Decide through the API every item of the step that only a person can (a tie, a conflict)."""
+async def settle(w, oid, ignore: bool = False) -> int:
+    """Decide through the API every item of the step that only a person can (a tie, a conflict). Columns no glossary
+    element fits are ignored through the API when `ignore` is set (or when the world has no database session of its own)."""
     decided = 0
+    shown = await workspace_of(w, oid)
+    undecided = [c["column"] for c in shown["cannot_map"] if c["state"] == "undecided"]
+    if undecided and (ignore or not hasattr(w, "session")):
+        await call(w, "POST", f"/{oid}/cannot-map", json={"action": "ignore", "columns": undecided})
+        decided += len(undecided)
+    elif undecided:  # 7.22 scaffolding (see tests/test_onboarding.py): the glossary already holds an element for each
+        from tests.test_onboarding import glossary_has_them
+
+        w.session.rollback()
+        decided += glossary_has_them(SimpleNamespace(session=w.session, feed_id=UUID(shown["session"]["feed_id"])),
+                                     undecided)
     for item in (await workspace_of(w, oid))["items"]:
         if not item["needs_decision"]:
             continue
@@ -274,12 +286,13 @@ async def test_the_security_master_goes_from_upload_to_product_ready_through_the
 
     # Approve & next registers the feed (visibility open) and enters the glossary
     advance = await call(w, "POST", f"/{oid}/approve", json={"visibility": "open"})
-    assert advance["advance"]["moved"] and advance["advance"]["current_step"] == "glossary"
-    assert advance["workspace"]["current_step"] == "glossary"
+    assert advance["advance"]["moved"] and advance["advance"]["current_step"] == "mapping"
+    assert advance["workspace"]["current_step"] == "mapping"
 
-    # glossary, mapping: one item decided on its own through the item route, the rest by Approve & next
-    await advance_to(w, oid, "mapping")
+    # mapping, glossary requests: one item decided on its own through the item route, the rest by Approve & next
+    w.worker.drain()  # the mapping job: three ties, and the columns no element fits (nothing is settled yet)
     on_mapping = await workspace_of(w, oid)
+    assert on_mapping["cannot_map"] and not on_mapping["can_approve"]
     counts = on_mapping["inputs"]["candidate_counts"]  # per column, how many candidate elements the agent was given
     assert set(counts) == {i["column"] for i in on_mapping["items"]} and all(0 <= n <= 10 for n in counts.values())
     assert any(n > 0 for n in counts.values())
@@ -522,11 +535,19 @@ async def test_a_confirmation_that_is_refused_starts_no_onboarding(world):
 
 
 async def registered_at_glossary(w) -> UUID:
-    """The path as far as Approve & next on the profile step: the feed is registered, a glossary run is queued and
-    the glossary job waits. Returns the onboarding id."""
+    """The path as far as Approve & next on the mapping step (7.22: mapping comes first): the feed is registered, a
+    glossary run is queued (the glossary owner's request on the feed) and the glossary job waits. Returns the onboarding id."""
+    from core.steps.s05_glossary import queue_run
+
     oid = (await upload_and_confirm(w.client))["onboarding_id"]
     w.worker.drain()
     await call(w, "POST", f"/{oid}/approve", json={})
+    w.worker.drain()  # the mapping job
+    await settle(w, oid, ignore=True)  # the builder run below then has columns to ask about
+    await call(w, "POST", f"/{oid}/approve", json={})
+    queue_run(w.session, feed_id=OnboardingRepository(w.session).get(UUID(oid)).feed_id, reason="requested",
+              requested_by="dev-glossary-owner")
+    w.session.commit()
     return oid
 
 
@@ -548,7 +569,7 @@ async def test_a_run_the_onboarding_job_has_claimed_is_not_run_by_the_glossary_w
     assert [(r.step, r.status) for r in ran] == [("glossary", "done")], [r.detail for r in ran]
     assert thinking.calls == 1  # the run was run once, by the onboarding job
     assert taken["by_the_other_worker"] == {} and other.calls == 0
-    assert (await workspace_of(w, oid))["steps"][2]["state"] in ("ready", "needs_decision")
+    assert (await workspace_of(w, oid))["steps"][3]["state"] in ("ready", "needs_decision")
 
 
 async def test_a_run_the_glossary_worker_has_claimed_is_not_run_by_the_onboarding_job(world, tmp_path):
@@ -567,7 +588,7 @@ async def test_a_run_the_glossary_worker_has_claimed_is_not_run_by_the_onboardin
     await call(w, "POST", f"/{oid}/steps/glossary/enter")
     ran = w.worker.drain()
     assert [(r.step, r.status, r.model_calls) for r in ran] == [("glossary", "done", 0)]
-    assert (await workspace_of(w, oid))["steps"][2]["state"] in ("ready", "needs_decision")
+    assert (await workspace_of(w, oid))["steps"][3]["state"] in ("ready", "needs_decision")
 
 
 # ---------------------------------------------------------------- the worker, its kick and its lease
@@ -683,11 +704,12 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
         # approve: the decisions, the registration and the next job
         await r.call("POST", f"/{oid}/approve", json={"visibility": "restricted"})
         assert committed(engine, "SELECT current_step, step_states->>'profile' FROM onboarding_sessions") == [
-            ("glossary", "done")]
+            ("mapping", "done")]
         assert committed(engine, "SELECT stage, owner_id FROM feeds") == [("registered", "dev-operator")]
         assert committed(engine, "SELECT visibility FROM feed_registrations") == [("restricted",)]
         assert committed(engine, "SELECT step, status FROM onboarding_jobs WHERE status = 'queued'") == [
-            ("glossary", "queued")]
+            ("mapping", "queued")]
+        assert committed(engine, "SELECT count(*) FROM glossary_runs") == [(0,)]  # 7.22: registering asks the builder nothing
         # the summary and each action the agent proposed (T1) were approved
         assert committed(engine, "SELECT count(*) FROM onboarding_events WHERE event = 'approved'")[0][0] >= 2
         assert committed(engine, "SELECT count(*) FROM proposals WHERE kind = 'profile_action' AND status <> 'approved'") == [
@@ -699,23 +721,21 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
         assert committed(engine, "SELECT version, policy, key_columns::text, set_by FROM feed_key_policies") == [
             (1, "hold", "{TICKER_NAME}", "dev-operator")]
 
-        # on to mapping (the glossary job, its decisions, Approve & next, the mapping job)
+        # the mapping step (7.22: it comes first): the job, the columns no element fits (Ignore), the ties
         r.worker.drain()
-        for item in (await r.call("GET", f"/{oid}"))["items"]:
-            if item["needs_decision"]:
-                await r.call("POST", f"/{oid}/items/{item['proposal_id']}/decision",
-                             json={"decision": "approved", "choice": 0})
-        # approve all confident (phase 7.13, kept in 7.22): one approval row per item, by the person who clicked
-        await r.call("POST", f"/{oid}/steps/mapping/approve-confident", expect=409)  # not the current step
-        done = await r.call("POST", f"/{oid}/steps/glossary/approve-confident")
-        assert done["approved"] and done["workspace"]["current_step"] == "glossary"
-        assert committed(engine, "SELECT count(*) FROM approvals WHERE decided_by = 'dev-operator' AND proposal_id IN "
-                                 "(SELECT CAST(x AS uuid) FROM unnest(CAST(:ids AS text[])) AS x)",
-                         ids=done["approved"]) == [(len(done["approved"]),)]
-        await r.call("POST", f"/{oid}/approve", json={})
-        r.worker.drain()
-        pending =[i for i in (await r.call("GET", f"/{oid}"))["items"] if i["status"] == "pending"]
-        assert (await r.call("GET", f"/{oid}"))["current_step"] == "mapping" and len(pending) >= 2
+        mapping_ws = await r.call("GET", f"/{oid}")
+        assert mapping_ws["current_step"] == "mapping"
+        columns = [c["column"] for c in mapping_ws["cannot_map"]]
+        assert columns and {c["state"] for c in mapping_ws["cannot_map"]} == {"undecided"}
+        ignored = await r.call("POST", f"/{oid}/cannot-map", json={"action": "ignore", "columns": columns})
+        assert {c["state"] for c in ignored["workspace"]["cannot_map"]} == {"ignored"}
+        assert committed(engine, "SELECT count(*), bool_and(origin = 'manual' AND payload ->> 'excluded' = 'true') "
+                                 "FROM proposals WHERE kind = 'mapping' AND author = 'dev-operator'") == [
+            (len(columns), True)]
+        await r.call("POST", f"/{oid}/cannot-map", json={"action": "ignore", "columns": columns}, expect=409)  # decided
+        pending = [i for i in (await r.call("GET", f"/{oid}"))["items"]
+                   if i["status"] == "pending" and not i["payload"].get("excluded")]
+        assert len(pending) >= 3
 
         # an item decision: the mapping and its event
         item = pending[0]
@@ -755,14 +775,23 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
         assert committed(engine, "SELECT event, actor FROM onboarding_events WHERE proposal_id = :p ORDER BY at",
                          p=new_id) == [("item_added", "dev-operator"), ("pre_accepted", "dev-operator")]
 
-        # back: the stale steps and the new job
-        went_back = await r.call("POST", f"/{oid}/back", json={"to_step": "glossary"})
-        assert went_back["current_step"] == "glossary"
-        assert committed(engine, "SELECT current_step, step_states->>'glossary', step_states->>'mapping' "
-                                 "FROM onboarding_sessions") == [("glossary", "agent_working", "stale")]
+        # back: the job again (a step nobody has reached stays waiting, so nothing is stale here)
+        went_back = await r.call("POST", f"/{oid}/back", json={"to_step": "mapping"})
+        assert went_back["current_step"] == "mapping"
+        assert committed(engine, "SELECT current_step, step_states->>'mapping', step_states->>'glossary' "
+                                 "FROM onboarding_sessions") == [("mapping", "agent_working", "waiting")]
         assert committed(engine, "SELECT step, status FROM onboarding_jobs WHERE status = 'queued'") == [
-            ("glossary", "queued")]
+            ("mapping", "queued")]
         assert committed(engine, "SELECT count(*) FROM onboarding_events WHERE event = 'back'") == [(1,)]
+
+        # approve all confident (phase 7.13, kept in 7.22): one approval row per item, by the person who clicked
+        r.worker.drain()
+        await r.call("POST", f"/{oid}/steps/glossary/approve-confident", expect=409)  # not the current step
+        done = await r.call("POST", f"/{oid}/steps/mapping/approve-confident")
+        assert done["workspace"]["current_step"] == "mapping"
+        assert committed(engine, "SELECT count(*) FROM approvals WHERE decided_by = 'dev-operator' AND proposal_id IN "
+                                 "(SELECT CAST(x AS uuid) FROM unnest(CAST(:ids AS text[])) AS x)",
+                         ids=done["approved"]) == [(len(done["approved"]),)]
 
 
 

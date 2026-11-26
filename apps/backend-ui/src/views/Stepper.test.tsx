@@ -26,7 +26,7 @@ test("the current step carries aria-current and a state badge; the list is named
 test("a waiting step is disabled, a done step is not", () => {
   stepper();
   expect((screen.getByRole("button", { name: /Rules/ }) as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole("button", { name: /Glossary/ }) as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByRole("button", { name: /Profile/ }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 test("ArrowDown and ArrowUp move focus, Home and End jump", () => {
@@ -34,7 +34,7 @@ test("ArrowDown and ArrowUp move focus, Home and End jump", () => {
   const profile = screen.getByRole("button", { name: /Profile/ });
   profile.focus();
   fireEvent.keyDown(profile, { key: "ArrowDown" });
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: /Glossary/ }));
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: /Mapping/ }));
   fireEvent.keyDown(document.activeElement as Element, { key: "ArrowUp" });
   expect(document.activeElement).toBe(profile);
   fireEvent.keyDown(profile, { key: "End" });

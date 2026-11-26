@@ -4,7 +4,7 @@ import { render } from "@testing-library/react";
 import { createElement, type ReactElement } from "react";
 import { vi } from "vitest";
 import type {
-  Conditions, FeedPage, LoadOnPage, OnboardingItem, OnboardingRow, RuleRowsShown, StepInputs, StepName, StepState,
+  CannotMapColumn, Conditions, FeedPage, LoadOnPage, OnboardingItem, OnboardingRow, RuleRowsShown, StepInputs, StepName, StepState,
   TimelineEntry, User, Workspace,
 } from "../api";
 import { cssVariablesResolver, theme } from "../theme";
@@ -157,8 +157,12 @@ export function inspected(overrides: Record<string, unknown> = {}) {
 // ---- phase 7.8, task 7.2: the onboarding workspace
 export const SESSION_ID = "00000000-0000-4000-8000-0000000000d1";
 export const WS_PATH = `/api/amaze/onboardings/${SESSION_ID}`;
-const STEP_ORDER: StepName[] = ["upload", "profile", "glossary", "mapping", "transformations", "rules", "go_live",
+const STEP_ORDER: StepName[] = ["upload", "profile", "mapping", "glossary", "transformations", "rules", "go_live",
                                 "first_load", "product_ready"];
+
+// phase 7.22: a column no glossary element fits
+export const cannotMapColumn = (overrides: Partial<CannotMapColumn> = {}): CannotMapColumn => ({
+  column: "Coupon", reason: "no_candidate", state: "undecided", glossary_status: null, ...overrides });
 
 export function onboardingItem(overrides: Partial<OnboardingItem> = {}): OnboardingItem {
   return {
@@ -259,7 +263,7 @@ export function workspace(current: StepName = "mapping", state: StepState = "rea
       model_version: "1", prompt_id: "mapping", prompt_version: "v2", latency_ms: 12, input_ref: "input:6 columns, 2 issues",
       reasoning: "Ticker is a close match for the glossary element.",
     }],
-    key_policy: null, model_calls: 3, model_call_cap: 40, can_approve: true, blocked_by: null, ...overrides,
+    key_policy: null, model_calls: 3, model_call_cap: 40, can_approve: true, blocked_by: null, cannot_map: [], ...overrides,
   };
 }
 

@@ -14,8 +14,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from core.domain.profiling import ProfileIssue
+from core.domain.proposal import Proposal
 
-StepName = Literal["upload", "profile", "glossary", "mapping", "transformations", "rules", "go_live", "first_load",
+# phase 7.22: mapping before glossary ("glossary" is shown as "Glossary requests"). The database checks the set of names, not
+# their order, so the order lives here only.
+StepName = Literal["upload", "profile", "mapping", "glossary", "transformations", "rules", "go_live", "first_load",
                    "product_ready"]
 ONBOARDING_STEPS: tuple[str, ...] = get_args(StepName)  # in order
 
@@ -247,6 +250,22 @@ class StepInputs(BaseModel):
     completion: dict[str, Any] | None = None  # go-live (T2): the completion report, as plain data
 
 
+CannotMapState = Literal["undecided", "ignored", "requested"]
+CANNOT_MAP_REASONS = ("no_candidate", "type_does_not_fit", "every_candidate_rejected")
+
+
+class CannotMapColumn(BaseModel):
+    """"Cannot map: no glossary element fits" (phase 7.22, plan D2): a column the MappingAgent found no existing element
+    for. Derived from the mapping step's `agent_done` event and the tables; never a proposal of its own."""
+
+    model_config = ConfigDict(frozen=True)
+
+    column: str
+    reason: str  # one of CANNOT_MAP_REASONS
+    state: CannotMapState  # undecided: a person chooses; ignored: left out (not loaded); requested: a glossary element
+    glossary_status: str | None = None  # requested: the status of its glossary proposal (None while it is drafted)
+
+
 class Workspace(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -266,6 +285,18 @@ class Workspace(BaseModel):
     model_call_cap: int
     can_approve: bool
     blocked_by: str | None  # why Approve & next is disabled
+    cannot_map: list[CannotMapColumn] = []  # the mapping step's columns no element fits (and what was chosen for them)
+
+
+class CannotMapDecided(BaseModel):
+    """What a person chose for some cannot-map columns (phase 7.22): the manual proposals an Ignore made."""
+
+    model_config = ConfigDict(frozen=True)
+
+    action: Literal["ignore"]
+    columns: list[str]
+    proposals: list[Proposal]
+    workspace: Workspace
 
 
 class ConfidentApproved(BaseModel):

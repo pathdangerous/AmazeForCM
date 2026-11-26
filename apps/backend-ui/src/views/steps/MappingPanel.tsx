@@ -3,13 +3,15 @@ import { useState } from "react";
 import DataGrid, { type DataGridColumn } from "../../../../ui-shared/DataGrid";
 import { ConfidenceBar, StatusChip } from "../../../../ui-shared/phase711";
 import type { OnboardingItem } from "../../api";
+import CannotMapList from "./CannotMapList";
 import ItemCard, { type Choice } from "./ItemCard";
 import { asList, asText, type PanelProps } from "./shared";
 
 // The mapping step (task 7.3b): per column the element chosen and its score; a tie offers its candidates in a select.
 export default function MappingPanel({ ws, items, actions }: PanelProps) {
   const [needsOnly, setNeedsOnly] = useState(false);
-  if (items.length === 0) return <Text>No columns to map.</Text>;
+  const cannotMap = <CannotMapList columns={ws.cannot_map} actions={actions} />;
+  if (items.length === 0) return <>{cannotMap}{ws.cannot_map.length === 0 && <Text>No columns to map.</Text>}</>;
   const shown = needsOnly ? items.filter((item) => item.status === "pending" && item.needs_decision) : items;
   const columns: DataGridColumn<OnboardingItem>[] = [
     { key: "column", label: "Source column", value: (item) => item.column ?? item.kind, render: (item) => <code><strong>{item.column ?? item.kind}</strong></code> },
@@ -35,6 +37,7 @@ export default function MappingPanel({ ws, items, actions }: PanelProps) {
   ];
   return (
     <div>
+      {cannotMap}
       <div className="mapping-grid-tools">
         <div className="product-tags">
           <StatusChip tone="good">{items.filter((item) => item.status === "pending" && item.pre_accepted).length} pre-accepted</StatusChip>

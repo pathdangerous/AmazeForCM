@@ -58,6 +58,7 @@ from core.domain.onboarding import (
     ONBOARDING_STEPS,
     AgentNote,
     ApproveOptions,
+    CannotMapDecided,
     ConfidentApproved,
     InputFact,
     JobRun,
@@ -82,6 +83,7 @@ from core.repositories.errors import (
     ItemAlreadyPending,
     JobSuperseded,
     ManualItemRefused,
+    NotACannotMapColumn,
     NotAnApprover,
     NothingToMap,
     NothingToTransform,
@@ -115,6 +117,7 @@ from core.repositories.transformations import TransformationRepository
 from core.repositories.tables import ProposalLogEntry  # not core.proposal_log: that module imports ports.llm
 from core.repositories.upload_sources import UploadSourceRepository
 from core.steps.candidates import candidate_list
+from core.steps.cannot_map import cannot_map_of
 from core.steps.s02_profile import (
     decide_profile_action,
     profile_plan,
@@ -163,8 +166,8 @@ log = logging.getLogger(__name__)
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 
 # the steps a person may go Back to (the profile registers the feed, which cannot be undone)
-BACKABLE: tuple[str, ...] = ("glossary", "mapping", "transformations", "rules", "go_live")
-AGENT_STEPS: tuple[str, ...] = ("profile", "glossary", "mapping", "transformations", "rules", "go_live")
+BACKABLE: tuple[str, ...] = ("mapping", "glossary", "transformations", "rules", "go_live")
+AGENT_STEPS: tuple[str, ...] = ("profile", "mapping", "glossary", "transformations", "rules", "go_live")
 STEP_KINDS: dict[str, tuple[str, ...]] = {
     "profile": ("profile_summary", "profile_action"), "glossary": ("glossary_element",), "mapping": ("mapping",),
     "transformations": ("transformation",), "rules": ("rule",), "go_live": ("review_summary",)}
@@ -173,7 +176,7 @@ AGENT_NAMES = {"profile": "ProfilerAgent", "glossary": "GlossaryBuilderAgent", "
                "transformations": "TransformationAgent", "rules": "RuleRecommenderAgent",
                "go_live": "ReviewSummariserAgent"}
 # the steps whose items are proposals a person decides one by one ("Approve all confident" is offered at these)
-ITEM_STEPS: tuple[str, ...] = ("glossary", "mapping", "transformations", "rules")
+ITEM_STEPS: tuple[str, ...] = ("mapping", "glossary", "transformations", "rules")
 SECOND_PERSON = "a second person"
 RERUN_NOTE = "rerun after Back"
 MAX_GLOSSARY_RUNS = 20  # runs of other feeds that may sit in front of this feed's in the queue
@@ -529,6 +532,7 @@ class _Work:
     nothing_to_do: str | None = None
     failed: str | None = None  # the step ends failed with this (not an exception: a held test load, a held first load)
     moves_on: bool = False  # the first load released: the product exists
+    cannot_map: dict[str, str] = field(default_factory=dict)  # mapping: column -> why no existing element fits (7.22)
 
 
 @dataclass
@@ -685,7 +689,8 @@ def _finish_job(sf: SessionFactory, ctx: OnboardingContext, job, sess: Onboardin
                                    detail={"confidence": value, "threshold": ctx.settings.auto_accept_confidence})
         sessions.add_event(sess.id, step=step, event="agent_done", actor="system",
                            detail={"proposal_ids": [str(p.id) for p in pending], "confidence": confidence,
-                                   "model_calls": calls, "nothing_to_do": work.nothing_to_do})
+                                   "model_calls": calls, "nothing_to_do": work.nothing_to_do,
+                                   **({"cannot_map": work.cannot_map} if step == "mapping" else {})})
         items = _step_items(s, sessions.get(sess.id), step)
         sessions.set_step_state(sess.id, step, _settled_state(items))
         s.commit()
@@ -721,7 +726,7 @@ def _job_glossary(env: _Env) -> _Work:
     for _ in range(MAX_GLOSSARY_RUNS):
         active = env.read(lambda s: GlossaryRunRepository(s).active(feed_id))
         if active is None:
-            return _Work(nothing_to_do=None)
+            return _Work(nothing_to_do="No glossary element was requested")
         run = env.write(lambda s: claim_run(s, lease_seconds=ctx.settings.glossary_run_lease_seconds))
         if run is None:
             raise StepNotReady("The glossary builder is busy with this feed's run; enter the step again in a moment")
@@ -768,8 +773,10 @@ def _job_mapping(env: _Env) -> _Work:
     except NothingToMap as exc:  # every column is mapped or waits for the steward
         return _Work(nothing_to_do=str(exc))
     user = _person(ctx, env.created_by)
-    env.write(lambda s: record_mappings(s, agent=env.agents.mapper, agent_input=agent_input, user=user))
-    return _Work(scores={c.name: {x.key: x.score for x in c.candidates} for c in agent_input.columns})
+    made = env.write(lambda s: record_mappings(s, agent=env.agents.mapper, agent_input=agent_input, user=user,
+                                               send_back=False))  # 7.22: a column no element fits is for a person
+    return _Work(scores={c.name: {x.key: x.score for x in c.candidates} for c in agent_input.columns},
+                 cannot_map={r.source_field: r.reason for r in made.results if r.outcome == "no_element_back_to_05"})
 
 
 def _job_transformations(env: _Env) -> _Work:
@@ -858,11 +865,16 @@ def approve_and_next(session: Session, *, session_id: UUID, user: User, ctx: Onb
     step = sess.current_step
     if sess.status == "done" or sess.step_states[step] not in ("ready", "needs_decision"):
         raise StepNotReady(f"{step} has no answer to approve ({sess.step_states[step]})")
+    if options.visibility is not None and step not in ("profile", "go_live"):
+        raise StepNotReady("the visibility is chosen at go-live")  # refused input first, before any decision is asked for
     items = _step_items(session, sess, step)
     blocking = [i for i in items if i.needs_decision]
     if blocking:
         raise DecisionNeeded(f"{len(blocking)} item(s) of {step} need a decision first: "
                              + "; ".join(i.summary for i in blocking), blocking)
+    undecided = _undecided_columns(session, sess, step)
+    if undecided:
+        raise DecisionNeeded(_cannot_map_message(undecided))
     approved, waiting = _approve(session, sess, step, items, user=user, ctx=ctx, options=options)
     sessions = OnboardingRepository(session)
     for proposal_id in approved:
@@ -875,6 +887,39 @@ def approve_and_next(session: Session, *, session_id: UUID, user: User, ctx: Onb
     following = _next_step(step)
     _enter(session, sessions.get(session_id), following, actor=user.id, rerun=sess.step_states[following] == "stale")
     return StepAdvance(moved=True, current_step=following, approved=approved)
+
+
+def _undecided_columns(session: Session, sess: OnboardingSession, step: str) -> list[str]:
+    """The mapping step's cannot-map columns nobody has chosen Ignore or Request for (phase 7.22)."""
+    return [c.column for c in cannot_map_of(session, sess) if c.state == "undecided"] if step == "mapping" else []
+
+
+def _cannot_map_message(columns: list[str]) -> str:
+    n = len(columns)
+    return (f"{n} column{' ' if n == 1 else 's '}cannot be mapped: no glossary element fits "
+            f"({', '.join(columns[:5])}{', ...' if n > 5 else ''}). Choose Ignore or Request glossary element for each.")
+
+
+def decide_cannot_map(session: Session, *, session_id: UUID, action: str, columns: list[str], user: User,
+                      settings: Settings | None = None) -> CannotMapDecided:
+    """A person's choice for cannot-map columns of the mapping step (phase 7.22, plan D3). `ignore`: the existing
+    excluded mapping, one manual proposal per column (author the person, no model call), approved with the step like any
+    item; the column is not loaded. NotACannotMapColumn (409): a column that is not an undecided cannot-map column of
+    this onboarding's mapping step; StepNotEnterable, StepNotReady, NotAnApprover from the step it goes through."""
+    if action != "ignore":
+        raise ValueError(f"{action!r} is not a choice for a cannot-map column")
+    sess, _ = _step_for_adding(session, session_id, "mapping")
+    wanted = list(dict.fromkeys(columns))
+    undecided = {c.column for c in cannot_map_of(session, sess) if c.state == "undecided"}
+    unknown = [c for c in wanted if c not in undecided]
+    if not wanted or unknown:
+        raise NotACannotMapColumn("Not an undecided cannot-map column of the mapping step: "
+                                  + (", ".join(unknown) or "no column named"))
+    made = [add_item(session, session_id=session_id, user=user, item=ManualMapping(
+        kind="mapping", source_field=column, excluded=True, reason="Ignored: no glossary element fits this column."))
+        for column in wanted]
+    return CannotMapDecided(action="ignore", columns=wanted, proposals=made,
+                            workspace=workspace(session, session_id=session_id, settings=settings))
 
 
 def _approve(session: Session, sess: OnboardingSession, step: str, items: list[OnboardingItem], *, user: User,
@@ -938,7 +983,8 @@ def _approve(session: Session, sess: OnboardingSession, step: str, items: list[O
 def _approve_profile(session: Session, sess: OnboardingSession, pending: list[OnboardingItem], *, user: User,
                      ctx: OnboardingContext, options: ApproveOptions, notifier) -> list[UUID]:
     """Step 03 with the outcome the agent recommended, then step 04: the operator is the owner (who must be a data
-    owner), the licence is the upload source's. Registration queues the glossary run, as it always does."""
+    owner), the licence is the upload source's. Registration queues no glossary run here (7.22): the next step maps
+    to the existing glossary, and a glossary element is requested per column by a person."""
     catalogue = _catalogue(session, ctx.settings)
     approved: list[UUID] = []
     for item in [i for i in pending if i.kind == "profile_action"]:  # T1: the actions still standing are selected
@@ -954,7 +1000,7 @@ def _approve_profile(session: Session, sess: OnboardingSession, pending: list[On
     if FeedRepository(session).get(sess.feed_id).stage == "candidate":
         registered = register_feed(session, feed_id=sess.feed_id, user=user, owner_id=user.id,
                                    visibility=options.visibility or "open", catalogue=catalogue, identity=ctx.identity,
-                                   notifier=notifier)
+                                   notifier=notifier, queue_glossary=False)  # 7.22: mapping first, no run now
         if isinstance(registered, NoOwner):
             raise OwnerNotADataOwner(f"{user.id} cannot own the feed: {registered.reason.replace('_', ' ')}")
     return approved
@@ -1434,6 +1480,8 @@ def workspace(session: Session, *, session_id: UUID, settings: Settings | None =
         blocked = progress or f"{step} is {state}."
     elif blocking:
         blocked = f"{len(blocking)} item(s) need a decision first."
+    elif undecided := _undecided_columns(session, sess, step):
+        blocked = _cannot_map_message(undecided)
     else:
         blocked = None
     key_policy = None
@@ -1445,4 +1493,4 @@ def workspace(session: Session, *, session_id: UUID, settings: Settings | None =
                      inputs=_step_inputs(session, sess, viewed, items, settings), items=items, job=job,
                      progress=progress, agent_notes=notes, key_policy=key_policy, model_calls=sess.model_calls,
                      model_call_cap=settings.max_model_calls_per_onboarding, can_approve=blocked is None,
-                     blocked_by=blocked)
+                     blocked_by=blocked, cannot_map=cannot_map_of(session, sess))

@@ -42,7 +42,7 @@ from core.steps.s06_map import ColumnExcluded, Mapped, decide_mapping, excluded_
 from core.steps.s09_rules import RuleStored, decide_rule
 from core.steps.s10_transform import TransformationStored, decide_transformation
 from ports.notify.inapp import InAppNotifier
-from tests.test_onboarding import OPERATOR, make_world, run_to, view
+from tests.test_onboarding import OPERATOR, approve, make_world, run_to, view, work
 
 PERSON = "dev-operator"
 
@@ -81,13 +81,16 @@ def shown_step(kind: str) -> str:
 # ---------------------------------------------------------------- glossary
 
 
+def a_column(w) -> str:
+    from core.repositories.feed_profiles import FeedProfileRepository
+
+    return FeedProfileRepository(w.session).latest(w.feed_id).columns[0].name
+
+
 def test_glossary_add_edit_reject(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
-    run_to(w, "glossary")
-    column = pending(w, "glossary_element")[0].column
-    agents_item = pending(w, "glossary_element")[0]
-    decide_element(db_session, proposal_id=agents_item.proposal_id, user=OPERATOR, decision="rejected", choice=None,
-                   note="I will write it myself", notifier=InAppNotifier(db_session), stewards=[])
+    run_to(w, "glossary")  # 7.22: the step has no agent item until a column is requested; a person adds one
+    column = a_column(w)
     before = log_rows(w)
 
     draft = GlossaryElementDraft(key="manual_probe_element", name="Manual probe", domain="reference_data",
@@ -106,13 +109,10 @@ def test_glossary_add_edit_reject(db_session, glossary, tmp_path):
 def test_glossary_manual_item_edit_and_reject(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
     run_to(w, "glossary")
-    agents_item = pending(w, "glossary_element")[0]
-    decide_element(db_session, proposal_id=agents_item.proposal_id, user=OPERATOR, decision="rejected", choice=None,
-                   note="mine", notifier=InAppNotifier(db_session), stewards=[])
     draft = GlossaryElementDraft(key="manual_probe_element", name="Manual probe", domain="reference_data",
                                  data_type="string", definition="First wording.")
     made = add_item(db_session, session_id=w.session_id, user=OPERATOR, item=ManualGlossary(
-        kind="glossary_element", source_field=agents_item.column, reason="Mine.",
+        kind="glossary_element", source_field=a_column(w), reason="Mine.",
         option=ElementOption(kind="new_element", key="manual_probe_element", element=draft)))
 
     payload = made.payload | {"options": [made.payload["options"][0] | {
@@ -131,9 +131,7 @@ def test_glossary_manual_item_edit_and_reject(db_session, glossary, tmp_path):
 def test_glossary_manual_alias_and_refusals(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
     run_to(w, "glossary")
-    column = pending(w, "glossary_element")[0].column
-    decide_element(db_session, proposal_id=pending(w, "glossary_element")[0].proposal_id, user=OPERATOR,
-                   decision="rejected", choice=None, note="mine", notifier=InAppNotifier(db_session), stewards=[])
+    column = a_column(w)
     taken = GlossaryRepository(db_session).list_current()[0].key
     with pytest.raises(ManualItemRefused, match="already in the glossary"):
         add_item(db_session, session_id=w.session_id, user=OPERATOR, item=ManualGlossary(
@@ -160,6 +158,13 @@ def test_glossary_manual_alias_and_refusals(db_session, glossary, tmp_path):
 # ---------------------------------------------------------------- mapping, including leaving a column out
 
 
+def at_mapping_step(w) -> None:
+    """7.22: the mapping step answered, nothing decided yet (run_to() would settle its ties)."""
+    work(w)
+    approve(w)
+    work(w)
+
+
 def a_free_element(w) -> str:
     mapped = {m.element_key for m in MappingRepository(w.session).current_for_feed(w.feed_id)}
     return next(e.key for e in GlossaryRepository(w.session).list_current() if e.key not in mapped)
@@ -167,7 +172,7 @@ def a_free_element(w) -> str:
 
 def test_mapping_to_any_element_edit_and_reject(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
-    run_to(w, "mapping")
+    at_mapping_step(w)
     agents_item = pending(w, "mapping")[0]
     decide_mapping(db_session, proposal_id=agents_item.proposal_id, user=OPERATOR, decision="rejected", choice=None,
                    note="wrong element")
@@ -195,7 +200,7 @@ def test_mapping_to_any_element_edit_and_reject(db_session, glossary, tmp_path):
 
 def test_a_manual_mapping_can_be_rejected(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
-    run_to(w, "mapping")
+    at_mapping_step(w)
     first = pending(w, "mapping")[0]
     decide_mapping(db_session, proposal_id=first.proposal_id, user=OPERATOR, decision="rejected", choice=None, note="n")
     made = add_item(db_session, session_id=w.session_id, user=OPERATOR, item=ManualMapping(
@@ -207,7 +212,7 @@ def test_a_manual_mapping_can_be_rejected(db_session, glossary, tmp_path):
 
 def test_a_column_can_be_left_out_and_the_agent_does_not_ask_again(db_session, glossary, tmp_path):
     w = make_world(db_session, tmp_path)
-    run_to(w, "mapping")
+    at_mapping_step(w)
     first = pending(w, "mapping")[0]
     decide_mapping(db_session, proposal_id=first.proposal_id, user=OPERATOR, decision="rejected", choice=None, note="n")
     made = add_item(db_session, session_id=w.session_id, user=OPERATOR, item=ManualMapping(

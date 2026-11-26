@@ -194,7 +194,10 @@ def _why_none(session: Session, feed_id: UUID, column: ColumnToMap) -> str:
     return "no_candidate"
 
 
-def record_mappings(session: Session, *, agent: RunsAgent, agent_input: MappingInput, user: User) -> MappingsProposed:
+def record_mappings(session: Session, *, agent: RunsAgent, agent_input: MappingInput, user: User,
+                    send_back: bool = True) -> MappingsProposed:
+    """`send_back=False` (the onboarding, phase 7.22): a column no element fits is returned as the typed outcome
+    `no_element_back_to_05` with no run queued; a person decides it (Ignore, or Request a glossary element)."""
     run = agent.run(session, agent_input, before_write=lambda s: _still_mappable(s, agent_input))
     feed_id = agent_input.feed_id
     made = {p.payload["source_field"]: p for p in run.proposals}
@@ -219,7 +222,7 @@ def record_mappings(session: Session, *, agent: RunsAgent, agent_input: MappingI
     asked = {p.payload.get("source_field") for p in ProposalRepository(session).list_for_feed(feed_id,
                                                                                               "glossary_element")}
     # not a column the builder was asked about, nor a mapped one (Propose again): the builder skips a mapped column
-    to_send = [c.name for c in back if c.name not in asked and not c.current]
+    to_send = [c.name for c in back if c.name not in asked and not c.current] if send_back else []
     run_id = None
     if to_send:  # assumption 26: in the same transaction
         glossary_run, _ = queue_run(session, feed_id=feed_id, reason="sent_back", requested_by=user.id,

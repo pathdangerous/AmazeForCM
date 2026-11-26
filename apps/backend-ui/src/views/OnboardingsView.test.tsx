@@ -15,7 +15,7 @@ test("a session row shows the feed, the step, the status, the progress and links
   expect(within(row).getByText("Security master")).toBeTruthy();
   expect(within(row).getByText("Mapping")).toBeTruthy(); // the current step as a label
   expect(within(row).getByText("active")).toBeTruthy();
-  expect(within(row).getByText("4 of 9")).toBeTruthy(); // upload, profile, glossary done; mapping is the 4th
+  expect(within(row).getByText("3 of 9")).toBeTruthy(); // upload, profile done; mapping is the 3rd
   const link = within(row).getByRole("link", { name: /Security master/ });
   expect(link.getAttribute("href")).toBe(`#/onboarding/${SESSION_ID}`);
 });

@@ -8,7 +8,8 @@ POST /api/amaze/onboardings/{id}/steps/{step}/enter    run the step's agent in t
 POST /api/amaze/onboardings/{id}/approve          Approve & next; 409 decision_needed lists the items to decide first
 POST /api/amaze/onboardings/{id}/steps/{step}/approve-confident   one approval per confident item of the current step,
                                                   by the caller (the step does not move on)
-POST /api/amaze/onboardings/{id}/back             {to_step}: later steps become stale and the step reruns
+POST /api/amaze/onboardings/{id}/cannot-map       {action: ignore, columns}: Ignore for columns no glossary element fits (7.22)
+POST /api/amaze/onboardings/{id}/back            {to_step}: later steps become stale and the step reruns
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/decision   one item, by the decision code of
                                                   POST /api/amaze/proposals/{id}/decision (decide_proposal)
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/edit       {payload}: a new version, "edited by" (a rule is back-tested again)
@@ -23,11 +24,11 @@ route is one transaction (apps/api/transactions.py); the worker is kicked after 
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from apps.api.deps import (
@@ -45,6 +46,7 @@ from core.domain.common import NonBlank
 from core.domain.manual import ManualItem, ManualRule
 from core.domain.onboarding import (
     ApproveOptions,
+    CannotMapDecided,
     ConfidentApproved,
     StepAdvance,
     StepName,
@@ -63,6 +65,7 @@ from core.steps.onboarding import (
     approve_and_next,
     back,
     checked_rule_payload,
+    decide_cannot_map,
     edit_item,
     enter_step,
     approve_confident,
@@ -270,6 +273,22 @@ def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession
     proposal = in_transaction(session, lambda: edit_item(session, session_id=session_id, proposal_id=proposal_id,
                                                          payload=payload, user=user))
     return ItemEdited(proposal=proposal, workspace=_view(session, session_id, settings))
+
+
+class CannotMapBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["ignore"]
+    columns: Annotated[list[NonBlank], Field(min_length=1)]
+
+
+@router.post("/{session_id}/cannot-map", response_model=CannotMapDecided,
+             responses={409: {"description": "a column is not an undecided cannot-map column of the mapping step"}})
+def cannot_map(session_id: UUID, body: CannotMapBody, session: DbSession, user: Operator,
+               settings: AppSettings) -> CannotMapDecided:
+    """Phase 7.22: Ignore (the excluded mapping) for columns no glossary element fits; one manual item each."""
+    return in_transaction(session, lambda: decide_cannot_map(
+        session, session_id=session_id, action=body.action, columns=list(body.columns), user=user, settings=settings))
 
 
 @router.put("/{session_id}/key-policy", response_model=KeyPolicyStored)

@@ -41,7 +41,7 @@ def session(sessions, feed):
 # ---------------------------------------------------------------- sessions
 
 def test_the_steps_are_the_nine_in_order():
-    assert ONBOARDING_STEPS == ("upload", "profile", "glossary", "mapping", "transformations", "rules", "go_live",
+    assert ONBOARDING_STEPS == ("upload", "profile", "mapping", "glossary", "transformations", "rules", "go_live",
                                 "first_load", "product_ready")
 
 

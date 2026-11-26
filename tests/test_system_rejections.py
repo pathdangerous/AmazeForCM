@@ -21,9 +21,7 @@ def test_after_back_the_mapping_agent_proposes_the_same_elements_again(db_sessio
     w = make_world(db_session, tmp_path)
     work(w)
     approve(w)  # the profile: registers the feed
-    run_to(w, "glossary")
-    approve(w)
-    work(w)  # the mapping agent answers; its proposals are pending
+    work(w)  # the mapping agent answers (7.22: mapping comes first); its proposals are pending
     assert current(w).current_step == "mapping"
     before = {c: e for c, e in _pending_mappings(w).items() if e}
     assert before
@@ -42,9 +40,7 @@ def test_a_persons_rejection_still_counts_and_a_system_one_does_not(db_session, 
     w = make_world(db_session, tmp_path)
     work(w)
     approve(w)
-    run_to(w, "glossary")
-    approve(w)
-    work(w)
+    work(w)  # 7.22: the mapping step is next
     proposals = ProposalRepository(db_session)
     first, second = proposals.list_for_feed(w.feed_id, "mapping", "pending")[:2]
     proposals.record_decision(first.id, user=OPERATOR, decision="rejected", note="wrong element")

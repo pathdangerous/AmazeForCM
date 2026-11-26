@@ -60,7 +60,7 @@ test("with no test load figures there is no expected-score line", () => {
 
 test("the steps before go-live are listed with their state", () => {
   show();
-  expect(screen.getByTestId("summary-page").textContent).toContain("Glossary: done");
+  expect(screen.getByTestId("summary-page").textContent).toContain("Glossary requests: done");
 });
 
 test("the visibility radios are native, default open, and report a change", () => {
