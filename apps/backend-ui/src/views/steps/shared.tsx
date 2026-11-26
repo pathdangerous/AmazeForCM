@@ -17,7 +17,7 @@ export type ItemActions = {
   add?: (body: ManualItemBody) => Promise<boolean>;
   addError?: string | null; // the API's message for the last refused add
   // phase 7.22: a choice for columns no glossary element fits (the mapping step)
-  cannotMap?: (action: "ignore", columns: string[]) => void;
+  cannotMap?: (action: "ignore" | "request", columns: string[]) => void;
 };
 
 export type PanelProps = { ws: Workspace; items: OnboardingItem[]; actions: ItemActions };

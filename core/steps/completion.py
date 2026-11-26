@@ -17,6 +17,7 @@ from core.repositories.configuration import MappingRepository, RuleRepository
 from core.repositories.feed_profiles import FeedProfileRepository
 from core.repositories.proposals import ProposalRepository
 from core.repositories.transformations import TransformationRepository
+from core.steps.cannot_map import columns_not_loaded
 from core.steps.s06_map import excluded_columns
 from core.steps.s02_profile import selected_actions
 
@@ -30,15 +31,17 @@ class _Model(BaseModel):
 class MappedColumn(_Model):
     column: str
     element_key: str
+    no_rules_yet: bool = False  # 7.22: no approved rule names its element (a column mapped late has none from the session)
 
 
 class MappingFigures(_Model):
     done: int  # columns with a current mapping
     pending: int  # columns with a mapping proposal waiting for the steward
     excluded: int  # columns a person left out (not loaded)
-    undecided: int  # columns with neither a mapping, a pending proposal nor an exclusion
+    undecided: int  # columns with no mapping, no pending proposal, no exclusion and no glossary request on its way
     mapped_columns: list[MappedColumn]
     excluded_columns: list[str]
+    waiting_for_glossary: list[str] = []  # 7.22: requested, the glossary owner or the steward has not finished (not loaded yet)
 
 
 class TransformationLine(_Model):
@@ -96,19 +99,30 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
+def _elements_with_rules(session: Session, feed_id: UUID, element_keys: list[str]) -> set[str]:
+    """The mapped elements an approved rule names (its SQL, by whole word: the one match the exception code uses)."""
+    from core.steps.exceptions import rule_elements
+
+    return {key for rule in RuleRepository(session).current_for_feed(feed_id) for key in rule_elements(rule.sql, element_keys)}
+
+
 def completion_report(session: Session, feed_id: UUID) -> CompletionReport:
     proposals = ProposalRepository(session)
     profile = FeedProfileRepository(session).latest(feed_id)
     in_file = [c.name for c in profile.columns] if profile else []
 
     current = MappingRepository(session).current_for_feed(feed_id)
-    mapped = [MappedColumn(column=m.source_field, element_key=m.element_key) for m in current]
+    covered = _elements_with_rules(session, feed_id, [m.element_key for m in current])
+    mapped = [MappedColumn(column=m.source_field, element_key=m.element_key, no_rules_yet=m.element_key not in covered)
+              for m in current]
     left_out = sorted(excluded_columns(session, feed_id))
+    awaiting = columns_not_loaded(session, feed_id).waiting_for_glossary
     pending_maps = {p.payload["source_field"] for p in proposals.list_for_feed(feed_id, "mapping", "pending")}
-    decided = {m.column for m in mapped} | set(left_out) | pending_maps
+    decided = {m.column for m in mapped} | set(left_out) | pending_maps | set(awaiting)
     mappings = MappingFigures(
         done=len(mapped), pending=len(pending_maps - {m.column for m in mapped} - set(left_out)), excluded=len(left_out),
-        undecided=len([c for c in in_file if c not in decided]), mapped_columns=mapped, excluded_columns=left_out)
+        undecided=len([c for c in in_file if c not in decided]), mapped_columns=mapped, excluded_columns=left_out,
+        waiting_for_glossary=awaiting)
 
     transformations = TransformationFigures(
         current=[TransformationLine(column=t.source_field, steps=[s.op for s in t.steps])
@@ -144,7 +158,11 @@ def completion_report(session: Session, feed_id: UUID) -> CompletionReport:
     ready = bool(mapped) and mappings.undecided == 0 and waiting == 0
     words = [
         f"{mappings.done} of {_plural(len(in_file), 'column')} mapped, {mappings.excluded} left out, "
-        f"{mappings.pending} waiting for the steward, {mappings.undecided} not decided.",
+        f"{mappings.pending} waiting for the steward, {len(awaiting)} waiting for glossary, {mappings.undecided} not decided.",
+        *([f"Left out (not loaded): {', '.join(left_out)}."] if left_out else []),
+        *([f"{', '.join(awaiting)}: waiting for glossary (not loaded yet)."] if awaiting else []),
+        *([f"No rules yet: {', '.join(m.column for m in mapped if m.no_rules_yet)}."]
+          if any(m.no_rules_yet for m in mapped) else []),
         f"{_plural(len(transformations.current), 'transformation')} approved, {transformations.pending} waiting.",
         f"{_plural(len(rules.current), 'rule')} approved, {rules.pending} waiting.",
         f"Actions: {actions.by_agent} applied by an agent, {actions.by_person} for a person to do, {actions.rejected} rejected.",

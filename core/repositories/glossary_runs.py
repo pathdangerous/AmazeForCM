@@ -59,6 +59,10 @@ class GlossaryRunRepository:
             raise GlossaryRunNotFound(f"No glossary run with id {run_id}")
         return GlossaryRun.model_validate(row)
 
+    def find(self, run_id: UUID) -> GlossaryRun | None:
+        row = self._session.get(Row, run_id)
+        return None if row is None else GlossaryRun.model_validate(row)
+
     def active(self, feed_id: UUID) -> GlossaryRun | None:
         row = self._active_row(lock=False)(feed_id)
         return None if row is None else GlossaryRun.model_validate(row)

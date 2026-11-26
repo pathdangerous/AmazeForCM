@@ -13,7 +13,7 @@ from sqlalchemy.exc import DBAPIError
 
 from tests.conftest import alembic_config
 
-HEAD = "0039"  # old: "0038" (phase 7.21 T1: feed_schedules), "0037" (phase 7.19 T1: glossary_import), "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
+HEAD = "0040"  # old: "0039" (phase 7.22 T3: column requests), "0038" (phase 7.21 T1: feed_schedules), "0037" (phase 7.19 T1: glossary_import), "0036" (phase 7.17 T2: pipeline_runs), "0035" (phase 7.16 T1: amaze_erase_profiles), "0034" (phase 7.14 T2: exception fixes), "0033" (phase 7.14 T1: amaze_value_pattern), "0032" (phase 7.13: the chain of drafts), "0031" (phase 7.12, T4: rule-made proposals), "0030" (T3: code versions), "0029" (T1: profile actions), "0028" (phase 7.12, T7), "0027" (phase 7.12, T7: manual items), "0026" (phase 7.9: pause and delete of a feed)
 TABLES = {
     "proposal_log", "notifications", "proposals", "approvals", "glossary_elements", "requirements", "feeds",
     "mappings", "rules", "loads", "products",
@@ -1538,6 +1538,51 @@ def test_0039_adds_schedules_and_alerts_and_downgrade_restores_0038(scratch_sche
     assert _0037_state(engine) == before
     command.upgrade(config, "0039")
     assert _0037_state(engine) == up
+
+
+def _0040_state(engine):
+    with engine.connect() as connection:
+        return {name: connection.execute(text(
+            "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c WHERE c.conname = :n "
+            "AND c.connamespace = current_schema()::regnamespace"), {"n": name}).scalar_one()
+                for name in ("ck_glossary_runs_reason", "ck_onboarding_events_event")}
+
+
+def test_0040_widens_two_checks_and_downgrade_restores_0039(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0039")
+    before = _0040_state(engine)
+    command.upgrade(config, "0040")
+    up = _0040_state(engine)
+    assert "column_requested" in up["ck_glossary_runs_reason"] and "column_requested" not in before["ck_glossary_runs_reason"]
+    assert "glossary_requested" in up["ck_onboarding_events_event"]
+    assert "glossary_requested" not in before["ck_onboarding_events_event"]
+    assert "chain_started" in up["ck_onboarding_events_event"]  # the 0032 names stay: old history is still readable
+    command.downgrade(config, "0039")
+    assert _0040_state(engine) == before
+    command.upgrade(config, "0040")
+    assert _0040_state(engine) == up
+
+
+def test_0040_downgrade_refuses_while_a_glossary_request_event_exists(scratch_schema):
+    engine, url = scratch_schema
+    config = alembic_config(url)
+    command.upgrade(config, "0040")
+    with engine.begin() as connection:
+        feed = connection.execute(text(
+            "INSERT INTO feeds (code, name, source_code, connector, source_ref) "
+            "VALUES ('syn_req_mig', 'Req', 'syn_req_mig', 'local_file', 'files/x.csv') RETURNING id")).scalar_one()
+        session = connection.execute(text(
+            "INSERT INTO onboarding_sessions (feed_id, current_step, step_states, created_by) VALUES "
+            "(:f, 'mapping', CAST(:s AS jsonb), 'dev-operator') RETURNING id"),
+            {"f": feed, "s": '{"upload": "done", "profile": "done", "glossary": "waiting", "mapping": "ready", '
+                             '"transformations": "waiting", "rules": "waiting", "go_live": "waiting", '
+                             '"first_load": "waiting", "product_ready": "waiting"}'}).scalar_one()
+        connection.execute(text("INSERT INTO onboarding_events (session_id, step, event, actor) "
+                                "VALUES (:s, 'mapping', 'glossary_requested', 'dev-operator')"), {"s": session})
+    with pytest.raises(DBAPIError, match="migration 0040"):
+        command.downgrade(config, "0039")
 
 
 def test_0039_downgrade_refuses_while_a_schedule_exists(scratch_schema):

@@ -601,6 +601,15 @@ export default function FeedView({ feedId, devUser, me, people, canAct, canRun, 
                 {name(page.product.owner_id)}, created {formatWhen(page.product.created_at)}.
               </Text>
             )}
+            {page.not_loaded && (page.not_loaded.ignored.length > 0 || page.not_loaded.waiting_for_glossary.length > 0) && (
+              <div data-testid="not-loaded" style={{ marginTop: 8 }}>
+                {page.not_loaded.ignored.length > 0 && (
+                  <Text size="sm">Left out, not loaded: {page.not_loaded.ignored.map((c) => <code key={c}>{c} </code>)}</Text>)}
+                {page.not_loaded.waiting_for_glossary.length > 0 && (
+                  <Text size="sm">Waiting for glossary (not loaded yet):{" "}
+                    {page.not_loaded.waiting_for_glossary.map((c) => <code key={c}>{c} </code>)}</Text>)}
+              </div>
+            )}
             {page.parked_columns.length > 0 && (
               <Text mt="xs" className="bad" data-testid="parked-columns">
                 Parked, not loaded until mapped and a new go-live is approved:{" "}

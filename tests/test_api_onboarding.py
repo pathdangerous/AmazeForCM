@@ -727,12 +727,20 @@ async def test_every_committing_workspace_endpoint_commits_what_it_wrote(real):
         assert mapping_ws["current_step"] == "mapping"
         columns = [c["column"] for c in mapping_ws["cannot_map"]]
         assert columns and {c["state"] for c in mapping_ws["cannot_map"]} == {"undecided"}
+        asked, columns = columns[0], columns[1:]
+        requested = await r.call("POST", f"/{oid}/cannot-map", json={"action": "request", "columns": [asked]})
+        assert {c["column"]: c["state"] for c in requested["workspace"]["cannot_map"]}[asked] == "requested"
+        assert committed(engine, "SELECT reason, columns::text, requested_by, status FROM glossary_runs") == [
+            ("column_requested", "{" + asked + "}", "dev-operator", "queued")]  # the row is committed (the worker is not run)
+        assert committed(engine, "SELECT actor FROM onboarding_events WHERE event = 'glossary_requested'") == [
+            ("dev-operator",)]
         ignored = await r.call("POST", f"/{oid}/cannot-map", json={"action": "ignore", "columns": columns})
-        assert {c["state"] for c in ignored["workspace"]["cannot_map"]} == {"ignored"}
+        assert {c["state"] for c in ignored["workspace"]["cannot_map"]} == {"ignored", "requested"}
         assert committed(engine, "SELECT count(*), bool_and(origin = 'manual' AND payload ->> 'excluded' = 'true') "
                                  "FROM proposals WHERE kind = 'mapping' AND author = 'dev-operator'") == [
             (len(columns), True)]
         await r.call("POST", f"/{oid}/cannot-map", json={"action": "ignore", "columns": columns}, expect=409)  # decided
+        await r.call("POST", f"/{oid}/cannot-map", json={"action": "request", "columns": [asked]}, expect=409)  # asked
         pending = [i for i in (await r.call("GET", f"/{oid}"))["items"]
                    if i["status"] == "pending" and not i["payload"].get("excluded")]
         assert len(pending) >= 3

@@ -47,6 +47,7 @@ from core.repositories.source_choices import SourceChoiceRepository
 from core.repositories.source_fetches import SourceFetchRepository
 from core.repositories.transformations import TransformationRepository
 from core.steps.candidates import candidate_list, covered_by, new_columns
+from core.steps.cannot_map import ColumnsNotLoaded, columns_not_loaded
 from core.domain.schedule import FeedSchedule
 from core.repositories.schedules import FeedScheduleRepository
 from core.steps.profile_erase import ProfileErasure, erasures_of, keep_reasons
@@ -158,6 +159,7 @@ class FeedPage(BaseModel):
     requirements: list[FeedRequirement]
     last_file: SourceFetch | None
     profile: FeedProfile | None  # the latest
+    not_loaded: ColumnsNotLoaded  # 7.22: the columns the loads leave out, by name: ignored, and waiting for glossary
     undeclared_columns: list[str]  # in the file, not declared by the spec
     missing_columns: list[str]  # declared by the spec, not in the file
     profiles: list[ProfileOnPage]
@@ -423,6 +425,7 @@ def feed_page(session: Session, feed: Feed, catalogue: SourceCatalogue) -> FeedP
         rules=_rules_on_page(session, feed), go_live=_go_live_on_page(session, feed, date.today()),
         loads=[load_on_page(session, load) for load in LoadRepository(session).list_for_feed(feed.id)[:LOADS_ON_PAGE]],
         product=ProductRepository(session).for_feed(feed.id), parked_columns=parked_columns(session, feed.id),
+        not_loaded=columns_not_loaded(session, feed.id),
         coverage_titles={c.requirement_id: requirements.get(c.requirement_id).title
                          for c in (latest.coverage if latest else [])},
         issues=latest.issues if latest else [], transformations=_transformations_on_page(session, feed),

@@ -129,7 +129,7 @@ from core.steps.s02_profile import (
 )
 from core.steps.s03_signoff import sign_off
 from core.steps.s04_register import NoOwner, register_feed, revise_visibility
-from core.steps.s05_glossary import builder_input, claim_run, decide_element, fail_run, record_run
+from core.steps.s05_glossary import builder_input, claim_run, decide_element, fail_run, queue_run, record_run
 from core.steps.s06_map import decide_mapping, mapping_input, record_mappings
 from core.steps.s09_rules import (
     RuleAwaitsChecker,
@@ -868,7 +868,7 @@ def approve_and_next(session: Session, *, session_id: UUID, user: User, ctx: Onb
     if options.visibility is not None and step not in ("profile", "go_live"):
         raise StepNotReady("the visibility is chosen at go-live")  # refused input first, before any decision is asked for
     items = _step_items(session, sess, step)
-    blocking = [i for i in items if i.needs_decision]
+    blocking = [] if step == "glossary" else [i for i in items if i.needs_decision]  # D6: the glossary step never blocks
     if blocking:
         raise DecisionNeeded(f"{len(blocking)} item(s) of {step} need a decision first: "
                              + "; ".join(i.summary for i in blocking), blocking)
@@ -902,23 +902,35 @@ def _cannot_map_message(columns: list[str]) -> str:
 
 def decide_cannot_map(session: Session, *, session_id: UUID, action: str, columns: list[str], user: User,
                       settings: Settings | None = None) -> CannotMapDecided:
-    """A person's choice for cannot-map columns of the mapping step (phase 7.22, plan D3). `ignore`: the existing
-    excluded mapping, one manual proposal per column (author the person, no model call), approved with the step like any
-    item; the column is not loaded. NotACannotMapColumn (409): a column that is not an undecided cannot-map column of
-    this onboarding's mapping step; StepNotEnterable, StepNotReady, NotAnApprover from the step it goes through."""
-    if action != "ignore":
+    """A person's choice for cannot-map columns of the mapping step (phase 7.22, plan D3 and D4).
+    `ignore`: the existing excluded mapping, one manual proposal per column (author the person, no model call), approved
+    with the step like any item; the column is not loaded.
+    `request`: one glossary run for those columns only (reason `column_requested`, requested by the person, no model call
+    here: the builder runs in the background or in the Glossary requests step) and the event `glossary_requested`.
+    NotACannotMapColumn (409): a column that is not an undecided cannot-map column of this onboarding's mapping step (or a
+    request the glossary owner rejected, which can only be Ignored); StepNotReady (409): the builder is working on this
+    feed's run, ask again in a moment; StepNotEnterable, NotAnApprover from the step it goes through."""
+    if action not in ("ignore", "request"):
         raise ValueError(f"{action!r} is not a choice for a cannot-map column")
     sess, _ = _step_for_adding(session, session_id, "mapping")
     wanted = list(dict.fromkeys(columns))
-    undecided = {c.column for c in cannot_map_of(session, sess) if c.state == "undecided"}
-    unknown = [c for c in wanted if c not in undecided]
+    undecided = {c.column: c for c in cannot_map_of(session, sess) if c.state == "undecided"}
+    unknown = [c for c in wanted if c not in undecided or (action == "request" and undecided[c].glossary_status)]
     if not wanted or unknown:
-        raise NotACannotMapColumn("Not an undecided cannot-map column of the mapping step: "
-                                  + (", ".join(unknown) or "no column named"))
-    made = [add_item(session, session_id=session_id, user=user, item=ManualMapping(
-        kind="mapping", source_field=column, excluded=True, reason="Ignored: no glossary element fits this column."))
-        for column in wanted]
-    return CannotMapDecided(action="ignore", columns=wanted, proposals=made,
+        raise NotACannotMapColumn("Not an undecided cannot-map column of the mapping step (a request the owner rejected "
+                                  "can only be ignored): " + (", ".join(unknown) or "no column named"))
+    if action == "ignore":
+        made = [add_item(session, session_id=session_id, user=user, item=ManualMapping(
+            kind="mapping", source_field=column, excluded=True,
+            reason="Ignored: no glossary element fits this column.")) for column in wanted]
+        return CannotMapDecided(action="ignore", columns=wanted, proposals=made,
+                                workspace=workspace(session, session_id=session_id, settings=settings))
+    run, _ = queue_run(session, feed_id=sess.feed_id, reason="column_requested", requested_by=user.id, columns=wanted)
+    if not set(wanted) <= set(run.columns):  # the active run is running: its columns are fixed
+        raise StepNotReady("The glossary builder is working on this feed's run; ask for these columns again in a moment")
+    OnboardingRepository(session).add_event(session_id, step="mapping", event="glossary_requested", actor=user.id,
+                                            detail={"columns": wanted, "run_id": str(run.id)})
+    return CannotMapDecided(action="request", columns=wanted, proposals=[], run_id=run.id,
                             workspace=workspace(session, session_id=session_id, settings=settings))
 
 
@@ -939,10 +951,29 @@ def _approve(session: Session, sess: OnboardingSession, step: str, items: list[O
     if step == "profile":
         approved += _approve_profile(session, sess, pending, user=user, ctx=ctx, options=options, notifier=notifier)
     elif step == "glossary":
+        # 7.22 (plan D6): only what this person may decide and the agent is sure of; the rest stays pending, and its
+        # column is "waiting for glossary (not loaded yet)" while the onboarding goes on
+        sessions = OnboardingRepository(session)
         for item in pending:
-            decide_element(session, proposal_id=item.proposal_id, user=user, decision="approved", choice=None,
-                           note=None, notifier=notifier, stewards=_with_role(ctx, "data_steward"))
-            approved.append(item.proposal_id)
+            if item.kind == "glossary_element":
+                if not item.pre_accepted or "glossary_owner" not in user.roles:
+                    continue
+                done = decide_element(session, proposal_id=item.proposal_id, user=user, decision="approved",
+                                      choice=None, note=None, notifier=notifier,
+                                      stewards=_with_role(ctx, "data_steward"))
+                approved.append(item.proposal_id)
+                if done.mapping_proposal_id is not None:  # the requested column's mapping: its steward decides
+                    sessions.add_event(sess.id, step="glossary", event="item_added", actor=user.id,
+                                       proposal_id=done.mapping_proposal_id,
+                                       detail={"kind": "mapping", "via": "glossary_approval"})
+                    if "data_steward" in user.roles:
+                        decide_mapping(session, proposal_id=done.mapping_proposal_id, user=user, decision="approved",
+                                       choice=None, note=None)
+                        approved.append(done.mapping_proposal_id)
+            elif item.kind == "mapping" and "data_steward" in user.roles:
+                decide_mapping(session, proposal_id=item.proposal_id, user=user, decision="approved", choice=None,
+                               note=None)
+                approved.append(item.proposal_id)
     elif step == "mapping":
         for item in pending:
             decide_mapping(session, proposal_id=item.proposal_id, user=user, decision="approved", choice=None, note=None)
@@ -1471,7 +1502,7 @@ def workspace(session: Session, *, session_id: UUID, settings: Settings | None =
                                prompt_version=call.prompt_version, latency_ms=call.latency_ms,
                                input_ref=call.input_ref, reasoning=item.reason))
 
-    blocking = [i for i in current_items if i.needs_decision]
+    blocking = [] if step == "glossary" else [i for i in current_items if i.needs_decision]  # D6
     if viewed != step:
         blocked = "Viewing an earlier step."  # read only: nothing is approved from another step's view
     elif sess.status == "done":

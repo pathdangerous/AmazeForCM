@@ -62,6 +62,22 @@ test("phase 7.21: a product whose feed has no schedule says nothing about how of
   expect(screen.queryByTestId("product-update-frequency")).toBeNull();
 });
 
+test("phase 7.22: the page names the source columns that are not loaded: left out, and waiting for glossary", async () => {
+  stubFetch({ [PAGE]: productPage({ not_loaded: { ignored: ["Scratch"], waiting_for_glossary: ["Coupon"] } }),
+              [PREVIEW]: previewRows(2) });
+  show();
+  const box = await screen.findByTestId("product-not-loaded");
+  expect(box.textContent).toContain("Left out, not loaded: Scratch");
+  expect(box.textContent).toContain("Waiting for glossary (not loaded yet): Coupon");
+});
+
+test("phase 7.22: a product that leaves nothing out shows no such note", async () => {
+  stubFetch({ [PAGE]: productPage(), [PREVIEW]: previewRows(2) });
+  show();
+  await screen.findByRole("heading", { name: "Bond terms" });
+  expect(screen.queryByTestId("product-not-loaded")).toBeNull();
+});
+
 test("header, dictionary and preview rows", async () => {
   stubFetch({ [PAGE]: productPage(), [PREVIEW]: previewRows(3) });
   show();

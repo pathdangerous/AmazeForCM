@@ -354,7 +354,8 @@ NEW_ELEMENT = {"key": "score_year", "name": "Score year", "domain": "pricing", "
 
 def test_the_phase_5_lists_are_the_plans():
     assert GLOSSARY_OUTCOMES == ("proposed", "duplicate_alias", "conflict_to_owner")
-    assert GLOSSARY_RUN_REASONS == ("registered", "requested", "sent_back", "structure_change")  # the fourth: 0019
+    assert GLOSSARY_RUN_REASONS == ("registered", "requested", "sent_back", "structure_change",  # the fourth: 0019
+                                    "column_requested")  # the fifth: 0040
     assert GLOSSARY_RUN_STATUSES == ("queued", "running", "done", "failed")
 
 

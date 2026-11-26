@@ -42,6 +42,7 @@ from core.domain.mapping import (
     GlossaryBuilderOutput,
     GlossaryProposalPayload,
     GlossaryRun,
+    MappingProposalPayload,
     NewColumn,
     SeededAnswer,
     SeededOutput,
@@ -119,6 +120,8 @@ class ElementDecided(BaseModel):
     proposal_id: UUID
     decision: Literal["approved", "rejected"]
     element: GlossaryElement | None
+    # 7.22: the mapping proposal an approved request made for its column (None: not a request, or already decided)
+    mapping_proposal_id: UUID | None = None
 
 
 class RunOnBanner(BaseModel):
@@ -187,8 +190,11 @@ def builder_input(session: Session, run: GlossaryRun, settings: Settings | None 
                                                                                                "glossary_element")}
     skipped, columns = {}, []
     left_out = excluded_by_actions(session, run.feed_id)  # a selected exclude_column action: not asked about (T1)
-    if run.reason == "structure_change":  # step 12 parked these columns: only they are asked about, none sent back
-        looked_at, sent_back = [c for c in profile.columns if c.name in set(run.columns)], ()
+    if run.reason in ("structure_change", "column_requested"):
+        # only the run's own columns are asked about: step 12 parked them (none is sent back), or a person requested
+        # them (7.22: each is "sent back" in the sense that the name rule does not skip it)
+        looked_at = [c for c in profile.columns if c.name in set(run.columns)]
+        sent_back = run.columns if run.reason == "column_requested" else ()
     else:
         looked_at, sent_back = profile.columns, run.columns
     for column in new_columns(looked_at, profile.spec, sent_back=sent_back):
@@ -348,8 +354,35 @@ def decide_element(session: Session, *, proposal_id: UUID, user: User, decision:
         raise PhraseTaken(f"Another element already owns {named}")
     proposals.record_decision(proposal_id, user=user, decision="approved", note=note)
     element = glossary.add_version(proposal_id=proposal_id, created_by=user.id, option=option)
+    mapping = _mapping_for_request(session, proposal.feed_id, payload, element.key)
     for steward in stewards:
         notifier.notify(recipient=steward, subject=f"Can now be mapped: {payload.source_field} of {feed.code}",
                         body=f"Glossary element {element.key} (version {element.version}) was approved for column "
-                             f"{payload.source_field} of feed {feed.code}. Propose its mapping.")
-    return ElementDecided(proposal_id=proposal_id, decision="approved", element=element)
+                             f"{payload.source_field} of feed {feed.code}. "
+                             + ("Its mapping proposal waits for you." if mapping else "Propose its mapping."))
+    return ElementDecided(proposal_id=proposal_id, decision="approved", element=element,
+                          mapping_proposal_id=mapping.id if mapping else None)
+
+
+def _mapping_for_request(session: Session, feed_id: UUID, payload: GlossaryProposalPayload, element_key: str):
+    """Phase 7.22, plan D5. The element was requested for this column (its run is `column_requested`): the column's
+    mapping proposal is made now, in the same transaction, by code: a manual proposal authored by the person who pressed
+    Request, no model call, pending for the data steward. None for any other glossary proposal (the workbench path asks
+    the MappingAgent as before) or when the column has been decided meanwhile."""
+    run = GlossaryRunRepository(session).find(payload.run_id) if payload.run_id else None
+    if run is None or run.reason != "column_requested":
+        return None
+    column, proposals = payload.source_field, ProposalRepository(session)
+    left_out = any(p.payload.get("excluded") and p.payload["source_field"] == column
+                   for p in proposals.list_for_feed(feed_id, "mapping", "approved"))
+    if (left_out or proposals.pending_for_column("mapping", feed_id, column) is not None
+            or any(m.source_field == column for m in MappingRepository(session).current_for_feed(feed_id))):
+        return None
+    profile = FeedProfileRepository(session).latest(feed_id)
+    found = next((c for c in profile.columns if c.name == column), None) if profile else None
+    body = MappingProposalPayload(source_field=column, column_type=found.type if found else None,
+                                  candidates=[element_key], recommended=element_key,
+                                  reason=f"{run.requested_by} requested a glossary element for this column; "
+                                         f"{element_key} was approved for it.")
+    return proposals.create_manual(kind="mapping", payload=body.model_dump(mode="json"),
+                                   required_approver_roles=["data_steward"], feed_id=feed_id, author=run.requested_by)

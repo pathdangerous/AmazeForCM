@@ -312,6 +312,7 @@ export type FeedPage = {
                   raised_at: string; accepted_conditions: Conditions | null }[]; // raised_at: phase 7.5, P7
   last_file: { id: string; outcome: string; created_at: string; blob_ref: string | null; detail: string | null } | null;
   profile: FeedProfile | null;
+  not_loaded?: { ignored: string[]; waiting_for_glossary: string[] }; // 7.22: by name
   undeclared_columns: string[];
   missing_columns: string[];
   profiles: { version: number; outcome: string; at: string; id?: string | null; keep_reason?: string | null }[]; // 7.16: keep_reason
@@ -610,7 +611,8 @@ export type OnboardingItem = {
 export type Completion = {
   feed_id: string; columns_in_file: number; ready_for_go_live: boolean; words: string[];
   mappings: { done: number; pending: number; excluded: number; undecided: number;
-              mapped_columns: { column: string; element_key: string }[]; excluded_columns: string[] };
+              mapped_columns: { column: string; element_key: string; no_rules_yet?: boolean }[]; excluded_columns: string[];
+              waiting_for_glossary?: string[] }; // 7.22: requested, not loaded yet
   transformations: { current: { column: string; steps: string[] }[]; pending: number };
   rules: { current: { rule_key: string; description: string; backtest_status: string; flagged_rows: number | null;
                       total_rows: number | null; made_by: string }[]; pending: number };
@@ -706,8 +708,8 @@ export const decideItem = (id: string, proposalId: string, decision: "approved" 
                                     { decision, ...(choice === undefined ? {} : { choice }), ...(note ? { note } : {}) }, devUser);
 export const addItem = (id: string, body: ManualItemBody, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items`, body, devUser);
-// phase 7.22: Ignore (the excluded mapping) for columns no glossary element fits
-export const decideCannotMap = (id: string, action: "ignore", columns: string[], devUser: string) =>
+// phase 7.22: Ignore (the excluded mapping), or Request glossary element, for columns no glossary element fits
+export const decideCannotMap = (id: string, action: "ignore" | "request", columns: string[], devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/cannot-map`, { action, columns }, devUser);
 export const editItem = (id: string, proposalId: string, payload: Record<string, unknown>, devUser: string) =>
   apiPost<{ workspace: Workspace }>(`${ONBOARDINGS}/${id}/items/${proposalId}/edit`, { payload }, devUser);

@@ -33,7 +33,8 @@ EventName = Literal["entered", "agent_queued", "agent_started", "agent_done", "a
                     "item_added",  # item_added: a person added an item (0028)
                     # 0032 (phase 7.13): the chain of drafts. Retired in 7.22; the names stay because an onboarding that
                     # ran in chain mode still has them in its append-only history
-                    "chain_started", "chain_done", "chain_stopped", "draft_stale"]
+                    "chain_started", "chain_done", "chain_stopped", "draft_stale",
+                    "glossary_requested"]  # 0040 (7.22): a person pressed Request glossary element for a column
 EVENT_NAMES: tuple[str, ...] = get_args(EventName)
 
 # onboarding_sessions.run_mode (0032) is no longer read or written (phase 7.22); the column and its check stay, unused
@@ -289,14 +290,16 @@ class Workspace(BaseModel):
 
 
 class CannotMapDecided(BaseModel):
-    """What a person chose for some cannot-map columns (phase 7.22): the manual proposals an Ignore made."""
+    """What a person chose for some cannot-map columns (phase 7.22): the manual proposals an Ignore made, or the run a
+    Request queued."""
 
     model_config = ConfigDict(frozen=True)
 
-    action: Literal["ignore"]
+    action: Literal["ignore", "request"]
     columns: list[str]
-    proposals: list[Proposal]
+    proposals: list[Proposal]  # ignore: the manual items made; request: none
     workspace: Workspace
+    run_id: UUID | None = None  # request: the glossary run the columns are in
 
 
 class ConfidentApproved(BaseModel):

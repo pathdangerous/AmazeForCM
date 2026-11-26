@@ -168,6 +168,7 @@ export type ProductPage = {
   owner: { id: string; name: string }; visibility: string; access: "entitled" | "not_entitled_visible";
   route: string | null; freshness: Freshness | null; columns: string[]; dictionary: DictionaryRow[];
   paused_since?: string | null; // phase 7.9
+  not_loaded?: { ignored: string[]; waiting_for_glossary: string[] }; // phase 7.22: source columns the loads leave out, by name
   update_frequency?: string | null; // phase 7.21: "Updated daily", "Updated on business days", ... or "One-time load"
   // Latest released-load metadata, returned only for entitled users.
   certification?: { trust_score: number; rows: number; flagged_rows: number } | null;

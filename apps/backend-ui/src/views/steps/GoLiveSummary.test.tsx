@@ -93,10 +93,28 @@ test("the summary item that needs a decision has Approve once", () => {
   expect(screen.getAllByRole("button", { name: "Approve" }).length).toBe(1);
 });
 
+test("the completion report names the ignored columns and the columns waiting for glossary, and says go-live is ready (7.22)", () => {
+  const completion = {
+    feed_id: "f", columns_in_file: 5, ready_for_go_live: true,
+    words: ["3 of 5 columns mapped, 1 left out, 0 waiting for the steward, 1 waiting for glossary, 0 not decided.",
+            "Left out (not loaded): Scratch.", "Coupon: waiting for glossary (not loaded yet).", "No rules yet: Ticker."],
+    mappings: { done: 3, pending: 0, excluded: 1, undecided: 0, waiting_for_glossary: ["Coupon"],
+                mapped_columns: [{ column: "Ticker", element_key: "ticker", no_rules_yet: true }], excluded_columns: ["Scratch"] },
+    transformations: { current: [], pending: 0 }, rules: { current: [], pending: 0 },
+    actions: { by_agent: 0, by_person: 0, rejected: 0, pending: 0 }, items: { agent: 1, manual: 0, manual_by_kind: {}, agent_by_kind: {} },
+  };
+  show({ inputs: stepInputs({ completion }) });
+  const box = screen.getByTestId("completion-report").textContent ?? "";
+  expect(box).toContain("Left out (not loaded): Scratch.");
+  expect(box).toContain("Coupon: waiting for glossary (not loaded yet).");
+  expect(box).toContain("No rules yet: Ticker.");
+  expect(box.match(/Scratch/g)?.length).toBe(1); // named once
+});
+
 test("the completion report is shown in plain words with each rule's back-test and what was left out (T2)", () => {
   const completion = {
     feed_id: "f", columns_in_file: 4, ready_for_go_live: true,
-    words: ["3 of 4 columns mapped, 1 left out, 0 waiting for the steward, 0 not decided."],
+    words: ["3 of 4 columns mapped, 1 left out, 0 waiting for the steward, 0 not decided.", "Left out (not loaded): Scratch."],
     mappings: { done: 3, pending: 0, excluded: 1, undecided: 0, mapped_columns: [], excluded_columns: ["Scratch"] },
     transformations: { current: [], pending: 0 },
     rules: { current: [{ rule_key: "px_present", description: "d", backtest_status: "ran", flagged_rows: 2, total_rows: 70, made_by: "manual" },
@@ -107,7 +125,7 @@ test("the completion report is shown in plain words with each rule's back-test a
   show({ inputs: stepInputs({ completion }) });
   const box = screen.getByTestId("completion-report");
   expect(box.textContent).toContain("3 of 4 columns mapped, 1 left out");
-  expect(box.textContent).toContain("Left out: Scratch");
+  expect(box.textContent).toContain("Left out (not loaded): Scratch");
   expect(box.textContent).toContain("px_present (added by hand): flagged 2 of 70 rows in its back-test");
   expect(box.textContent).toContain("id_present (agent): not back-tested");
 });

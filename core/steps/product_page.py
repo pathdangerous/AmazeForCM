@@ -31,6 +31,7 @@ from core.repositories.products import ProductRepository
 from core.repositories.schedules import FeedScheduleRepository
 from core.repositories.standard_records import StandardRecordRepository
 from core.repositories.tables import FeedRow, FeedStatusEventRow as StatusEvent
+from core.steps.cannot_map import ColumnsNotLoaded, columns_not_loaded
 from core.steps.result import StepResult
 
 PREVIEW_ROWS = 100
@@ -123,6 +124,8 @@ class ProductPage(StepResult):
     certification: ProductCertification | None = None
     lineage: list[LineageStage] = Field(default_factory=list)
     update_frequency: str | None = None  # phase 7.21: "Updated daily", ... or "One-time load"; None: no schedule set
+    # phase 7.22: the feed's source columns the loads leave out, by name (a product with no feed: none)
+    not_loaded: ColumnsNotLoaded = Field(default_factory=lambda: ColumnsNotLoaded(ignored=[], waiting_for_glossary=[]))
 
 
 class ProductNotFound(StepResult):
@@ -272,7 +275,8 @@ def product_page(session: Session, *, code: str, user: UserLike, identity: Ident
         visibility=product.visibility, access="entitled" if entitled else "not_entitled_visible", route=route,
         freshness=freshness, paused_since=_paused_since(session, product), columns=keys,
         dictionary=[_dictionary_row(elements[k], labels.get(k)) for k in keys],
-        certification=certification, lineage=lineage, update_frequency=_update_frequency(session, product))
+        certification=certification, lineage=lineage, update_frequency=_update_frequency(session, product),
+        **({"not_loaded": columns_not_loaded(session, product.feed_id)} if product.feed_id else {}))
 
 
 def _update_frequency(session: Session, product: ProductWithElements) -> str | None:

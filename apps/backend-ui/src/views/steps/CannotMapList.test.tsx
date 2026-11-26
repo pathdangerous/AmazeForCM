@@ -41,6 +41,32 @@ test("Ignore sends that one column; Ignore all undecided sends every undecided c
   expect(actions.cannotMap).toHaveBeenLastCalledWith("ignore", ["Coupon", "Sector"]);
 });
 
+test("Request glossary element sends that column; Request all undecided sends every undecided column", () => {
+  const actions = show();
+  fireEvent.click(screen.getByRole("button", { name: "Request glossary element for Sector" }));
+  expect(actions.cannotMap).toHaveBeenCalledWith("request", ["Sector"]);
+  fireEvent.click(screen.getByRole("button", { name: "Request all undecided" }));
+  expect(actions.cannotMap).toHaveBeenLastCalledWith("request", ["Coupon", "Sector"]);
+});
+
+test("a requested column says where its request stands, in words, and has no buttons", () => {
+  show([cannotMapColumn({ state: "requested", glossary_status: "pending" }),
+        cannotMapColumn({ column: "Sector", state: "requested", glossary_status: "approved" }),
+        cannotMapColumn({ column: "Region", state: "requested", glossary_status: "drafting" })]);
+  expect(screen.getByTestId("cannot-map-Coupon").textContent).toContain("Glossary element requested: waiting for the glossary owner");
+  expect(screen.getByTestId("cannot-map-Sector").textContent).toContain("approved, its mapping waits for the steward");
+  expect(screen.getByTestId("cannot-map-Region").textContent).toContain("being drafted");
+  expect(within(screen.getByTestId("cannot-map-Coupon")).queryByRole("button")).toBeNull();
+});
+
+test("a request the owner rejected can only be ignored", () => {
+  show([cannotMapColumn({ glossary_status: "rejected" })]);
+  const row = screen.getByTestId("cannot-map-Coupon");
+  expect(row.textContent).toContain("request was rejected");
+  expect(within(row).queryByRole("button", { name: /Request glossary element/ })).toBeNull();
+  expect(within(row).getByRole("button", { name: "Ignore Coupon" })).toBeTruthy();
+});
+
 test("an ignored column says it is left out and has no buttons", () => {
   show([cannotMapColumn({ state: "ignored" })]);
   const row = screen.getByTestId("cannot-map-Coupon");

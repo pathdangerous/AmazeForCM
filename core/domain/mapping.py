@@ -16,7 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.domain.common import NonBlank, SnakeName
 from core.domain.glossary import DataType, GlossaryElementDraft
 
-GlossaryRunReason = Literal["registered", "requested", "sent_back", "structure_change"]  # the fourth: 0019
+GlossaryRunReason = Literal["registered", "requested", "sent_back", "structure_change",  # the fourth: 0019
+                            "column_requested"]  # the fifth: 0040 (7.22): a person asked for these columns only
 GLOSSARY_RUN_REASONS: tuple[str, ...] = get_args(GlossaryRunReason)
 GlossaryRunStatus = Literal["queued", "running", "done", "failed"]
 GLOSSARY_RUN_STATUSES: tuple[str, ...] = get_args(GlossaryRunStatus)

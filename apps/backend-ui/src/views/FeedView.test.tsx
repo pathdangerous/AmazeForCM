@@ -68,6 +68,19 @@ test("a new load re-reads the drift section even when the page already shows its
   await waitFor(() => expect(second.mock.calls.some(([u]) => String(u).endsWith("/drift"))).toBe(true));
 });
 
+test("7.22: the feed page names the columns left out and the columns waiting for glossary", async () => {
+  show(feedPage({ not_loaded: { ignored: ["Scratch"], waiting_for_glossary: ["Coupon"] } }));
+  const box = await screen.findByTestId("not-loaded");
+  expect(box.textContent).toContain("Left out, not loaded: Scratch");
+  expect(box.textContent).toContain("Waiting for glossary (not loaded yet): Coupon");
+});
+
+test("7.22: no columns left out, no box", async () => {
+  show(feedPage());
+  await screen.findByTestId("section-source");
+  expect(screen.queryByTestId("not-loaded")).toBeNull();
+});
+
 test("task 8: the sign-off and register forms keep native radios, a native select and the disabled attribute",
   async () => {
     const candidate = feedPage({ feed: { ...feedPage().feed, stage: "candidate" }, registration: null, signoffs: [],

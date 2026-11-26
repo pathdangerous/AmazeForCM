@@ -78,6 +78,6 @@ test("a read-only (done) step shows the proposals with no buttons", () => {
 
 test("an empty step says there is nothing to decide, and no line says 'x of 0'", () => {
   const { container } = show([]);
-  expect(screen.getByText("No new elements were proposed for this file.")).toBeTruthy();
+  expect(screen.getByText(/No glossary element was requested/)).toBeTruthy();
   expect(container.textContent ?? "").not.toMatch(/\b\d+ of 0\b/);
 });

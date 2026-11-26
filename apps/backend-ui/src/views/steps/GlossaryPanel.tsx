@@ -25,7 +25,7 @@ function Body({ item }: { item: OnboardingItem }) {
 
 // The glossary step (task 7.3b): per column a proposed new element, an alias of an element, or a conflict with its options.
 export default function GlossaryPanel({ items, actions }: PanelProps) {
-  if (items.length === 0) return <Text>No new elements were proposed for this file.</Text>;
+  if (items.length === 0) return <Text>No glossary element was requested. A column no element fits is asked for in the Mapping step.</Text>;
   return (
     <ul style={{ padding: 0, margin: 0 }}>
       {items.map((item) => {

@@ -34,9 +34,6 @@ export default function GoLiveSummary({ ws, items, actions, visibility, onVisibi
         <div data-testid="completion-report" style={{ marginBottom: 12 }}>
           <Text fw={600}>Completion report</Text>
           <ul>{ws.inputs.completion.words.map((w) => <li key={w}>{w}</li>)}</ul>
-          {ws.inputs.completion.mappings.excluded_columns.length > 0 && (
-            <Text size="sm">{`Left out: ${ws.inputs.completion.mappings.excluded_columns.join(", ")}`}</Text>
-          )}
           <ul aria-label="Rules and their back-tests" style={{ margin: "4px 0" }}>
             {ws.inputs.completion.rules.current.map((r) => (
               <li key={r.rule_key}>

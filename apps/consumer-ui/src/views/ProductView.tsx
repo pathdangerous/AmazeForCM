@@ -78,6 +78,13 @@ export default function ProductView({ devUser, code }: { devUser: string; code: 
             <span>{page.freshness ? `Updated ${formatWhen(page.freshness.released_at)}` : "Not released yet"}</span>
             {page.update_frequency && <span data-testid="product-update-frequency">{page.update_frequency}</span>}
           </div>
+          {page.not_loaded && (page.not_loaded.ignored.length > 0 || page.not_loaded.waiting_for_glossary.length > 0) && (
+            <div data-testid="product-not-loaded">
+              {page.not_loaded.ignored.length > 0 && <Text size="sm">{`Left out, not loaded: ${page.not_loaded.ignored.join(", ")}`}</Text>}
+              {page.not_loaded.waiting_for_glossary.length > 0 && (
+                <Text size="sm">{`Waiting for glossary (not loaded yet): ${page.not_loaded.waiting_for_glossary.join(", ")}`}</Text>)}
+            </div>
+          )}
           {page.paused_since && <Text data-testid="product-paused" size="sm" style={{ color: "#9A3412", background: "#FFEDD5", borderRadius: 6, padding: "6px 10px" }}>
             {`Paused: not updating since ${formatWhen(page.paused_since)}`}
           </Text>}

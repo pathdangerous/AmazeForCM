@@ -8,7 +8,8 @@ POST /api/amaze/onboardings/{id}/steps/{step}/enter    run the step's agent in t
 POST /api/amaze/onboardings/{id}/approve          Approve & next; 409 decision_needed lists the items to decide first
 POST /api/amaze/onboardings/{id}/steps/{step}/approve-confident   one approval per confident item of the current step,
                                                   by the caller (the step does not move on)
-POST /api/amaze/onboardings/{id}/cannot-map       {action: ignore, columns}: Ignore for columns no glossary element fits (7.22)
+POST /api/amaze/onboardings/{id}/cannot-map       {action: ignore | request, columns}: Ignore, or Request glossary element,
+                                                  for columns no glossary element fits (7.22)
 POST /api/amaze/onboardings/{id}/back            {to_step}: later steps become stale and the step reruns
 POST /api/amaze/onboardings/{id}/items/{proposal_id}/decision   one item, by the decision code of
                                                   POST /api/amaze/proposals/{id}/decision (decide_proposal)
@@ -35,6 +36,7 @@ from apps.api.deps import (
     backend_user,
     get_app_settings,
     get_db_session,
+    get_glossary_kick,
     get_identity_port,
     get_onboarding_context,
     get_onboarding_kick,
@@ -85,6 +87,7 @@ Operator = Annotated[User, Depends(backend_user)]
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
 Context = Annotated[OnboardingContext, Depends(get_onboarding_context)]
 Kick = Annotated[Any, Depends(get_onboarding_kick)]
+GlossaryKick = Annotated[Any, Depends(get_glossary_kick)]
 IdentityPort = Annotated[Identity, Depends(get_identity_port)]
 RequestNotifier = Annotated[Notifier, Depends(get_request_notifier)]
 
@@ -278,17 +281,22 @@ def edit(session_id: UUID, proposal_id: UUID, body: EditBody, session: DbSession
 class CannotMapBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["ignore"]
+    action: Literal["ignore", "request"]
     columns: Annotated[list[NonBlank], Field(min_length=1)]
 
 
 @router.post("/{session_id}/cannot-map", response_model=CannotMapDecided,
-             responses={409: {"description": "a column is not an undecided cannot-map column of the mapping step"}})
-def cannot_map(session_id: UUID, body: CannotMapBody, session: DbSession, user: Operator,
-               settings: AppSettings) -> CannotMapDecided:
-    """Phase 7.22: Ignore (the excluded mapping) for columns no glossary element fits; one manual item each."""
-    return in_transaction(session, lambda: decide_cannot_map(
+             responses={409: {"description": "a column is not an undecided cannot-map column of the mapping step, or "
+                                             "the builder is busy with this feed's run"}})
+def cannot_map(session_id: UUID, body: CannotMapBody, session: DbSession, user: Operator, settings: AppSettings,
+               glossary_kick: GlossaryKick) -> CannotMapDecided:
+    """Phase 7.22: Ignore (the excluded mapping, one manual item each) or Request glossary element (one glossary run
+    for these columns only; the glossary worker is woken after the commit) for columns no glossary element fits."""
+    decided = in_transaction(session, lambda: decide_cannot_map(
         session, session_id=session_id, action=body.action, columns=list(body.columns), user=user, settings=settings))
+    if body.action == "request":
+        glossary_kick()
+    return decided
 
 
 @router.put("/{session_id}/key-policy", response_model=KeyPolicyStored)
