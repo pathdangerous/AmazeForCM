@@ -274,6 +274,23 @@ T5 demo history with one missing day and two late arrivals, `docs/demo.md`, the 
 - **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.21.
   Push `phase-7.21`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0039).
 
+## Phase 7.22 — Mapping before glossary; "Run all agents" removed
+
+Plan: `docs/plans/phase-7.22.md`. Owner decisions after the demo: the 7.13 chain mode is removed; the onboarding order is
+Profile, Mapping, Glossary requests, Transformations, Rules, Go-live, First load, Product ready. A column is mapped to the existing
+glossary first; a column no element fits is "Cannot map: no glossary element fits" and the person chooses **Ignore** (the existing
+excluded mapping) or **Request glossary element** (a builder run for that column only; the glossary owner approves; the approval
+creates the column's mapping proposal). An ignored or requested column never blocks go-live and is listed by name on the
+completion report, the feed page and the product page. T1 remove chain mode (per-step "Approve all confident" stays, the Back /
+system-rejection fix stays, 0032's tables stay unused). T2 mapping first, cannot-map items, Ignore. T3 Request (migration 0040: two
+CHECK constraints), the mapping proposal on approval, the lists. T4 element names are links with a definition card. T5 a rejected
+transformation is not proposed again. T6 demo story, docs, finish.
+
+- Rules: no model call in the run engine or entitlement; every decision is a person's; no guard is loosened or worked around.
+- Out of scope: taking back a request, a MappingAgent run after an approval, the legacy workbench screens, steps 12 to 15.
+- **Done when:** `pytest -q -n 6`, both UI suites and all three Playwright stories pass; `docs/demo.md` covers 7.22.
+  Push `phase-7.22`; do not merge. Run `alembic upgrade head` on dev and on Replit (migration 0040).
+
 ## Phase 8 — Azure move (on the office laptop)
 
 - Implement `AzureOpenAIProvider`; run the evaluation script against the gold mappings and compare with the mock.
